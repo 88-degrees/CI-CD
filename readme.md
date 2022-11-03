@@ -1,7 +1,4 @@
-**NOTE:** We develop OneDev at <a href="https://code.onedev.io/projects/160">code.onedev.io</a> for sake of dogfooding. All issues and pull requests should be submitted there
-
-<div align="center">
-<h1>Self-hosted Git Server with Kanban and CI/CD</h1>
+## Git Server with Kanban and CI/CD
 
 <div style="font-size: 18px;">
 | <a href="https://code.onedev.io/projects/162/blob/main/pages/quickstart.md">5-minute Quickstart</a> 
@@ -13,7 +10,7 @@
 <p style="margin-bottom: 20px;">
 </div>
 
-## Out-of-box Symbol Search and Navigation
+### Out-of-box Symbol Search and Navigation
 
 Of course IDE is good at doing this, but often we need to search in old commits (investigate issues in release versions etc), and switching commits in IDE can be troublesome and slow. 
 
@@ -21,23 +18,25 @@ It works by analyzing source code with ANTLR, extracting symbols for storage inc
 
 You can also jump to symbol definition in diff while reviewing commits or pull requests.
 
+> **Demo site: [OneDev](https://code.onedev.io/)**
+
 ![searchsymbol](doc/images/search-symbol.gif)
 
 ![jumpsymbol](doc/images/symbol.gif)
 
-## Code Search with Regular Expression
+### Code Search with Regular Expression
 
 You may switch to any commit, and search code with regular expression. OneDev under the hood indexes the code with Lucene incrementally. At search time, literal tri-grams in the regular expression are extracted for a coarse search, followed by exact match in the result. This makes the regex search blazing fast, even for large repositories like Linux.
 
 ![regex](doc/images/regex-search.gif)
 
-## Annotate Source/Diff with Static Analysis Result to Facilitate Code Review
+### Annotate Source/Diff with Static Analysis Result to Facilitate Code Review
 
 Of course this can be done by many third party applications at GitHub, however they display the result on their own applications, and this makes review activities such as adding comment over analysis result difficult. Not to mention that you need to pay for these services.
 
 ![annotation](doc/images/annotation.png)
 
-## Customizable Issue State and Field, with Deep CI/CD Integration
+### Customizable Issue State and Field, with Deep CI/CD Integration
 
 The simple open/close state of GitHub/GitLab issues does not work well for many workflows. Considering issues submitted by customers:
 
@@ -54,13 +53,13 @@ With customizable issue states, we may address the issue with four states: open,
 
 ![fixing-build](doc/images/fixing-build.png)
 
-## Service Desk to Create/Discuss Issues via Email
+### Service Desk to Create/Discuss Issues via Email
 
 Service desk allows your users to submit tickets via email without the need to have a OneDev account. These tickets can then be created in desired projects, and assigned to appropriate members in your team. All further discussions over the tickets can take place completely in email, with discussion contents posted to ticket as comments. User will also get notifications when there are any ticket activities, for instance, when a relevant release is created or deployed
 
 ![service-desk.png](doc/images/service-desk.png)
 
-## A powerful and Intuitive Query Language
+### Powerful and Intuitive Query Language
 
 Thanks to ANTLR again, OneDev ships sophisticated query languages for projects, commits, issues, builds, and pull requests, with intuitive auto-completions and hints. For instance, it enables our customers finding fixed issues between their running release and latest release, and enables us to find all commits submitted by someone touching specified modules, etc. 
 
@@ -68,7 +67,7 @@ Queries can be saved and subscribed, so that you won't miss anything interested.
 
 ![query](doc/images/query.gif)
 
-## A Full-fledge CI/CD Engine without Writing Yaml
+### Full-fledge CI/CD Engine without Writing Yaml
 
 OneDev ships with GUI to generate CI/CD Yaml. No need to google around for Yaml grammars. A one-liner docker command to start OneDev server and you have a local CI/CD runner automatically. Concerns about server capability to run massive jobs? Another one-liner to connect self-updating agent from any machine. Want auto-scale CI/CD farm? A helm one-liner to deploy OneDev into k8s cluster. 
 
@@ -80,13 +79,13 @@ Build pipeline, matrix jobs, typed parameters, parameter chaining, step template
 
 ![pipeline.gif](doc/images/pipeline.gif)
 
-## Flexible Pull Request Review Policy and Reviewer Suggestion
+### Flexible Pull Request Review Policy and Reviewer Suggestion
 
 Specify pull request review policy based on author, branch, and changed files. OneDev can leverage git change history to suggest most appropriate reviewers for pull requests touching certain files.
 
 ![review-policy](doc/images/review-policy.gif)
 
-## Lightweight Review without Pull Request
+### Lightweight Review without Pull Request
 
 Comment on any part of code or diff to start a lightweight review without opening pull request. Review comments live through code modification and even file rename to serve as documentation. 
 
@@ -96,13 +95,13 @@ Each discussion is threaded so that you can easily know discussions with new com
 
 ![thread-comments](doc/images/threaded-comments.png)
 
-## Command Palette to Access Features Quickly
+### Command Palette to Access Features Quickly
 
 Press cmd/ctrl-k to bring up command palette from anywhere. Search projects, files, issues, pull requests, builds, and various settings and jump to them without leaving your keyboard
 
 ![command-palette.gif](doc/images/command-palette.gif)
 
-## Write Markdown Pleasantly With a Smart Editor
+### Write Markdown Pleasantly With a Smart Editor
 
 When embedding an image in a markdown file in GitHub/GitLab, you need to upload the image in a separate page, and then figure out the relative path to reference that image. With OneDev, you simply upload the image to desired folder in same editor, and the link will be generated automatically. 
 
@@ -110,7 +109,7 @@ OneDev tracks your cursor in edit window and scrolls the preview window as neces
 
 ![markdown](doc/images/markdown.gif)
 
-## SLOC Trend By Language
+### SLOC Trend By Language
 
 OneDev inspects git history of main branch to calculate trend of source lines of code by language efficiently. 
 
@@ -124,12 +123,4 @@ Organization is ideal for public service. However for self-hosted internal use, 
 
 OneDev is carefully designed with performance in mind. With a 2 core 2GB box, you will get all features above for medium sized projects. 
 It has been intensively used for more than 5 years, with battle-proven reliability. Fixing bugs is our highest priority, and there is 
-normally few to no known bugs in the wild. 
-
-----
-
-# Special Thanks
-
-![yourkit](https://www.yourkit.com/images/yklogo.png) 
-
-[YourKit](https://yourkit.com) supports this project by providing a free open source license of their excellent Java profiler
+normally few to no known bugs in the wild.
