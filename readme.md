@@ -14,7 +14,7 @@
 
 Of course IDE is good at doing this, but often we need to search in old commits (investigate issues in release versions etc), and switching commits in IDE can be troublesome and slow. 
 
-It works by analyzing source code with ANTLR, extracting symbols for storage incrementally, fast and space efficient. Now supports Java, JavaScript, C, C++, CSharp, Go, PHP, Python, CSS, SCSS, LESS and R. GitHub adds this feature several years ago, but seems that it only works for main branch, and GitLab has to configure CI job to generate and upload LSIF which is troublesome and can occupy considerable space if you do it for each commit.
+It works by analyzing source code with [**ANTLR**](https://www.antlr.org/), extracting symbols for storage incrementally, fast and space efficient. Now supports Java, JavaScript, C, C++, CSharp, Go, PHP, Python, CSS, SCSS, LESS and R. GitHub adds this feature several years ago, but seems that it only works for main branch, and GitLab has to configure CI job to generate and upload LSIF which is troublesome and can occupy considerable space if you do it for each commit.
 
 You can also jump to symbol definition in diff while reviewing commits or pull requests.
 
