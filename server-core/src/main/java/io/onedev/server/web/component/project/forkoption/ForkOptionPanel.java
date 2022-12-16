@@ -95,7 +95,7 @@ public abstract class ForkOptionPanel extends Panel {
 					String projectPath = editProject.getName();
 					if (parentBean.getParentPath() != null)
 						projectPath = parentBean.getParentPath() + "/" + projectPath;
-					Project newProject = getProjectManager().initialize(projectPath);
+					Project newProject = getProjectManager().setup(projectPath);
 					if (!newProject.isNew()) {
 						editor.error(new Path(new PathNode.Named("name")),
 								"This name has already been used by another project");
@@ -110,6 +110,7 @@ public abstract class ForkOptionPanel extends Panel {
 
 							@Override
 							public void run() {
+								getProjectManager().create(newProject);
 								getProjectManager().fork(getProject(), newProject);
 								OneDev.getInstance(ProjectLabelManager.class).sync(newProject, labelsBean.getLabels());
 							}

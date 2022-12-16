@@ -1,6 +1,8 @@
 package io.onedev.server.mail;
 
 import java.io.IOException;
+import java.io.ObjectStreamException;
+import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -61,15 +63,21 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
+import com.hazelcast.cluster.MembershipEvent;
+import com.hazelcast.cluster.MembershipListener;
 import com.ibm.icu.impl.locale.XCldrStub.Splitter;
 import com.sun.mail.imap.IMAPFolder;
 
 import edu.emory.mathcs.backport.java.util.Arrays;
 import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.loader.Listen;
+import io.onedev.commons.loader.ManagedSerializedForm;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.attachment.AttachmentManager;
+import io.onedev.server.cluster.ClusterManager;
+import io.onedev.server.cluster.ClusterRunnable;
+import io.onedev.server.cluster.ClusterTask;
 import io.onedev.server.entitymanager.EmailAddressManager;
 import io.onedev.server.entitymanager.IssueAuthorizationManager;
 import io.onedev.server.entitymanager.IssueCommentManager;
@@ -83,6 +91,7 @@ import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.entitymanager.UrlManager;
 import io.onedev.server.entitymanager.UserAuthorizationManager;
 import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.event.Listen;
 import io.onedev.server.event.entity.EntityPersisted;
 import io.onedev.server.event.system.SystemStarted;
 import io.onedev.server.event.system.SystemStopping;
@@ -116,7 +125,7 @@ import io.onedev.server.util.ParsedEmailAddress;
 import io.onedev.server.util.validation.UserNameValidator;
 
 @Singleton
-public class DefaultMailManager implements MailManager {
+public class DefaultMailManager implements MailManager, Serializable {
 
 	private static final Logger logger = LoggerFactory.getLogger(DefaultMailManager.class);
 	
@@ -154,6 +163,10 @@ public class DefaultMailManager implements MailManager {
 	
 	private final UrlManager urlManager;
 	
+	private final AttachmentManager attachmentManager;
+	
+	private final ClusterManager clusterManager;
+	
 	private volatile Thread thread;
 	
 	@Inject
@@ -164,7 +177,8 @@ public class DefaultMailManager implements MailManager {
 			PullRequestManager pullRequestManager, PullRequestCommentManager pullRequestCommentManager, 
 			PullRequestWatchManager pullRequestWatchManager, ExecutorService executorService, 
 			UrlManager urlManager, EmailAddressManager emailAddressManager, 
-			IssueAuthorizationManager issueAuthorizationManager) {
+			IssueAuthorizationManager issueAuthorizationManager, AttachmentManager attachmentManager, 
+			ClusterManager clusterManager) {
 		this.transactionManager = transactionManager;
 		this.settingManager = setingManager;
 		this.userManager = userManager;
@@ -180,8 +194,14 @@ public class DefaultMailManager implements MailManager {
 		this.urlManager = urlManager;
 		this.emailAddressManager = emailAddressManager;
 		this.issueAuthorizationManager = issueAuthorizationManager;
+		this.attachmentManager = attachmentManager;
+		this.clusterManager = clusterManager;
 	}
 
+	public Object writeReplace() throws ObjectStreamException {
+		return new ManagedSerializedForm(MailManager.class);
+	}
+	
 	@Sessional
 	@Override
 	public void sendMailAsync(Collection<String> toList, Collection<String> ccList, Collection<String> bccList, 
@@ -349,13 +369,25 @@ public class DefaultMailManager implements MailManager {
 		if (event.getEntity() instanceof Setting) {
 			Setting setting = (Setting) event.getEntity();
 			if (setting.getKey() == Setting.Key.MAIL) {
-				transactionManager.runAfterCommit(new Runnable() {
+				transactionManager.runAfterCommit(new ClusterRunnable() {
+
+					private static final long serialVersionUID = 1L;
 
 					@Override
 					public void run() {
-						Thread copy = thread;
-						if (copy != null)
-							copy.interrupt();
+						clusterManager.submitToServer(clusterManager.getLeaderServerUUID(), new ClusterTask<Void>() {
+
+							private static final long serialVersionUID = 1L;
+
+							@Override
+							public Void call() throws Exception {
+								Thread copy = thread;
+								if (copy != null)
+									copy.interrupt();
+								return null;
+							}
+							
+						});
 					}
 					
 				});
@@ -433,7 +465,7 @@ public class DefaultMailManager implements MailManager {
 								throw new ExplicitException(errorMessage);
 							}
 							checkPermission(from, project, new AccessProject(), user, authorization);
-							issues.add(openIssue(message, project, from, user, authorization));
+							issues.add(openIssue(message, project, from, user, authorization, parsedSystemAddress));
 						} else {
 							throw new ExplicitException("Unable to create issue from email as service desk is not enabled");
 						}
@@ -518,7 +550,7 @@ public class DefaultMailManager implements MailManager {
 							if (serviceDeskSetting != null) {
 								checkPermission(from, project, new AccessProject(), user, authorization);
 								logger.debug("Creating issue via email (project: {})...", project.getPath());
-								issues.add(openIssue(message, project, from, user, authorization));
+								issues.add(openIssue(message, project, from, user, authorization, parsedSystemAddress));
 							} else {
 								throw new ExplicitException("Unable to create issue from email as service desk is not enabled");
 							}
@@ -660,7 +692,7 @@ public class DefaultMailManager implements MailManager {
 		comment.setUser(user);
 		String content = stripQuotation(sendSetting, readText(issue.getProject(), issue.getUUID(), message));
 		if (content != null) {
-			comment.setContent(String.format("<div class='%s'>" + content + "</div>", COMMENT_MARKER));
+			comment.setContent(String.format("<div class='%s'>", COMMENT_MARKER) + content + "</div>");
 			issueCommentManager.save(comment, receiverEmailAddresses);
 		}
 	}
@@ -691,7 +723,8 @@ public class DefaultMailManager implements MailManager {
 	}
 	
 	private Issue openIssue(Message message, Project project, InternetAddress submitter, 
-			@Nullable User user, @Nullable SenderAuthorization authorization) throws MessagingException, IOException {
+			@Nullable User user, @Nullable SenderAuthorization authorization, 
+			ParsedEmailAddress parsedSystemAddress) throws MessagingException, IOException {
 		Issue issue = new Issue();
 		issue.setProject(project);
 		if (StringUtils.isNotBlank(message.getSubject()))
@@ -725,14 +758,19 @@ public class DefaultMailManager implements MailManager {
 		
 		issueManager.open(issue);
 		
-		String htmlBody = String.format("Issue <a href='%s'>%s</a> is created. You may reply this email to add more comments", 
-				urlManager.urlFor(issue), issue.getFQN());
-		String textBody = String.format("Issue %s is created. You may reply this email to add more comments", 
-				issue.getFQN());
-		
-		sendMailAsync(Lists.newArrayList(submitter.getAddress()), Lists.newArrayList(), Lists.newArrayList(),
-				"Re: " + issue.getTitle(), htmlBody, textBody, getReplyAddress(issue), 
-				issue.getEffectiveThreadingReference()); 
+		ParsedEmailAddress parsedSubmitterAddress = ParsedEmailAddress.parse(submitter.getAddress());
+		if (!parsedSubmitterAddress.getDomain().equalsIgnoreCase(parsedSystemAddress.getDomain()) 
+				|| !parsedSubmitterAddress.getName().toLowerCase().startsWith(parsedSystemAddress.getName().toLowerCase() + "+") 
+						&& !parsedSubmitterAddress.getName().equalsIgnoreCase(parsedSystemAddress.getName())) {
+			String htmlBody = String.format("Issue <a href='%s'>%s</a> is created. You may reply this email to add more comments", 
+					urlManager.urlFor(issue), issue.getFQN());
+			String textBody = String.format("Issue %s is created. You may reply this email to add more comments", 
+					issue.getFQN());
+			
+			sendMailAsync(Lists.newArrayList(submitter.getAddress()), Lists.newArrayList(), Lists.newArrayList(),
+					"Re: " + issue.getTitle(), htmlBody, textBody, getReplyAddress(issue), 
+					issue.getEffectiveThreadingReference()); 
+		}
 		return issue;
 	}
 
@@ -771,6 +809,22 @@ public class DefaultMailManager implements MailManager {
 	
 	@Listen
 	public void on(SystemStarted event) {
+		clusterManager.getHazelcastInstance().getCluster().addMembershipListener(new MembershipListener() {
+
+			@Override
+			public void memberAdded(MembershipEvent membershipEvent) {
+			}
+
+			@Override
+			public void memberRemoved(MembershipEvent membershipEvent) {
+				if (clusterManager.isLeaderServer()) {
+					Thread copy = thread;
+					if (copy != null)
+						copy.interrupt();
+				}
+			}
+			
+		});
 		thread = new Thread(new Runnable() {
 
 			@Override
@@ -779,7 +833,7 @@ public class DefaultMailManager implements MailManager {
 					try {
 						MailSetting mailSetting = settingManager.getMailSetting();
 						MailCheckSetting checkSetting = mailSetting!=null?mailSetting.getCheckSetting():null;
-						if (checkSetting != null) {
+						if (checkSetting != null && clusterManager.isLeaderServer()) {
 							MailSendSetting sendSetting = mailSetting.getSendSetting();
 							MailPosition mailPosition = new MailPosition();
 							while (thread != null) {
@@ -1051,7 +1105,7 @@ public class DefaultMailManager implements MailManager {
 	    if (part.getDisposition() != null) {
 	    	String[] contentId = part.getHeader("Content-ID");
 	    	String fileName = MimeUtility.decodeText(part.getFileName());
-	        String attachmentName = project.saveAttachment(attachmentGroup, fileName, part.getInputStream());
+	        String attachmentName = attachmentManager.saveAttachment(project.getId(), attachmentGroup, fileName, part.getInputStream());
 			String attachmentUrl = project.getAttachmentUrlPath(attachmentGroup, attachmentName);
 			Attachment attachment;
 	        if (part.isMimeType("image/*"))

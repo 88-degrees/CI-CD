@@ -9,17 +9,11 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.ForkJoinTask;
-import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import javax.inject.Singleton;
 import javax.persistence.EntityManager;
@@ -43,7 +37,6 @@ import org.apache.shiro.web.filter.mgt.FilterChainManager;
 import org.apache.shiro.web.filter.mgt.FilterChainResolver;
 import org.apache.shiro.web.mgt.WebSecurityManager;
 import org.apache.shiro.web.servlet.ShiroFilter;
-import org.apache.sshd.common.keyprovider.KeyPairProvider;
 import org.apache.wicket.Application;
 import org.apache.wicket.protocol.http.WicketFilter;
 import org.apache.wicket.protocol.http.WicketServlet;
@@ -81,13 +74,23 @@ import io.onedev.commons.loader.AbstractPluginModule;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.k8shelper.OsInfo;
-import io.onedev.server.buildspec.job.DefaultJobManager;
-import io.onedev.server.buildspec.job.JobManager;
+import io.onedev.server.attachment.AttachmentManager;
+import io.onedev.server.attachment.DefaultAttachmentManager;
 import io.onedev.server.buildspec.job.log.instruction.LogInstruction;
+import io.onedev.server.cluster.ClusterManager;
+import io.onedev.server.cluster.ClusterResource;
+import io.onedev.server.cluster.DefaultClusterManager;
 import io.onedev.server.codequality.CodeProblem;
 import io.onedev.server.codequality.CodeProblemContribution;
 import io.onedev.server.codequality.CoverageStatus;
 import io.onedev.server.codequality.LineCoverageContribution;
+import io.onedev.server.commandhandler.ApplyDatabaseConstraints;
+import io.onedev.server.commandhandler.BackupDatabase;
+import io.onedev.server.commandhandler.CheckDataVersion;
+import io.onedev.server.commandhandler.CleanDatabase;
+import io.onedev.server.commandhandler.ResetAdminPassword;
+import io.onedev.server.commandhandler.RestoreDatabase;
+import io.onedev.server.commandhandler.Upgrade;
 import io.onedev.server.entitymanager.AgentAttributeManager;
 import io.onedev.server.entitymanager.AgentManager;
 import io.onedev.server.entitymanager.AgentTokenManager;
@@ -97,6 +100,8 @@ import io.onedev.server.entitymanager.BuildManager;
 import io.onedev.server.entitymanager.BuildMetricManager;
 import io.onedev.server.entitymanager.BuildParamManager;
 import io.onedev.server.entitymanager.BuildQueryPersonalizationManager;
+import io.onedev.server.entitymanager.ClusterCredentialManager;
+import io.onedev.server.entitymanager.ClusterServerManager;
 import io.onedev.server.entitymanager.CodeCommentManager;
 import io.onedev.server.entitymanager.CodeCommentQueryPersonalizationManager;
 import io.onedev.server.entitymanager.CodeCommentReplyManager;
@@ -129,6 +134,7 @@ import io.onedev.server.entitymanager.MilestoneManager;
 import io.onedev.server.entitymanager.PendingSuggestionApplyManager;
 import io.onedev.server.entitymanager.ProjectLabelManager;
 import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.entitymanager.ProjectUpdateManager;
 import io.onedev.server.entitymanager.PullRequestAssignmentManager;
 import io.onedev.server.entitymanager.PullRequestChangeManager;
 import io.onedev.server.entitymanager.PullRequestCommentManager;
@@ -154,6 +160,8 @@ import io.onedev.server.entitymanager.impl.DefaultBuildManager;
 import io.onedev.server.entitymanager.impl.DefaultBuildMetricManager;
 import io.onedev.server.entitymanager.impl.DefaultBuildParamManager;
 import io.onedev.server.entitymanager.impl.DefaultBuildQueryPersonalizationManager;
+import io.onedev.server.entitymanager.impl.DefaultClusterCredentialManager;
+import io.onedev.server.entitymanager.impl.DefaultClusterServerManager;
 import io.onedev.server.entitymanager.impl.DefaultCodeCommentManager;
 import io.onedev.server.entitymanager.impl.DefaultCodeCommentQueryPersonalizationManager;
 import io.onedev.server.entitymanager.impl.DefaultCodeCommentReplyManager;
@@ -186,6 +194,7 @@ import io.onedev.server.entitymanager.impl.DefaultMilestoneManager;
 import io.onedev.server.entitymanager.impl.DefaultPendingSuggestionApplyManager;
 import io.onedev.server.entitymanager.impl.DefaultProjectLabelManager;
 import io.onedev.server.entitymanager.impl.DefaultProjectManager;
+import io.onedev.server.entitymanager.impl.DefaultProjectUpdateManager;
 import io.onedev.server.entitymanager.impl.DefaultPullRequestAssignmentManager;
 import io.onedev.server.entitymanager.impl.DefaultPullRequestChangeManager;
 import io.onedev.server.entitymanager.impl.DefaultPullRequestCommentManager;
@@ -203,38 +212,39 @@ import io.onedev.server.entitymanager.impl.DefaultUserInvitationManager;
 import io.onedev.server.entitymanager.impl.DefaultUserManager;
 import io.onedev.server.entityreference.DefaultEntityReferenceManager;
 import io.onedev.server.entityreference.EntityReferenceManager;
+import io.onedev.server.event.DefaultListenerRegistry;
+import io.onedev.server.event.ListenerRegistry;
 import io.onedev.server.exception.ExceptionHandler;
 import io.onedev.server.git.GitFilter;
 import io.onedev.server.git.GitLfsFilter;
-import io.onedev.server.git.GitSshCommandCreator;
 import io.onedev.server.git.GoGetFilter;
+import io.onedev.server.git.SshCommandCreator;
 import io.onedev.server.git.config.GitConfig;
 import io.onedev.server.git.exception.GitException;
-import io.onedev.server.git.hookcallback.GitPostReceiveCallback;
-import io.onedev.server.git.hookcallback.GitPreReceiveCallback;
+import io.onedev.server.git.hook.GitPostReceiveCallback;
+import io.onedev.server.git.hook.GitPreReceiveCallback;
+import io.onedev.server.git.service.DefaultGitService;
+import io.onedev.server.git.service.GitService;
 import io.onedev.server.git.signature.DefaultSignatureVerificationKeyLoader;
 import io.onedev.server.git.signature.SignatureVerificationKeyLoader;
 import io.onedev.server.infomanager.CommitInfoManager;
 import io.onedev.server.infomanager.DefaultCommitInfoManager;
 import io.onedev.server.infomanager.DefaultIssueInfoManager;
 import io.onedev.server.infomanager.DefaultPullRequestInfoManager;
-import io.onedev.server.infomanager.DefaultUserInfoManager;
+import io.onedev.server.infomanager.DefaultVisitInfoManager;
 import io.onedev.server.infomanager.IssueInfoManager;
 import io.onedev.server.infomanager.PullRequestInfoManager;
-import io.onedev.server.infomanager.UserInfoManager;
-import io.onedev.server.job.resource.DefaultResourceManager;
-import io.onedev.server.job.resource.ResourceManager;
+import io.onedev.server.infomanager.VisitInfoManager;
+import io.onedev.server.jetty.DefaultJettyLauncher;
+import io.onedev.server.jetty.JettyLauncher;
+import io.onedev.server.job.DefaultJobManager;
+import io.onedev.server.job.DefaultResourceAllocator;
+import io.onedev.server.job.JobManager;
+import io.onedev.server.job.ResourceAllocator;
+import io.onedev.server.job.log.DefaultLogManager;
+import io.onedev.server.job.log.LogManager;
 import io.onedev.server.mail.DefaultMailManager;
 import io.onedev.server.mail.MailManager;
-import io.onedev.server.maintenance.ApplyDatabaseConstraints;
-import io.onedev.server.maintenance.BackupDatabase;
-import io.onedev.server.maintenance.CheckDataVersion;
-import io.onedev.server.maintenance.CleanDatabase;
-import io.onedev.server.maintenance.DataManager;
-import io.onedev.server.maintenance.DefaultDataManager;
-import io.onedev.server.maintenance.ResetAdminPassword;
-import io.onedev.server.maintenance.RestoreDatabase;
-import io.onedev.server.maintenance.Upgrade;
 import io.onedev.server.markdown.DefaultMarkdownManager;
 import io.onedev.server.markdown.MarkdownManager;
 import io.onedev.server.markdown.MarkdownProcessor;
@@ -247,15 +257,17 @@ import io.onedev.server.notification.CommitNotificationManager;
 import io.onedev.server.notification.IssueNotificationManager;
 import io.onedev.server.notification.PullRequestNotificationManager;
 import io.onedev.server.notification.WebHookManager;
+import io.onedev.server.persistence.DataManager;
+import io.onedev.server.persistence.DefaultDataManager;
 import io.onedev.server.persistence.DefaultIdManager;
-import io.onedev.server.persistence.DefaultPersistManager;
+import io.onedev.server.persistence.DefaultSessionFactoryManager;
 import io.onedev.server.persistence.DefaultSessionManager;
 import io.onedev.server.persistence.DefaultTransactionManager;
 import io.onedev.server.persistence.HibernateInterceptor;
 import io.onedev.server.persistence.IdManager;
 import io.onedev.server.persistence.PersistListener;
-import io.onedev.server.persistence.PersistManager;
 import io.onedev.server.persistence.PrefixedNamingStrategy;
+import io.onedev.server.persistence.SessionFactoryManager;
 import io.onedev.server.persistence.SessionFactoryProvider;
 import io.onedev.server.persistence.SessionInterceptor;
 import io.onedev.server.persistence.SessionManager;
@@ -293,17 +305,13 @@ import io.onedev.server.security.DefaultWebSecurityManager;
 import io.onedev.server.security.FilterChainConfigurator;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.security.realm.AbstractAuthorizingRealm;
-import io.onedev.server.ssh.DefaultKeyPairProvider;
+import io.onedev.server.ssh.CommandCreator;
 import io.onedev.server.ssh.DefaultSshAuthenticator;
+import io.onedev.server.ssh.DefaultSshManager;
 import io.onedev.server.ssh.SshAuthenticator;
-import io.onedev.server.ssh.SshCommandCreator;
-import io.onedev.server.ssh.SshServerLauncher;
-import io.onedev.server.storage.AttachmentStorageManager;
-import io.onedev.server.storage.DefaultAttachmentStorageManager;
+import io.onedev.server.ssh.SshManager;
 import io.onedev.server.storage.DefaultStorageManager;
 import io.onedev.server.storage.StorageManager;
-import io.onedev.server.tasklog.DefaultJobLogManager;
-import io.onedev.server.tasklog.JobLogManager;
 import io.onedev.server.terminal.DefaultTerminalManager;
 import io.onedev.server.terminal.TerminalManager;
 import io.onedev.server.util.concurrent.BatchWorkManager;
@@ -314,13 +322,9 @@ import io.onedev.server.util.jackson.ObjectMapperConfigurator;
 import io.onedev.server.util.jackson.ObjectMapperProvider;
 import io.onedev.server.util.jackson.git.GitObjectMapperConfigurator;
 import io.onedev.server.util.jackson.hibernate.HibernateObjectMapperConfigurator;
-import io.onedev.server.util.jetty.DefaultJettyLauncher;
-import io.onedev.server.util.jetty.JettyLauncher;
 import io.onedev.server.util.schedule.DefaultTaskScheduler;
 import io.onedev.server.util.schedule.TaskScheduler;
 import io.onedev.server.util.script.ScriptContribution;
-import io.onedev.server.util.validation.DefaultEntityValidator;
-import io.onedev.server.util.validation.EntityValidator;
 import io.onedev.server.util.validation.ValidatorProvider;
 import io.onedev.server.util.xstream.CollectionConverter;
 import io.onedev.server.util.xstream.HibernateProxyConverter;
@@ -374,6 +378,7 @@ public class CoreModule extends AbstractPluginModule {
 	protected void configure() {
 		super.configure();
 		
+		bind(ListenerRegistry.class).to(DefaultListenerRegistry.class);
 		bind(JettyLauncher.class).to(DefaultJettyLauncher.class);
 		bind(ServletContextHandler.class).toProvider(DefaultJettyLauncher.class);
 		
@@ -401,6 +406,7 @@ public class CoreModule extends AbstractPluginModule {
 		configureSsh();
 		configureGit();
 		configureBuild();
+		configureCluster();
 		
 		/*
 		 * Declare bindings explicitly instead of using ImplementedBy annotation as
@@ -416,13 +422,14 @@ public class CoreModule extends AbstractPluginModule {
 		bind(PullRequestManager.class).to(DefaultPullRequestManager.class);
 		bind(PullRequestUpdateManager.class).to(DefaultPullRequestUpdateManager.class);
 		bind(ProjectManager.class).to(DefaultProjectManager.class);
+		bind(ProjectUpdateManager.class).to(DefaultProjectUpdateManager.class);
 		bind(UserManager.class).to(DefaultUserManager.class);
 		bind(UserInvitationManager.class).to(DefaultUserInvitationManager.class);
 		bind(PullRequestReviewManager.class).to(DefaultPullRequestReviewManager.class);
 		bind(BuildManager.class).to(DefaultBuildManager.class);
 		bind(BuildDependenceManager.class).to(DefaultBuildDependenceManager.class);
 		bind(JobManager.class).to(DefaultJobManager.class);
-		bind(JobLogManager.class).to(DefaultJobLogManager.class);
+		bind(LogManager.class).to(DefaultLogManager.class);
 		bind(MailManager.class).to(DefaultMailManager.class);
 		bind(IssueManager.class).to(DefaultIssueManager.class);
 		bind(IssueFieldManager.class).to(DefaultIssueFieldManager.class);
@@ -433,7 +440,7 @@ public class CoreModule extends AbstractPluginModule {
 		bind(RoleManager.class).to(DefaultRoleManager.class);
 		bind(CommitInfoManager.class).to(DefaultCommitInfoManager.class);
 		bind(IssueInfoManager.class).to(DefaultIssueInfoManager.class);
-		bind(UserInfoManager.class).to(DefaultUserInfoManager.class);
+		bind(VisitInfoManager.class).to(DefaultVisitInfoManager.class);
 		bind(BatchWorkManager.class).to(DefaultBatchWorkManager.class);
 		bind(WorkExecutor.class).to(DefaultWorkExecutor.class);
 		bind(GroupManager.class).to(DefaultGroupManager.class);
@@ -441,7 +448,7 @@ public class CoreModule extends AbstractPluginModule {
 		bind(PullRequestChangeManager.class).to(DefaultPullRequestChangeManager.class);
 		bind(CodeCommentReplyManager.class).to(DefaultCodeCommentReplyManager.class);
 		bind(CodeCommentStatusChangeManager.class).to(DefaultCodeCommentStatusChangeManager.class);
-		bind(AttachmentStorageManager.class).to(DefaultAttachmentStorageManager.class);
+		bind(AttachmentManager.class).to(DefaultAttachmentManager.class);
 		bind(PullRequestInfoManager.class).to(DefaultPullRequestInfoManager.class);
 		bind(PullRequestNotificationManager.class);
 		bind(CommitNotificationManager.class);
@@ -453,10 +460,6 @@ public class CoreModule extends AbstractPluginModule {
 		bind(IssueChangeManager.class).to(DefaultIssueChangeManager.class);
 		bind(IssueVoteManager.class).to(DefaultIssueVoteManager.class);
 		bind(MilestoneManager.class).to(DefaultMilestoneManager.class);
-		bind(Session.class).toProvider(SessionProvider.class);
-		bind(EntityManager.class).toProvider(SessionProvider.class);
-		bind(SessionFactory.class).toProvider(SessionFactoryProvider.class);
-		bind(EntityManagerFactory.class).toProvider(SessionFactoryProvider.class);
 		bind(IssueCommentManager.class).to(DefaultIssueCommentManager.class);
 		bind(IssueQueryPersonalizationManager.class).to(DefaultIssueQueryPersonalizationManager.class);
 		bind(PullRequestQueryPersonalizationManager.class).to(DefaultPullRequestQueryPersonalizationManager.class);
@@ -494,27 +497,27 @@ public class CoreModule extends AbstractPluginModule {
         
 		bind(CodeIndexManager.class).to(DefaultCodeIndexManager.class);
 		bind(CodeSearchManager.class).to(DefaultCodeSearchManager.class);
-		
-		bind(EntityValidator.class).to(DefaultEntityValidator.class);
-		
+
+		Bootstrap.executorService = new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS, 
+        		new SynchronousQueue<Runnable>()) {
+
+			@Override
+			public void execute(Runnable command) {
+				try {
+					super.execute(SecurityUtils.inheritSubject(command));
+				} catch (RejectedExecutionException e) {
+					if (!isShutdown())
+						throw ExceptionUtils.unchecked(e);
+				}
+			}
+
+        };
+
 	    bind(ExecutorService.class).toProvider(new Provider<ExecutorService>() {
 
 			@Override
 			public ExecutorService get() {
-		        return new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS, 
-		        		new SynchronousQueue<Runnable>()) {
-
-					@Override
-					public void execute(Runnable command) {
-						try {
-							super.execute(SecurityUtils.inheritSubject(command));
-						} catch (RejectedExecutionException e) {
-							if (!isShutdown())
-								throw ExceptionUtils.unchecked(e);
-						}
-					}
-
-		        };
+				return Bootstrap.executorService;
 			}
 	    	
 	    }).in(Singleton.class);
@@ -527,53 +530,6 @@ public class CoreModule extends AbstractPluginModule {
 			}
 	    	
 	    }).in(Singleton.class);
-	    
-	    bind(ForkJoinPool.class).toInstance(new ForkJoinPool() {
-
-			@Override
-			public ForkJoinTask<?> submit(Runnable task) {
-				return super.submit(SecurityUtils.inheritSubject(task));
-			}
-
-			@Override
-			public void execute(Runnable task) {
-				super.execute(SecurityUtils.inheritSubject(task));
-			}
-
-			@Override
-			public <T> ForkJoinTask<T> submit(Callable<T> task) {
-				return super.submit(SecurityUtils.inheritSubject(task));
-			}
-
-			@Override
-			public <T> ForkJoinTask<T> submit(Runnable task, T result) {
-				return super.submit(SecurityUtils.inheritSubject(task), result);
-			}
-
-			@Override
-			public <T> T invokeAny(Collection<? extends Callable<T>> tasks)
-					throws InterruptedException, ExecutionException {
-				return super.invokeAny(SecurityUtils.inheritSubject(tasks));
-			}
-
-			@Override
-			public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit)
-					throws InterruptedException, ExecutionException, TimeoutException {
-				return super.invokeAny(SecurityUtils.inheritSubject(tasks), timeout, unit);
-			}
-
-			@Override
-			public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, 
-					long timeout, TimeUnit unit) throws InterruptedException {
-				return super.invokeAll(SecurityUtils.inheritSubject(tasks), timeout, unit);
-			}
-
-			@Override
-			public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks) {
-				return super.invokeAll(SecurityUtils.inheritSubject(tasks));
-			}
-
-	    });
 	    
 	    contributeFromPackage(LogInstruction.class, LogInstruction.class);
 	    
@@ -614,10 +570,15 @@ public class CoreModule extends AbstractPluginModule {
 		
 	}
 	
+	private void configureCluster() {
+		bind(ClusterCredentialManager.class).to(DefaultClusterCredentialManager.class);
+		bind(ClusterServerManager.class).to(DefaultClusterServerManager.class);
+		bind(ClusterManager.class).to(DefaultClusterManager.class);
+	}
+	
 	private void configureSsh() {
-		bind(KeyPairProvider.class).to(DefaultKeyPairProvider.class);
 		bind(SshAuthenticator.class).to(DefaultSshAuthenticator.class);
-		bind(SshServerLauncher.class);
+		bind(SshManager.class).to(DefaultSshManager.class);
 	}
 	
 	private void configureSecurity() {
@@ -647,6 +608,7 @@ public class CoreModule extends AbstractPluginModule {
 	
 	private void configureGit() {
 		contribute(ObjectMapperConfigurator.class, GitObjectMapperConfigurator.class);
+		bind(GitService.class).to(DefaultGitService.class);
 		bind(GitConfig.class).toProvider(GitConfigProvider.class);
 		bind(GitFilter.class);
 		bind(GoGetFilter.class);
@@ -654,7 +616,7 @@ public class CoreModule extends AbstractPluginModule {
 		bind(GitPreReceiveCallback.class);
 		bind(GitPostReceiveCallback.class);
 		bind(SignatureVerificationKeyLoader.class).to(DefaultSignatureVerificationKeyLoader.class);
-		contribute(SshCommandCreator.class, GitSshCommandCreator.class);
+		contribute(CommandCreator.class, SshCommandCreator.class);
 	}
 	
 	private void configureRestful() {
@@ -665,7 +627,7 @@ public class CoreModule extends AbstractPluginModule {
 
 			@Override
 			public void configure(FilterChainManager filterChainManager) {
-				filterChainManager.createChain("/api/**", "noSessionCreation, authcBasic");
+				filterChainManager.createChain("/~api/**", "noSessionCreation, authcBasic, authcBearer");
 			}
 			
 		});
@@ -679,6 +641,14 @@ public class CoreModule extends AbstractPluginModule {
 			
 		});
 		
+		contribute(JerseyConfigurator.class, new JerseyConfigurator() {
+			
+			@Override
+			public void configure(ResourceConfig resourceConfig) {
+				resourceConfig.register(ClusterResource.class);
+			}
+			
+		});
 	}
 
 	private void configureWeb() {
@@ -700,7 +670,7 @@ public class CoreModule extends AbstractPluginModule {
 			
 			@Override
 			public void configure(org.apache.wicket.protocol.http.WebApplication application) {
-				application.mount(new BasePageMapper("/test", TestPage.class));
+				application.mount(new BasePageMapper("/~test", TestPage.class));
 			}
 			
 		});
@@ -744,7 +714,7 @@ public class CoreModule extends AbstractPluginModule {
 	}
 	
 	private void configureBuild() {
-		bind(ResourceManager.class).to(DefaultResourceManager.class);
+		bind(ResourceAllocator.class).to(DefaultResourceAllocator.class);
 		bind(AgentManager.class).to(DefaultAgentManager.class);
 		bind(AgentTokenManager.class).to(DefaultAgentTokenManager.class);
 		bind(AgentAttributeManager.class).to(DefaultAgentAttributeManager.class);
@@ -774,10 +744,16 @@ public class CoreModule extends AbstractPluginModule {
 	}
 	
 	private void configurePersistence() {
+		bind(DataManager.class).to(DefaultDataManager.class);
+		
+		bind(Session.class).toProvider(SessionProvider.class);
+		bind(EntityManager.class).toProvider(SessionProvider.class);
+		bind(SessionFactory.class).toProvider(SessionFactoryProvider.class);
+		bind(EntityManagerFactory.class).toProvider(SessionFactoryProvider.class);
+		bind(SessionFactoryManager.class).to(DefaultSessionFactoryManager.class);
+		
 	    contribute(ObjectMapperConfigurator.class, HibernateObjectMapperConfigurator.class);
 	    
-		// Use an optional binding here in case our client does not like to 
-		// start persist service provided by this plugin
 		bind(Interceptor.class).to(HibernateInterceptor.class);
 		bind(PhysicalNamingStrategy.class).toInstance(new PrefixedNamingStrategy("o_"));
 		
@@ -895,32 +871,30 @@ public class CoreModule extends AbstractPluginModule {
 			}
 			
 		}).in(Singleton.class);
-		
-		if (Bootstrap.command != null) {
-			if (RestoreDatabase.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(RestoreDatabase.class);
-			else if (ApplyDatabaseConstraints.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(ApplyDatabaseConstraints.class);
-			else if (BackupDatabase.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(BackupDatabase.class);
-			else if (CheckDataVersion.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(CheckDataVersion.class);
-			else if (Upgrade.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(Upgrade.class);
-			else if (CleanDatabase.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(CleanDatabase.class);
-			else if (ResetAdminPassword.COMMAND.equals(Bootstrap.command.getName()))
-				bind(PersistManager.class).to(ResetAdminPassword.class);
-			else	
-				throw new RuntimeException("Unrecognized command: " + Bootstrap.command.getName());
-		} else {
-			bind(PersistManager.class).to(DefaultPersistManager.class);
-		}		
 	}
 	
 	@Override
 	protected Class<? extends AbstractPlugin> getPluginClass() {
-		return OneDev.class;
+		if (Bootstrap.command != null) {
+			if (RestoreDatabase.COMMAND.equals(Bootstrap.command.getName()))
+				return RestoreDatabase.class;
+			else if (ApplyDatabaseConstraints.COMMAND.equals(Bootstrap.command.getName()))
+				return ApplyDatabaseConstraints.class;
+			else if (BackupDatabase.COMMAND.equals(Bootstrap.command.getName()))
+				return BackupDatabase.class;
+			else if (CheckDataVersion.COMMAND.equals(Bootstrap.command.getName()))
+				return CheckDataVersion.class;
+			else if (Upgrade.COMMAND.equals(Bootstrap.command.getName()))
+				return Upgrade.class;
+			else if (CleanDatabase.COMMAND.equals(Bootstrap.command.getName()))
+				return CleanDatabase.class;
+			else if (ResetAdminPassword.COMMAND.equals(Bootstrap.command.getName()))
+				return ResetAdminPassword.class;
+			else	
+				throw new RuntimeException("Unrecognized command: " + Bootstrap.command.getName());
+		} else {
+			return OneDev.class;
+		}		
 	}
 
 }

@@ -2,6 +2,8 @@ package io.onedev.server.entitymanager;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import javax.annotation.Nullable;
 
@@ -25,7 +27,7 @@ public interface AgentManager extends EntityManager<Agent> {
 	
 	Agent findByName(String name);
 
-	Collection<Long> getOnlineAgentIds();
+	Map<Long, UUID> getAgentServers();
 
 	List<String> getOsNames();
 	
@@ -37,15 +39,9 @@ public interface AgentManager extends EntityManager<Agent> {
 	
 	void restart(Agent agent);
 	
-	void delete(Collection<Agent> agents);
+	void pause(Agent agent);
 	
-	void unauthorize(Collection<Agent> agents);
-	
-	void restart(Collection<Agent> agents);
-	
-	void pause(Collection<Agent> agents);
-	
-	void resume(Collection<Agent> agents);
+	void resume(Agent agent);
 	
 	void attributesUpdated(Agent agent);
 	

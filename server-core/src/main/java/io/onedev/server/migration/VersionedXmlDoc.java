@@ -15,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.annotation.Nullable;
 
@@ -57,11 +59,13 @@ public final class VersionedXmlDoc implements Document, Externalizable {
 
 	private static final long serialVersionUID = 1L;
 
+	private static final Pattern SPECIAL_CHARACTERS = Pattern.compile("&#\\d+;");
+	
 	private transient String xml;
 	
 	private transient Document wrapped;
-
-	public VersionedXmlDoc() {
+	
+	public VersionedXmlDoc() {  
 		wrapped = DocumentHelper.createDocument();
 	}
 	
@@ -401,9 +405,14 @@ public final class VersionedXmlDoc implements Document, Externalizable {
 	
 	public static VersionedXmlDoc fromXML(String xml) {
 		try {
-			// May contain some invalid characters, parse with 1.1
-			xml = StringUtils.replace(xml, "<?xml version=\"1.0\"", "<?xml version=\"1.1\"");
-			return new VersionedXmlDoc(new SAXReader().read(new StringReader(xml)));
+			// remove special characters
+		     Matcher matcher = SPECIAL_CHARACTERS.matcher(xml);
+		     StringBuffer buffer = new StringBuffer();
+		     while (matcher.find()) 
+		    	 matcher.appendReplacement(buffer, "");
+		     matcher.appendTail(buffer);
+			
+			return new VersionedXmlDoc(new SAXReader().read(new StringReader(buffer.toString())));
 		} catch (Exception e) {
 			throw ExceptionUtils.unchecked(e);
 		}

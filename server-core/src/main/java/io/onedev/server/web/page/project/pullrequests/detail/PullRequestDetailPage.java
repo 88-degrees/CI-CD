@@ -66,8 +66,8 @@ import io.onedev.server.entitymanager.PullRequestReviewManager;
 import io.onedev.server.entitymanager.PullRequestWatchManager;
 import io.onedev.server.entityreference.Referenceable;
 import io.onedev.server.git.GitUtils;
-import io.onedev.server.git.RefInfo;
-import io.onedev.server.infomanager.UserInfoManager;
+import io.onedev.server.git.service.RefFacade;
+import io.onedev.server.infomanager.VisitInfoManager;
 import io.onedev.server.model.AbstractEntity;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.Project;
@@ -680,7 +680,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			public void onEndRequest(RequestCycle cycle) {
 				if (SecurityUtils.getUser() != null) 
-					OneDev.getInstance(UserInfoManager.class).visitPullRequest(SecurityUtils.getUser(), getPullRequest());
+					OneDev.getInstance(VisitInfoManager.class).visitPullRequest(SecurityUtils.getUser(), getPullRequest());
 			}
 			
 			@Override
@@ -728,8 +728,8 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					protected List<MenuItem> getMenuItems(FloatingPanel dropdown) {
 						List<MenuItem> menuItems = new ArrayList<>();
 						Project project = getProject();
-						for (RefInfo ref: project.getBranchRefInfos()) {
-							String branch = GitUtils.ref2branch(ref.getRef().getName());
+						for (RefFacade ref: project.getBranchRefs()) {
+							String branch = GitUtils.ref2branch(ref.getName());
 							PullRequest request = getPullRequest();
 							if (!branch.equals(request.getTargetBranch()) &&
 									(!project.equals(request.getSourceProject()) || !branch.equals(request.getSourceBranch()))) {
@@ -956,7 +956,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				WebMarkupContainer actions = new WebMarkupContainer("actions");
 				fragment.add(actions);
 				if (SecurityUtils.canManagePullRequests(getPullRequest().getTargetProject())) {
-					actions.add(new Link<Void>("synchronize") {
+					actions.add(new AjaxLink<Void>("synchronize") {
 	
 						@Override
 						protected void onConfigure() {
@@ -965,10 +965,9 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 						}
 	
 						@Override
-						public void onClick() {
-							getPullRequestManager().check(getPullRequest(), false);
-							if (getPullRequest().getCheckError() == null) 
-								Session.get().success("Pull request is synchronized");
+						public void onClick(AjaxRequestTarget target) {
+							getPullRequestManager().checkAsync(getPullRequest(), false);
+							Session.get().success("Pull request synchronization submitted");
 						}
 						
 					});
@@ -1231,7 +1230,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void populateItem(ListItem<PullRequestSummaryPart> item) {
 				PullRequestSummaryPart part = item.getModelObject();
-				item.add(new Label("head", part.getTitle()));
+				item.add(new Label("head", part.getReportName()));
 				item.add(part.render("body"));
 			}
 			

@@ -55,7 +55,8 @@ class TopContributorsResource extends AbstractResource {
 				if (!SecurityUtils.canReadCode(project))
 					throw new UnauthorizedException();
 
-				List<GitContributor> topContributors = OneDev.getInstance(CommitInfoManager.class).getTopContributors(project, TOP_CONTRIBUTORS, type, fromDay, toDay);
+				List<GitContributor> topContributors = OneDev.getInstance(CommitInfoManager.class)
+						.getTopContributors(project.getId(), TOP_CONTRIBUTORS, type, fromDay, toDay);
 				
 				AvatarManager avatarManager = OneDev.getInstance(AvatarManager.class);
 
@@ -64,7 +65,7 @@ class TopContributorsResource extends AbstractResource {
 					Map<String, Object> contributorData = new HashMap<>();
 					contributorData.put("authorName", contributor.getAuthor().getName());
 					contributorData.put("authorEmailAddress", contributor.getAuthor().getEmailAddress());
-					contributorData.put("authorAvatarUrl", avatarManager.getAvatarUrl(contributor.getAuthor()));
+					contributorData.put("authorAvatarUrl", avatarManager.getPersonAvatarUrl(contributor.getAuthor()));
 					contributorData.put("totalCommits", contributor.getTotalContribution().getCommits());
 					contributorData.put("totalAdditions", contributor.getTotalContribution().getAdditions());
 					contributorData.put("totalDeletions", contributor.getTotalContribution().getDeletions());

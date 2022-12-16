@@ -57,8 +57,8 @@ import com.google.common.collect.Sets;
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.server.OneDev;
+import io.onedev.server.commandhandler.Upgrade;
 import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.maintenance.Upgrade;
 import io.onedev.server.model.User;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.CryptoUtils;
@@ -73,14 +73,14 @@ import io.onedev.server.web.page.help.IncompatibilitiesPage;
 import io.onedev.server.web.page.simple.SimplePage;
 import io.onedev.server.web.page.simple.security.LoginPage;
 import io.onedev.server.web.page.simple.serverinit.ServerInitPage;
-import io.onedev.server.web.websocket.WebSocketMessages;
 import io.onedev.server.web.websocket.WebSocketManager;
+import io.onedev.server.web.websocket.WebSocketMessages;
 
 @SuppressWarnings("serial")
 public abstract class BasePage extends WebPage {
 
 	private static final String COOKIE_DARK_MODE = "darkMode";
-
+	
 	private boolean darkMode;
 	
 	private FeedbackPanel sessionFeedback;
@@ -120,6 +120,17 @@ public abstract class BasePage extends WebPage {
 	protected void onInitialize() {
 		super.onInitialize();
 
+		if (getLoginUser() == null) {
+			Cookie cookie = SsoProcessPage.getConnectorCookie();
+			if (cookie != null) {
+				SsoProcessPage.clearConnectorCookie();
+				new RestartResponseAtInterceptPageException(getPage().getClass());
+				String serverUrl = OneDev.getInstance(SettingManager.class).getSystemSetting().getServerUrl();
+				String redirectUrl = serverUrl + "/" + MOUNT_PATH + "/" + STAGE_INITIATE + "/" + cookie.getValue();
+				throw new RedirectToUrlException(redirectUrl);
+			}
+		}
+		
 		if (!isPermitted())
 			unauthorized();
 		
@@ -193,6 +204,19 @@ public abstract class BasePage extends WebPage {
 			protected void onComponentTag(ComponentTag tag) {
 				super.onComponentTag(tag);
 				tag.put("content", getRobotsMeta());
+			}
+			
+		});
+		
+		add(new WebMarkupContainer("siteIcon") {
+
+			@Override
+			protected void onComponentTag(ComponentTag tag) {
+				super.onComponentTag(tag);
+				
+				File logoFile = new File(Bootstrap.getSiteDir(), "assets/logo.png");
+				if (logoFile.exists())
+					tag.put("href", "/logo.png?v=" + logoFile.lastModified());
 			}
 			
 		});
@@ -340,24 +364,10 @@ public abstract class BasePage extends WebPage {
 	}
 	
 	public void unauthorized() {
-		if (getLoginUser() != null) {
+		if (getLoginUser() != null) 
 			throw new UnauthorizedException("You are not allowed to perform this operation");
-		} else { 
-			Cookie cookie = SsoProcessPage.getConnectorCookie();
-			
-			// Instantiate here to record current page url even if we are redirecting to 
-			// sso initiating url
-			RestartResponseAtInterceptPageException redirectToLoginException = 
-					new RestartResponseAtInterceptPageException(LoginPage.class);
-			if (cookie != null) {
-				String serverUrl = OneDev.getInstance(SettingManager.class).getSystemSetting().getServerUrl();
-				
-				String redirectUrl = serverUrl + "/" + MOUNT_PATH + "/" + STAGE_INITIATE + "/" + cookie.getValue();
-				throw new RedirectToUrlException(redirectUrl);
-			} else {
-				throw redirectToLoginException;
-			}
-		}
+		else 
+			throw new RestartResponseAtInterceptPageException(LoginPage.class);
 	}
 	
 	protected String getPageTitle() {

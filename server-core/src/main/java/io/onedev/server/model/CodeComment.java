@@ -2,7 +2,6 @@ package io.onedev.server.model;
 
 import static io.onedev.server.model.CodeComment.PROP_CREATE_DATE;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -29,12 +28,14 @@ import org.eclipse.jgit.lib.ObjectId;
 import com.google.common.collect.Lists;
 
 import io.onedev.server.OneDev;
-import io.onedev.server.infomanager.UserInfoManager;
+import io.onedev.server.attachment.AttachmentStorageSupport;
+import io.onedev.server.git.service.GitService;
+import io.onedev.server.infomanager.VisitInfoManager;
 import io.onedev.server.model.support.CompareContext;
 import io.onedev.server.model.support.LastUpdate;
 import io.onedev.server.model.support.Mark;
+import io.onedev.server.model.support.ProjectBelonging;
 import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.storage.AttachmentStorageSupport;
 import io.onedev.server.util.CollectionUtils;
 
 @Entity
@@ -43,7 +44,7 @@ import io.onedev.server.util.CollectionUtils;
 		@Index(columnList="o_pullRequest_id"),
 		@Index(columnList=Mark.PROP_COMMIT_HASH), @Index(columnList=Mark.PROP_PATH), 
 		@Index(columnList=PROP_CREATE_DATE), @Index(columnList=LastUpdate.COLUMN_DATE)})
-public class CodeComment extends AbstractEntity implements AttachmentStorageSupport {
+public class CodeComment extends ProjectBelonging implements AttachmentStorageSupport {
 	
 	private static final long serialVersionUID = 1L;
 	
@@ -137,6 +138,7 @@ public class CodeComment extends AbstractEntity implements AttachmentStorageSupp
 	
 	private transient Collection<User> participants;
 	
+	@Override
 	public Project getProject() {
 		return project;
 	}
@@ -244,7 +246,7 @@ public class CodeComment extends AbstractEntity implements AttachmentStorageSupp
 	public boolean isVisitedAfter(Date date) {
 		User user = SecurityUtils.getUser();
 		if (user != null) {
-			Date visitDate = OneDev.getInstance(UserInfoManager.class).getCodeCommentVisitDate(user, this);
+			Date visitDate = OneDev.getInstance(VisitInfoManager.class).getCodeCommentVisitDate(user, this);
 			return visitDate != null && visitDate.getTime()>date.getTime();
 		} else {
 			return true;
@@ -252,15 +254,18 @@ public class CodeComment extends AbstractEntity implements AttachmentStorageSupp
 	}
 	
 	public boolean isValid() {
-		try {
-			return project.getRepository().getObjectDatabase().has(ObjectId.fromString(mark.getCommitHash()))
-					&& (compareContext.getOldCommitHash().equals(ObjectId.zeroId().name()) 
-							|| project.getRepository().getObjectDatabase().has(ObjectId.fromString(compareContext.getOldCommitHash())))
-					&& (compareContext.getNewCommitHash().equals(ObjectId.zeroId().name())
-							|| project.getRepository().getObjectDatabase().has(ObjectId.fromString(compareContext.getNewCommitHash())));
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
+		GitService gitService = OneDev.getInstance(GitService.class);
+		List<ObjectId> objIds = Lists.newArrayList(ObjectId.fromString(mark.getCommitHash()));
+		
+		ObjectId oldCommitId= ObjectId.fromString(compareContext.getOldCommitHash());
+		if (!oldCommitId.equals(ObjectId.zeroId())) 
+			objIds.add(oldCommitId);
+		
+		ObjectId newCommitId= ObjectId.fromString(compareContext.getNewCommitHash());
+		if (!newCommitId.equals(ObjectId.zeroId())) 
+			objIds.add(newCommitId);
+		
+		return gitService.hasObjects(project, objIds.toArray(new ObjectId[0]));
 	}
 	
 	public static String getWebSocketObservable(Long commentId) {

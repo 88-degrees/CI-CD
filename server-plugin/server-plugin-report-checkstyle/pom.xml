@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>io.onedev</groupId>
 		<artifactId>server-plugin</artifactId>
-		<version>7.7.9</version>
+		<version>7.8.13</version>
 	</parent>
 	<dependencies>
 		<dependency>
@@ -15,6 +15,6 @@
 		</dependency>
 	</dependencies>
 	<properties>
-		<moduleClass>io.onedev.server.plugin.report.checkstyle.CheckstylePluginModule</moduleClass>
+		<moduleClass>io.onedev.server.plugin.report.checkstyle.CheckstyleModule</moduleClass>
 	</properties>
 </project>

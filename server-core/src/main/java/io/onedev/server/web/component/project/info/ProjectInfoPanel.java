@@ -45,12 +45,12 @@ public abstract class ProjectInfoPanel extends Panel {
 	protected void onInitialize() {
 		super.onInitialize();
 		
-		add(new BookmarkablePageLink<Void>("path", ProjectDashboardPage.class, 
+		add(new BookmarkablePageLink<Void>("pathAndId", ProjectDashboardPage.class, 
 				ProjectDashboardPage.paramsOf(getProject())) {
 
 			@Override
 			public IModel<?> getBody() {
-				return Model.of(getProject().getPath());
+				return Model.of(getProject().getPath() + " (id: " + getProject().getId() + ")");
 			}
 			
 		});
@@ -78,7 +78,7 @@ public abstract class ProjectInfoPanel extends Panel {
 		forksLink.setVisible(getProject().isCodeManagement());
 		forkInfo.add(forksLink);
 		
-        forkInfo.add(new ModalLink("forkNow") {
+		ModalLink forkNow = new ModalLink("forkNow") {
 			
 			@Override
 			public void onClick(AjaxRequestTarget target) {
@@ -98,7 +98,11 @@ public abstract class ProjectInfoPanel extends Panel {
 				};
 			}
 			
-		}.setVisible(SecurityUtils.canReadCode(getProject()) && SecurityUtils.canCreateProjects()));
+		};
+		forkNow.setVisible(SecurityUtils.canReadCode(getProject()) 
+				&& SecurityUtils.canCreateProjects() 
+				&& getProject().getStorageServerUUID(false) != null);
+		forkInfo.add(forkNow);
         
         SettingManager settingManager = OneDev.getInstance(SettingManager.class);
         if (settingManager.getServiceDeskSetting() != null

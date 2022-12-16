@@ -4,12 +4,15 @@ import java.util.Collection;
 import java.util.List;
 
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
 
 import io.onedev.commons.codeassist.InputSuggestion;
+import io.onedev.server.OneDev;
 import io.onedev.server.buildspec.job.Job;
 import io.onedev.server.buildspec.job.SubmitReason;
-import io.onedev.server.event.ProjectEvent;
-import io.onedev.server.event.RefUpdated;
+import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.event.project.ProjectEvent;
+import io.onedev.server.event.project.RefUpdated;
 import io.onedev.server.git.GitUtils;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.PullRequest;
@@ -34,7 +37,7 @@ public class BranchUpdateTrigger extends JobTrigger {
 	private String paths;
 	
 	@Editable(name="Branches", order=100, placeholder="Any branch", description="Optionally specify space-separated branches "
-			+ "to check. Use '**' or '*' or '?' for <a href='$docRoot/pages/path-wildcard.md' target='_blank'>path wildcard match</a>. "
+			+ "to check. Use '**' or '*' or '?' for <a href='https://docs.onedev.io/appendix/path-wildcard' target='_blank'>path wildcard match</a>. "
 			+ "Prefix with '-' to exclude. Leave empty to match all branches")
 	@Patterns(suggester = "suggestBranches", path=true)
 	public String getBranches() {
@@ -51,7 +54,7 @@ public class BranchUpdateTrigger extends JobTrigger {
 	}
 	
 	@Editable(name="Touched Files", order=200, placeholder="Any file", 
-			description="Optionally specify space-separated files to check. Use '**', '*' or '?' for <a href='$docRoot/pages/path-wildcard.md' target='_blank'>path wildcard match</a>. "
+			description="Optionally specify space-separated files to check. Use '**', '*' or '?' for <a href='https://docs.onedev.io/appendix/path-wildcard' target='_blank'>path wildcard match</a>. "
 					+ "Prefix with '-' to exclude. Leave empty to match all files")
 	@Patterns(suggester = "getPathSuggestions", path=true)
 	public String getPaths() {
@@ -74,7 +77,10 @@ public class BranchUpdateTrigger extends JobTrigger {
 			} else if (refUpdated.getNewCommitId().equals(ObjectId.zeroId())) {
 				return false;
 			} else {
-				Collection<String> changedFiles = GitUtils.getChangedFiles(refUpdated.getProject().getRepository(), 
+				Repository repository = OneDev.getInstance(ProjectManager.class)
+						.getRepository(refUpdated.getProject().getId());
+				Collection<String> changedFiles = GitUtils.getChangedFiles(
+						repository, 
 						refUpdated.getOldCommitId(), refUpdated.getNewCommitId());
 				PatternSet patternSet = PatternSet.parse(getPaths());
 				Matcher matcher = new PathMatcher();

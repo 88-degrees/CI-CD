@@ -17,20 +17,17 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.glassfish.jersey.servlet.ServletContainer;
 
-import com.google.common.collect.Lists;
-
 import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.utils.FileUtils;
 import io.onedev.server.ServerSocketServlet;
 import io.onedev.server.git.GitFilter;
 import io.onedev.server.git.GitLfsFilter;
 import io.onedev.server.git.GoGetFilter;
-import io.onedev.server.git.hookcallback.GitPostReceiveCallback;
-import io.onedev.server.git.hookcallback.GitPreReceiveCallback;
+import io.onedev.server.git.hook.GitPostReceiveCallback;
+import io.onedev.server.git.hook.GitPreReceiveCallback;
+import io.onedev.server.jetty.ClasspathAssetServlet;
+import io.onedev.server.jetty.FileAssetServlet;
+import io.onedev.server.jetty.ServletConfigurator;
 import io.onedev.server.security.DefaultWebEnvironment;
-import io.onedev.server.util.jetty.ClasspathAssetServlet;
-import io.onedev.server.util.jetty.FileAssetServlet;
-import io.onedev.server.util.jetty.ServletConfigurator;
 import io.onedev.server.web.asset.icon.IconScope;
 import io.onedev.server.web.img.ImageScope;
 import io.onedev.server.web.websocket.WebSocketManager;
@@ -101,8 +98,8 @@ public class ProductServletConfigurator implements ServletConfigurator {
 		 */
 		context.addServlet(new ServletHolder(wicketServlet), "/");
 		
-		context.addServlet(new ServletHolder(new ClasspathAssetServlet(ImageScope.class)), "/img/*");
-		context.addServlet(new ServletHolder(new ClasspathAssetServlet(IconScope.class)), "/icon/*");
+		context.addServlet(new ServletHolder(new ClasspathAssetServlet(ImageScope.class)), "/~img/*");
+		context.addServlet(new ServletHolder(new ClasspathAssetServlet(IconScope.class)), "/~icon/*");
 		
 		context.getSessionHandler().addEventListener(new HttpSessionListener() {
 
@@ -122,18 +119,32 @@ public class ProductServletConfigurator implements ServletConfigurator {
 		 * to hold site specific web assets.   
 		 */
 		File assetsDir = new File(Bootstrap.getSiteDir(), "assets");
-		ServletHolder assetsServletHolder = new ServletHolder(new FileAssetServlet(assetsDir));
-		context.addServlet(assetsServletHolder, "/site/*");
 		
-		File rootAssetsDir = new File(Bootstrap.getSiteDir(), "assets/root");
-		ServletHolder rootAssetsServletHolder = new ServletHolder(new FileAssetServlet(rootAssetsDir));
-		for (File file: FileUtils.listFiles(rootAssetsDir, Lists.newArrayList("**"), Lists.newArrayList())) {
-			String path = file.getAbsolutePath().substring(rootAssetsDir.getAbsolutePath().length());
-			context.addServlet(rootAssetsServletHolder, path.replace('\\', '/'));
+		boolean hasCustomLogo = false;
+		boolean hasSiteMapTxt = false;
+		boolean hasSiteMapXml = false;
+		for (File file: assetsDir.listFiles()) {
+			if (file.isFile()) {
+				context.addServlet(new ServletHolder(new FileAssetServlet(assetsDir)), "/" + file.getName());
+				if (file.getName().equals("logo.png"))
+					hasCustomLogo = true;
+				else if (file.getName().equals("sitemap.xml"))
+					hasSiteMapXml = true;
+				else if (file.getName().equals("sitemap.txt"))
+					hasSiteMapTxt = true;
+			} else {
+				context.addServlet(new ServletHolder(new FileAssetServlet(file)), "/" + file.getName() + "/*");
+			}
 		}
+		if (!hasCustomLogo)
+			context.addServlet(new ServletHolder(new FileAssetServlet(assetsDir)), "/logo.png");
+		if (!hasSiteMapTxt)
+			context.addServlet(new ServletHolder(new FileAssetServlet(assetsDir)), "/sitemap.txt");
+		if (!hasSiteMapXml)
+			context.addServlet(new ServletHolder(new FileAssetServlet(assetsDir)), "/sitemap.xml");
 		
-		context.addServlet(new ServletHolder(jerseyServlet), "/api/*");	
-		context.addServlet(new ServletHolder(serverServlet), "/server");
+		context.addServlet(new ServletHolder(jerseyServlet), "/~api/*");	
+		context.addServlet(new ServletHolder(serverServlet), "/~server");
 	}
 	
 }

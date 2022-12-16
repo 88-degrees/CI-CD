@@ -15,6 +15,8 @@ import io.onedev.server.model.Project;
 import io.onedev.server.model.PullRequest;
 import io.onedev.server.persistence.dao.EntityManager;
 import io.onedev.server.search.entity.EntityQuery;
+import io.onedev.server.util.FileInfo;
+import io.onedev.server.util.MimeFileInfo;
 import io.onedev.server.util.ProjectBuildStats;
 import io.onedev.server.util.ProjectScopedNumber;
 import io.onedev.server.util.StatusInfo;
@@ -35,11 +37,11 @@ public interface BuildManager extends EntityManager<Build> {
 	Build find(ProjectScopedNumber buildFQN);
 	
 	@Nullable
-	Build findLastFinished(Project project, String jobName);
+	Build findLastFinished(Project project, String jobName, @Nullable String refName);
 
 	@Nullable
 	Build findStreamPrevious(Build build, @Nullable Build.Status status);
-
+	
 	Collection<Long> queryStreamPreviousNumbers(Build build, @Nullable Build.Status status, int limit);
 
 	Collection<Build> query(Project project, ObjectId commitId, @Nullable String jobName, 
@@ -55,7 +57,7 @@ public interface BuildManager extends EntityManager<Build> {
 
 	void create(Build build);
 
-	Collection<Build> queryUnfinished();
+	Map<Long, Long> queryUnfinished();
 	
 	Collection<Build> queryUnfinished(Project project, String jobName, @Nullable String refName, 
 			@Nullable Optional<PullRequest> request, Map<String, List<String>> params);
@@ -87,5 +89,11 @@ public interface BuildManager extends EntityManager<Build> {
 	Collection<Build> query(Agent agent, @Nullable Build.Status status);
 	
 	List<ProjectBuildStats> queryStats(Collection<Project> projects);
+	
+	MimeFileInfo getArtifactInfo(Build build, String artifactPath);
+	
+	void deleteArtifact(Build build, String artifactPath);
+	
+	List<FileInfo> listArtifacts(Build build, @Nullable String artifactPath);
 	
 }

@@ -23,6 +23,7 @@ import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.AjaxRequestTarget.IJavaScriptResponse;
 import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
 import org.apache.wicket.application.IComponentInstantiationListener;
+import org.apache.wicket.behavior.AttributeAppender;
 import org.apache.wicket.core.request.handler.ComponentNotFoundException;
 import org.apache.wicket.core.request.handler.EmptyAjaxRequestHandler;
 import org.apache.wicket.core.request.handler.ListenerInvocationNotAllowedException;
@@ -30,6 +31,8 @@ import org.apache.wicket.core.request.handler.PageProvider;
 import org.apache.wicket.core.request.handler.RenderPageRequestHandler;
 import org.apache.wicket.core.request.mapper.HomePageMapper;
 import org.apache.wicket.core.request.mapper.ResourceMapper;
+import org.apache.wicket.markup.html.link.BookmarkablePageLink;
+import org.apache.wicket.markup.html.link.Link;
 import org.apache.wicket.markup.html.pages.AbstractErrorPage;
 import org.apache.wicket.markup.html.pages.BrowserInfoPage;
 import org.apache.wicket.protocol.http.servlet.ServletWebRequest;
@@ -73,8 +76,8 @@ import io.onedev.server.web.resource.SpriteResourceReference;
 import io.onedev.server.web.resource.SpriteResourceStream;
 import io.onedev.server.web.resourcebundle.ResourceBundleReferences;
 import io.onedev.server.web.util.AbsoluteUrlRenderer;
-import io.onedev.server.web.websocket.WebSocketMessages;
 import io.onedev.server.web.websocket.WebSocketManager;
+import io.onedev.server.web.websocket.WebSocketMessages;
 
 @Singleton
 public class WebApplication extends org.apache.wicket.protocol.http.WebApplication {
@@ -141,6 +144,8 @@ public class WebApplication extends org.apache.wicket.protocol.http.WebApplicati
 						&& !(component instanceof BasePage)
 						&& !(component instanceof BrowserInfoPage)) {
 					throw new ExplicitException("Page classes should extend from BasePage.");
+				} else if (component instanceof Link && !(component instanceof BookmarkablePageLink)) {
+					component.add(AttributeAppender.append("rel", "nofollow"));
 				}
 			}
 		});

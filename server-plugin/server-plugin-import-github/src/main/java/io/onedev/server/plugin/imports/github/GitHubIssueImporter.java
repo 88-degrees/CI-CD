@@ -71,16 +71,16 @@ public class GitHubIssueImporter implements IssueImporter {
 	
 	@Override
 	public String getName() {
-		return GitHubPluginModule.NAME;
+		return GitHubModule.NAME;
 	}
 	
 	@Override
-	public String doImport(Project project, boolean retainIssueNumbers, boolean dryRun, TaskLogger logger) {
+	public String doImport(Project project, boolean dryRun, TaskLogger logger) {
 		logger.log("Importing issues from repository " + repositoryStep.getSetting().getRepository() + "...");
 		Map<String, Optional<User>> users = new HashMap<>();
 		
 		ImportResult result = serverStep.getSetting().importIssues(repositoryStep.getSetting().getRepository(), 
-				project,retainIssueNumbers, optionStep.getSetting(), users, dryRun, logger);
+				project, optionStep.getSetting(), users, dryRun, logger);
 		return result.toHtml("Issues imported successfully");
 	}
 

@@ -53,6 +53,7 @@ import com.google.common.collect.Sets;
 
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.server.OneDev;
+import io.onedev.server.attachment.AttachmentStorageSupport;
 import io.onedev.server.entitymanager.GroupManager;
 import io.onedev.server.entitymanager.PullRequestManager;
 import io.onedev.server.entitymanager.SettingManager;
@@ -60,18 +61,19 @@ import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.entityreference.Referenceable;
 import io.onedev.server.infomanager.CommitInfoManager;
 import io.onedev.server.infomanager.PullRequestInfoManager;
-import io.onedev.server.infomanager.UserInfoManager;
+import io.onedev.server.infomanager.VisitInfoManager;
 import io.onedev.server.model.support.EntityWatch;
 import io.onedev.server.model.support.LastUpdate;
+import io.onedev.server.model.support.ProjectBelonging;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 import io.onedev.server.search.entity.SortField;
 import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.storage.AttachmentStorageSupport;
 import io.onedev.server.util.ComponentContext;
 import io.onedev.server.util.Input;
 import io.onedev.server.util.ProjectScopedNumber;
+import io.onedev.server.util.facade.IssueFacade;
 import io.onedev.server.web.editable.BeanDescriptor;
 import io.onedev.server.web.editable.PropertyDescriptor;
 import io.onedev.server.web.editable.annotation.Editable;
@@ -92,7 +94,7 @@ import io.onedev.server.web.util.WicketUtils;
 //use dynamic update in order not to overwrite other edits while background threads change update date
 @DynamicUpdate
 @Editable
-public class Issue extends AbstractEntity implements Referenceable, AttachmentStorageSupport {
+public class Issue extends ProjectBelonging implements Referenceable, AttachmentStorageSupport {
 
 	private static final long serialVersionUID = 1L;
 	
@@ -568,7 +570,7 @@ public class Issue extends AbstractEntity implements Referenceable, AttachmentSt
 	public boolean isVisitedAfter(Date date) {
 		User user = SecurityUtils.getUser();
 		if (user != null) {
-			Date visitDate = OneDev.getInstance(UserInfoManager.class).getIssueVisitDate(user, this);
+			Date visitDate = OneDev.getInstance(VisitInfoManager.class).getIssueVisitDate(user, this);
 			return visitDate != null && visitDate.getTime()>date.getTime();
 		} else {
 			return true;
@@ -631,6 +633,11 @@ public class Issue extends AbstractEntity implements Referenceable, AttachmentSt
 	
 	public static String getListWebSocketObservable(Long projectId) {
 		return Issue.class.getName() + ":list:" + projectId;
+	}
+
+	@Override
+	public IssueFacade getFacade() {
+		return new IssueFacade(getId(), getProject().getId(), getNumber());
 	}
 
 	@Nullable
@@ -812,7 +819,7 @@ public class Issue extends AbstractEntity implements Referenceable, AttachmentSt
 			CommitInfoManager commitInfoManager = OneDev.getInstance(CommitInfoManager.class); 
 			
 			getProject().getTree().stream().filter(it->it.isCodeManagement()).forEach(it-> {
-				for (ObjectId commitId: commitInfoManager.getFixCommits(it, getId())) {
+				for (ObjectId commitId: commitInfoManager.getFixCommits(it.getId(), getId())) {
 					RevCommit commit = it.getRevCommit(commitId, false);
 					if (commit != null)
 						commits.add(new FixCommit(it, commit));

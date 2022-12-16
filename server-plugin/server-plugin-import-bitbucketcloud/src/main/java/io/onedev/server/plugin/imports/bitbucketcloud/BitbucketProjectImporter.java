@@ -60,7 +60,8 @@ public class BitbucketProjectImporter implements ProjectImporter {
 		protected ImportRepositories newSetting() {
 			ImportRepositories repositories = new ImportRepositories();
 			String workspace = workspaceStep.getSetting().getWorkspace();
-			for (String repository: serverStep.getSetting().listRepositories(workspace)) {
+			for (String repository: serverStep.getSetting().listRepositories(
+					workspace, workspaceStep.getSetting().isIncludeForks())) {
 				ProjectMapping projectMapping = new ProjectMapping();
 				projectMapping.setBitbucketRepo(repository);
 				projectMapping.setOneDevProject(repository);
@@ -90,7 +91,7 @@ public class BitbucketProjectImporter implements ProjectImporter {
 	
 	@Override
 	public String getName() {
-		return BitbucketPluginModule.NAME;
+		return BitbucketModule.NAME;
 	}
 	
 	@Override

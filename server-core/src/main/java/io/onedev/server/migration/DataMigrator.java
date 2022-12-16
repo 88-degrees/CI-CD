@@ -4407,4 +4407,154 @@ public class DataMigrator {
 	private void migrate102(File dataDir, Stack<Integer> versions) {
 	}
 	
+	private void migrate103(File dataDir, Stack<Integer> versions) {
+		VersionedXmlDoc projectUpdatesDom;
+		File projectUpdatesFile = new File(dataDir, "ProjectUpdates.xml");
+		projectUpdatesDom = new VersionedXmlDoc();
+		Element listElement = projectUpdatesDom.addElement("list");
+		
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Projects.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String projectId = element.elementTextTrim("id");
+					Element updateDateElement = element.element("updateDate");
+					element.addElement("update").setText(projectId);
+					
+					Element updateElement = listElement.addElement("io.onedev.server.model.ProjectUpdate");
+					updateElement.addAttribute("revision", "0.0");
+					updateElement.addElement("id").setText(projectId);
+					updateElement.addElement("date").setText(updateDateElement.getText().trim());
+					updateDateElement.detach();
+					
+					element.addElement("codeAnalysisSetting");
+				}				
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("Settings.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					if (element.elementTextTrim("key").equals("PERFORMANCE")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							valueElement.element("serverJobExecutorCpuQuota").detach();
+							valueElement.element("serverJobExecutorMemoryQuota").detach();
+							valueElement.element("cpuIntensiveTaskConcurrency").detach();
+						}
+					} else if (element.elementTextTrim("key").equals("JOB_EXECUTORS")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							for (Element executorElement: valueElement.elements()) {
+								Element mountDockerSockElement = executorElement.element("mountDockerSock");
+								if (mountDockerSockElement != null && mountDockerSockElement.attribute("defined-in") != null)
+									mountDockerSockElement.detach();
+							}
+						}
+					}
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+				
+		projectUpdatesDom.writeToFile(projectUpdatesFile, true);
+	}
+
+	private static final Pattern migrate104_pattern = Pattern.compile("\\(/projects/(\\d+)/attachment/(.*?)\\)");
+	
+	private String migrate104_markdown(String content) {
+		StringBuffer buffer = new StringBuffer();
+		Matcher matcher = migrate104_pattern.matcher(content);
+		while (matcher.find()) {
+	    	matcher.appendReplacement(buffer, 
+	    			Matcher.quoteReplacement("(/~downloads/projects/" + matcher.group(1) + "/attachments/" + matcher.group(2) + ")"));  
+		}
+		matcher.appendTail(buffer);
+		return buffer.toString();
+	}
+	
+	private void migrate104(File dataDir, Stack<Integer> versions) {
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Issues.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element descriptionElement = element.element("description");
+					if (descriptionElement != null)
+						descriptionElement.setText(migrate104_markdown(descriptionElement.getText()));
+				}				
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("IssueComments.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element contentElement = element.element("content");
+					contentElement.setText(migrate104_markdown(contentElement.getText()));
+				}				
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("PullRequests.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element descriptionElement = element.element("description");
+					if (descriptionElement != null)
+						descriptionElement.setText(migrate104_markdown(descriptionElement.getText()));
+				}				
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("PullRequestComments.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element contentElement = element.element("content");
+					contentElement.setText(migrate104_markdown(contentElement.getText()));
+				}				
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("CodeComments.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element contentElement = element.element("content");
+					contentElement.setText(migrate104_markdown(contentElement.getText()));
+				}				
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("CodeCommentReplys.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element contentElement = element.element("content");
+					contentElement.setText(migrate104_markdown(contentElement.getText()));
+				}				
+				dom.writeToFile(file, false);
+			}
+		}
+	}	
+	
+	private void migrate105(File dataDir, Stack<Integer> versions) {
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Settings.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String key = element.elementTextTrim("key");
+					if (key.equals("JOB_EXECUTORS")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							for (Element executorElement: valueElement.elements()) 
+								executorElement.addElement("sitePublishEnabled").setText("false");
+						}						
+					}
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+	}
+	
+	private void migrate106(File dataDir, Stack<Integer> versions) {
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Settings.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String key = element.elementTextTrim("key");
+					if (key.equals("AUTHENTICATOR")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) 
+							valueElement.addElement("authenticationRequired").setText("true");
+					}
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+	}
+	
 }

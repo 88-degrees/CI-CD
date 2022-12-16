@@ -6,12 +6,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
+import javax.validation.constraints.NotEmpty;
+
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
-import javax.validation.constraints.NotEmpty;
 
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
@@ -21,16 +25,17 @@ import com.google.common.collect.Maps;
 
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.codeassist.InputSuggestion;
-import io.onedev.commons.loader.ListenerRegistry;
 import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.server.OneDev;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.event.RefUpdated;
-import io.onedev.server.git.RefInfo;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.RefUpdated;
+import io.onedev.server.git.service.RefFacade;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.Project;
 import io.onedev.server.util.EditContext;
@@ -153,6 +158,64 @@ public class PullRepository extends SyncRepository {
 				}
 				
 			}).checkReturnCode();
+			
+			if (defaultBranch == null) {
+				logger.log("Determining remote head branch...");
+				
+				git.clearArgs();
+				git.addArgs("remote", "show", remoteUrl);
+				
+				AtomicReference<String> headBranch = new AtomicReference<>(null);
+				git.execute(new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						logger.log(line);
+						if (line.trim().startsWith("HEAD branch:"))
+							headBranch.set(line.trim().substring("HEAD branch:".length()).trim());
+					}
+					
+				}, new LineConsumer() {
+
+					@Override
+					public void consume(String line) {
+						logger.warning(line);
+					}
+					
+				}).checkReturnCode();
+
+				if (headBranch.get() != null) {
+					if (targetProject.getObjectId(Constants.R_HEADS + headBranch.get(), false) == null) {
+						logger.log("Remote head branch not synced, using first branch as default");
+						headBranch.set(null);
+					}
+				} else {
+					logger.log("Remote head branch not found, using first branch as default");
+				}
+				if (headBranch.get() == null) {
+					git.clearArgs();
+					git.addArgs("branch");
+					
+					git.execute(new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							if (headBranch.get() == null)
+								headBranch.set(StringUtils.stripStart(line.trim(), "*").trim());
+						}
+						
+					}, new LineConsumer() {
+
+						@Override
+						public void consume(String line) {
+							logger.warning(line);
+						}
+						
+					}).checkReturnCode();
+				}
+				if (headBranch.get() != null)
+					targetProject.setDefaultBranch(headBranch.get());
+			}
 		} finally {
 			Map<String, ObjectId> newCommitIds = getCommitIds(targetProject);
 			MapDifference<String, ObjectId> difference = Maps.difference(oldCommitIds, newCommitIds);
@@ -162,7 +225,9 @@ public class PullRepository extends SyncRepository {
 					List<ObjectId> lfsFetchCommitIds = new ArrayList<>();
 					
 					if (baseCommitId != null) {
-						try (RevWalk revWalk = new RevWalk(targetProject.getRepository())) {
+						Repository repository = OneDev.getInstance(ProjectManager.class)
+								.getRepository(targetProject.getId());
+						try (RevWalk revWalk = new RevWalk(repository)) {
 							if (!difference.entriesOnlyOnRight().isEmpty()) {
 								for (Map.Entry<String, ObjectId> entry: difference.entriesOnlyOnRight().entrySet()) {
 									revWalk.markStart(revWalk.lookupCommit(entry.getValue()));
@@ -228,16 +293,16 @@ public class PullRepository extends SyncRepository {
 	
 	private Map<String, ObjectId> getCommitIds(Project project) {
 		Map<String, ObjectId> commitIds = new HashMap<>();
-		for (RefInfo refInfo: project.getBranchRefInfos()) {
+		for (RefFacade ref: project.getBranchRefs()) {
 			boolean matches = false;
 			for (String pattern: Splitter.on(" ").omitEmptyStrings().trimResults().split(getRefs())) {
-				if (WildcardUtils.matchString(pattern, refInfo.getRef().getName())) {
+				if (WildcardUtils.matchString(pattern, ref.getName())) {
 					matches = true;
 					break;
 				}
 			}
 			if (matches) 
-				commitIds.put(refInfo.getRef().getName(), refInfo.getPeeledObj().copy());
+				commitIds.put(ref.getName(), ref.getPeeledObj().copy());
 		}
 		return commitIds;
 	}

@@ -1,11 +1,10 @@
 ## Git Server with Kanban and CI/CD
 
-<div style="font-size: 18px;">
-| <a href="https://code.onedev.io/projects/162/blob/main/pages/quickstart.md">5-minute Quickstart</a> 
-| <a href="https://code.onedev.io/projects/162/blob/main/pages/installation-guide.md">Installation Guide</a> 
-| <a href="https://code.onedev.io/projects/162/blob/main/pages/tutorials.md">Tutorials</a>
-| <a href="https://code.onedev.io/projects/162/blob">All Documentations</a> |
-</div>
+<h2>
+<a href="https://docs.onedev.io/">Quickstart</a> 
+| <a href="https://docs.onedev.io/category/installation-guide">Installation Guide</a> 
+| <a href="https://docs.onedev.io/concepts/">All Documentation</a> 
+</h2>
 
 <p style="margin-bottom: 20px;">
 </div>

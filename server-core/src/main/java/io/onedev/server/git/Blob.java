@@ -2,6 +2,7 @@ package io.onedev.server.git;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -22,8 +23,10 @@ import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.util.ContentDetector;
 import io.onedev.server.web.component.markdown.SuggestionSupport.Selection;
 
-public class Blob {
+public class Blob implements Serializable {
 	
+	private static final long serialVersionUID = 1L;
+
 	private static final int MAX_LOADED_BLOB_SIZE = 5*1024*1024;
 	
 	private final BlobIdent ident;
@@ -118,15 +121,11 @@ public class Blob {
  			if (ident.isGitLink() || ident.isSymbolLink() || ident.isTree()) {
  				Charset charset = StandardCharsets.UTF_8;
  				text = Optional.of(new Text(charset, new String(bytes, charset)));
- 			} else if (!isPartial()) {
-				if (!ContentDetector.isBinary(bytes, ident.path)) {
-					Charset charset = ContentDetector.detectCharset(bytes);
-					if (charset == null)
-						charset = Charset.defaultCharset();
-					text = Optional.of(new Text(charset, new String(bytes, charset)));
-				} else {
-					text = Optional.absent();
-				}
+ 			} else if (!ContentDetector.isBinary(bytes, ident.path)) {
+				Charset charset = ContentDetector.detectCharset(bytes);
+				if (charset == null)
+					charset = Charset.defaultCharset();
+				text = Optional.of(new Text(charset, new String(bytes, charset)));
 			} else {
 				text = Optional.absent();
 			}
@@ -154,7 +153,9 @@ public class Blob {
 		return lfsPointer.orNull();
 	}
 	
-	public static class Text {
+	public static class Text implements Serializable {
+
+		private static final long serialVersionUID = 1L;
 
 		private final Charset charset;
 		

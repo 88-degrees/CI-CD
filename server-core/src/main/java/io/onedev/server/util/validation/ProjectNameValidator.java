@@ -5,11 +5,13 @@ import java.util.regex.Pattern;
 import javax.validation.ConstraintValidator;
 import javax.validation.ConstraintValidatorContext;
 
+import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.util.validation.annotation.ProjectName;
 
 public class ProjectNameValidator implements ConstraintValidator<ProjectName, String> {
 
-	public static final Pattern PATTERN = Pattern.compile("\\w([\\w-\\.]*\\w)?");
+	private static final Pattern PATTERN = Pattern.compile("\\w[\\w-\\.]*");
 	
 	private String message;
 	
@@ -26,13 +28,13 @@ public class ProjectNameValidator implements ConstraintValidator<ProjectName, St
 		if (!PATTERN.matcher(value).matches()) {
 			constraintContext.disableDefaultConstraintViolation();
 			String message = this.message;
-			if (message.length() == 0) {
-				message = "Should start and end with alphanumeric or underscore. "
-						+ "Only alphanumeric, underscore, dash, and dot are allowed in the middle.";
+			if (message.length() == 0) { 
+				message = "Should start with alphanumeric or underscore, and contains only "
+						+ "alphanumeric, underscore, dash, or dot";
 			}
 			constraintContext.buildConstraintViolationWithTemplate(message).addConstraintViolation();
 			return false;
-		} else if (value.equals("new") || value.equals("import")) {
+		} else if (OneDev.getInstance(ProjectManager.class).getReservedNames().contains(value)) {
 			constraintContext.disableDefaultConstraintViolation();
 			String message = this.message;
 			if (message.length() == 0)

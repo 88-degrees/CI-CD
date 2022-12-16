@@ -19,6 +19,7 @@ import static io.onedev.server.search.code.IndexConstants.NGRAM_SIZE;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.ObjectStreamException;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
@@ -70,13 +71,16 @@ import com.google.common.base.Preconditions;
 import io.onedev.commons.jsymbol.Symbol;
 import io.onedev.commons.jsymbol.SymbolExtractor;
 import io.onedev.commons.jsymbol.SymbolExtractorRegistry;
-import io.onedev.commons.loader.Listen;
-import io.onedev.commons.loader.ListenerRegistry;
+import io.onedev.commons.loader.ManagedSerializedForm;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.cluster.ClusterTask;
 import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.event.RefUpdated;
+import io.onedev.server.event.Listen;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.CommitIndexed;
+import io.onedev.server.event.project.RefUpdated;
 import io.onedev.server.event.system.SystemStarted;
 import io.onedev.server.model.Project;
 import io.onedev.server.persistence.SessionManager;
@@ -87,10 +91,13 @@ import io.onedev.server.util.IndexResult;
 import io.onedev.server.util.concurrent.BatchWorkManager;
 import io.onedev.server.util.concurrent.BatchWorker;
 import io.onedev.server.util.concurrent.Prioritized;
+import io.onedev.server.util.match.Matcher;
+import io.onedev.server.util.match.PathMatcher;
+import io.onedev.server.util.patternset.PatternSet;
 
 @Singleton
-public class DefaultCodeIndexManager implements CodeIndexManager {
-	
+public class DefaultCodeIndexManager implements CodeIndexManager, Serializable {
+
 	private static final Logger logger = LoggerFactory.getLogger(DefaultCodeIndexManager.class);
 
 	private static final int UI_INDEXING_PRIORITY = 10;
@@ -119,6 +126,10 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 		this.projectManager = projectManager;
 	}
 
+	public Object writeReplace() throws ObjectStreamException {
+		return new ManagedSerializedForm(CodeIndexManager.class);
+	}
+	
 	private String getCommitIndexVersion(final IndexSearcher searcher, AnyObjectId commitId) throws IOException {
 		final AtomicReference<String> indexVersion = new AtomicReference<>(null);
 		
@@ -145,8 +156,8 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 		return indexVersion.get();
 	}
 	
-	private IndexResult index(Repository repository, AnyObjectId commitId, 
-			IndexWriter writer, final IndexSearcher searcher) throws Exception {
+	private IndexResult index(Repository repository, AnyObjectId commitId, IndexWriter writer, 
+			IndexSearcher searcher, PatternSet filePatterns) throws Exception {
 		try (	RevWalk revWalk = new RevWalk(repository); 
 				TreeWalk treeWalk = new TreeWalk(repository)) {
 			treeWalk.addTree(revWalk.parseCommit(commitId).getTree());
@@ -168,58 +179,63 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 				}
 			}
 	
+			Matcher matcher = new PathMatcher();
 			int indexed = 0;
 			int checked = 0;
 			while (treeWalk.next()) {
 				if ((treeWalk.getRawMode(0) & FileMode.TYPE_MASK) == FileMode.TYPE_FILE 
 						&& (treeWalk.getTreeCount() == 1 || !treeWalk.idEqual(0, 1))) {
-					ObjectId blobId = treeWalk.getObjectId(0);
 					String blobPath = treeWalk.getPathString();
-					String blobName = treeWalk.getNameString();
 					
-					BooleanQuery.Builder builder = new BooleanQuery.Builder();
-					builder.add(BLOB_HASH.getTermQuery(blobId.name()), Occur.MUST);
-					builder.add(BLOB_PATH.getTermQuery(blobPath), Occur.MUST);
-					BooleanQuery query = builder.build();
-					
-					final AtomicReference<String> blobIndexVersionRef = new AtomicReference<>(null);
-					if (searcher != null) {
-						searcher.search(query, new SimpleCollector() {
-	
-							private LeafReaderContext context;
-	
-							@Override
-							public void collect(int doc) throws IOException {
-								blobIndexVersionRef.set(searcher.doc(context.docBase+doc).get(BLOB_INDEX_VERSION.name()));
+					if (filePatterns.matches(matcher, blobPath)) {
+						ObjectId blobId = treeWalk.getObjectId(0);
+						String blobName = treeWalk.getNameString();
+						
+						BooleanQuery.Builder builder = new BooleanQuery.Builder();
+						builder.add(BLOB_HASH.getTermQuery(blobId.name()), Occur.MUST);
+						builder.add(BLOB_PATH.getTermQuery(blobPath), Occur.MUST);
+						BooleanQuery query = builder.build();
+						
+						final AtomicReference<String> blobIndexVersionRef = new AtomicReference<>(null);
+						if (searcher != null) {
+							searcher.search(query, new SimpleCollector() {
+		
+								private LeafReaderContext context;
+		
+								@Override
+								public void collect(int doc) throws IOException {
+									blobIndexVersionRef.set(searcher.doc(context.docBase+doc).get(BLOB_INDEX_VERSION.name()));
+								}
+		
+								@Override
+								protected void doSetNextReader(LeafReaderContext context) throws IOException {
+									this.context = context;
+								}
+		
+								@Override
+								public ScoreMode scoreMode() {
+									return ScoreMode.COMPLETE_NO_SCORES;
+								}
+								
+							});
+							checked++;
+						}
+		
+						SymbolExtractor<Symbol> extractor = SymbolExtractorRegistry.getExtractor(blobName);
+						String currentBlobIndexVersion = getIndexVersion(extractor);
+						String blobIndexVersion = blobIndexVersionRef.get();
+						if (blobIndexVersion != null) {
+							if (!blobIndexVersion.equals(currentBlobIndexVersion)) {
+								writer.deleteDocuments(query);
+								indexBlob(writer, repository, extractor, blobId, blobPath);
+								indexed++;
 							}
-	
-							@Override
-							protected void doSetNextReader(LeafReaderContext context) throws IOException {
-								this.context = context;
-							}
-	
-							@Override
-							public ScoreMode scoreMode() {
-								return ScoreMode.COMPLETE_NO_SCORES;
-							}
-							
-						});
-						checked++;
-					}
-	
-					SymbolExtractor<Symbol> extractor = SymbolExtractorRegistry.getExtractor(blobName);
-					String currentBlobIndexVersion = getIndexVersion(extractor);
-					String blobIndexVersion = blobIndexVersionRef.get();
-					if (blobIndexVersion != null) {
-						if (!blobIndexVersion.equals(currentBlobIndexVersion)) {
-							writer.deleteDocuments(query);
+						} else {
 							indexBlob(writer, repository, extractor, blobId, blobPath);
 							indexed++;
 						}
-					} else {
-						indexBlob(writer, repository, extractor, blobId, blobPath);
-						indexed++;
 					}
+					
 				}
 			}
 	
@@ -327,7 +343,8 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 		try (IndexWriter writer = new IndexWriter(directory, writerConfig)) {
 			try {
 				logger.debug("Indexing commit (project: {}, commit: {})", project.getPath(), commit.getName());
-				IndexResult indexResult = index(project.getRepository(), commit, writer, searcher);
+				IndexResult indexResult = index(projectManager.getRepository(project.getId()), 
+						commit, writer, searcher, project.findCodeAnalysisPatterns());
 				writer.commit();
 				return indexResult;
 			} catch (Exception e) {
@@ -373,20 +390,29 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 	}
 
 	@Override
-	public boolean isIndexed(Project project, ObjectId commitId) {
-		File indexDir = storageManager.getProjectIndexDir(project.getId());
-		try (Directory directory = FSDirectory.open(indexDir.toPath())) {
-			if (DirectoryReader.indexExists(directory)) {
-				try (IndexReader reader = DirectoryReader.open(directory)) {
-					IndexSearcher searcher = new IndexSearcher(reader);
-					return getIndexVersion().equals(getCommitIndexVersion(searcher, commitId));
+	public boolean isIndexed(Long projectId, ObjectId commitId) {
+		return projectManager.runOnProjectServer(projectId, new ClusterTask<Boolean>() {
+
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public Boolean call() throws Exception {
+				File indexDir = storageManager.getProjectIndexDir(projectId);
+				try (Directory directory = FSDirectory.open(indexDir.toPath())) {
+					if (DirectoryReader.indexExists(directory)) {
+						try (IndexReader reader = DirectoryReader.open(directory)) {
+							IndexSearcher searcher = new IndexSearcher(reader);
+							return getIndexVersion().equals(getCommitIndexVersion(searcher, commitId));
+						}
+					} else {
+						return false;
+					}
+				} catch (IOException e) {
+					throw new RuntimeException(e);
 				}
-			} else {
-				return false;
 			}
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
+			
+		});
 	}
 
 	@Sessional
@@ -394,7 +420,8 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 	public void on(RefUpdated event) {
 		// only index branches at back end, tags will be indexed on demand from GUI 
 		// as many tags might be pushed all at once when the repository is imported 
-		if (event.getRefName().startsWith(Constants.R_HEADS) && !event.getNewCommitId().equals(ObjectId.zeroId())) {
+		if (event.getRefName().startsWith(Constants.R_HEADS) 
+				&& !event.getNewCommitId().equals(ObjectId.zeroId())) {
 			IndexWork work = new IndexWork(BACKEND_INDEXING_PRIORITY, event.getNewCommitId());
 			batchWorkManager.submit(getBatchWorker(event.getProject().getId()), work);
 		}
@@ -403,33 +430,46 @@ public class DefaultCodeIndexManager implements CodeIndexManager {
 	@Sessional
 	@Listen
 	public void on(SystemStarted event) {
-		for (Project project: projectManager.query()) {
-			File indexDir = storageManager.getProjectIndexDir(project.getId());
-			if (indexDir.exists()) {
-				try (Directory directory = FSDirectory.open(indexDir.toPath())) {
-					if (DirectoryReader.indexExists(directory)) {
-						try (IndexReader reader = DirectoryReader.open(directory)) {
-						} catch (IndexFormatTooOldException e) {
-							FileUtils.cleanDir(indexDir);
-						}
-					} 
-				} catch (IOException e) {
-					throw new RuntimeException(e);
+		Collection<Long> projectIds = projectManager.getIds();
+		for (File file: storageManager.getProjectsDir().listFiles()) {
+			Long projectId = Long.valueOf(file.getName());
+			if (projectIds.contains(projectId)) {
+				File indexDir = storageManager.getProjectIndexDir(projectId);
+				if (indexDir.exists()) {
+					try (Directory directory = FSDirectory.open(indexDir.toPath())) {
+						if (DirectoryReader.indexExists(directory)) {
+							try (IndexReader reader = DirectoryReader.open(directory)) {
+							} catch (IndexFormatTooOldException e) {
+								FileUtils.cleanDir(indexDir);
+							}
+						} 
+					} catch (IOException e) {
+						throw new RuntimeException(e);
+					}
 				}
 			}
 		}
 	}
 	
-	@Sessional
 	@Override
-	public void indexAsync(Project project, ObjectId commitId) {
+	public void indexAsync(Long projectId, ObjectId commitId) {
 		int priority;
 		if (RequestCycle.get() != null)
 			priority = UI_INDEXING_PRIORITY;
 		else
 			priority = BACKEND_INDEXING_PRIORITY;
-		IndexWork work = new IndexWork(priority, commitId);
-		batchWorkManager.submit(getBatchWorker(project.getId()), work);
+		projectManager.runOnProjectServer(projectId, new ClusterTask<Void>() {
+
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public Void call() throws Exception {
+				IndexWork work = new IndexWork(priority, commitId);
+				batchWorkManager.submit(getBatchWorker(projectId), work);
+				return null;
+			}
+			
+		});
 	}
 	
 	private static class IndexWork extends Prioritized {

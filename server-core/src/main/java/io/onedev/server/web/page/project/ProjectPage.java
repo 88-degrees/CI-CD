@@ -7,7 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.validation.ValidationException;
+import javax.persistence.EntityNotFoundException;
+import javax.servlet.http.HttpServletResponse;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.wicket.Component;
@@ -26,6 +27,9 @@ import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.markup.repeater.RepeatingView;
 import org.apache.wicket.model.IModel;
 import org.apache.wicket.model.LoadableDetachableModel;
+import org.apache.wicket.request.Request;
+import org.apache.wicket.request.cycle.RequestCycle;
+import org.apache.wicket.request.flow.RedirectToUrlException;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 import org.eclipse.jgit.lib.ObjectId;
 
@@ -52,6 +56,7 @@ import io.onedev.server.web.component.project.avatar.ProjectAvatar;
 import io.onedev.server.web.component.project.childrentree.ProjectChildrenTree;
 import io.onedev.server.web.component.project.info.ProjectInfoPanel;
 import io.onedev.server.web.editable.EditableUtils;
+import io.onedev.server.web.mapper.ProjectMapperUtils;
 import io.onedev.server.web.opengraph.OpenGraphHeaderMeta;
 import io.onedev.server.web.opengraph.OpenGraphHeaderMetaType;
 import io.onedev.server.web.page.layout.LayoutPage;
@@ -81,6 +86,7 @@ import io.onedev.server.web.page.project.pullrequests.create.NewPullRequestPage;
 import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPage;
 import io.onedev.server.web.page.project.setting.ContributedProjectSetting;
 import io.onedev.server.web.page.project.setting.ProjectSettingContribution;
+import io.onedev.server.web.page.project.setting.ProjectSettingPage;
 import io.onedev.server.web.page.project.setting.authorization.ProjectAuthorizationsPage;
 import io.onedev.server.web.page.project.setting.avatar.AvatarEditPage;
 import io.onedev.server.web.page.project.setting.branchprotection.BranchProtectionsPage;
@@ -88,6 +94,7 @@ import io.onedev.server.web.page.project.setting.build.ActionAuthorizationsPage;
 import io.onedev.server.web.page.project.setting.build.BuildPreservationsPage;
 import io.onedev.server.web.page.project.setting.build.DefaultFixedIssueFiltersPage;
 import io.onedev.server.web.page.project.setting.build.JobSecretsPage;
+import io.onedev.server.web.page.project.setting.codeanalysis.CodeAnalysisSettingPage;
 import io.onedev.server.web.page.project.setting.general.GeneralProjectSettingPage;
 import io.onedev.server.web.page.project.setting.pluginsettings.ContributedProjectSettingPage;
 import io.onedev.server.web.page.project.setting.servicedesk.ProjectServiceDeskSettingPage;
@@ -101,37 +108,40 @@ import io.onedev.server.web.util.ProjectAware;
 @SuppressWarnings("serial")
 public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 
-	public static final String PARAM_PROJECT = "project";
-	
 	protected final IModel<Project> projectModel;
 	
 	private transient Map<ObjectId, Collection<Build>> buildsCache;
 	
-	public static PageParameters paramsOf(Long projectId) {
-		PageParameters params = new PageParameters();
-		params.add(PARAM_PROJECT, projectId);
-		return params;
-	}
-	
-	public static PageParameters paramsOf(Project project) {
-		return paramsOf(project.getId());
-	}
-	
 	public ProjectPage(PageParameters params) {
 		super(params);
 
-		String projectIdString = params.get(PARAM_PROJECT).toOptionalString();
-		if (StringUtils.isBlank(projectIdString))
-			throw new RestartResponseException(ProjectListPage.class);
-
-		Long projectId;
-		try {
-			projectId = Long.valueOf(projectIdString);
-		} catch (NumberFormatException e) {
-			throw new ValidationException("Invalid project id: " + projectIdString);
+		Request request = RequestCycle.get().getRequest();
+		String requestUrl = request.getUrl().toString();
+		requestUrl = StringUtils.stripStart(requestUrl, "/");
+		if (requestUrl.startsWith("projects/")) {
+			requestUrl = StringUtils.stripStart(requestUrl.substring("projects/".length()), "/");
+			Long projectId = Long.valueOf(StringUtils.substringBefore(requestUrl, "/"));
+			Project project = getProjectManager().load(projectId);
+			String suffix = StringUtils.substringAfter(requestUrl, "/");
+			
+			String redirectUrl = "/" + project.getPath();
+			if (StringUtils.isNotBlank(suffix)) 
+				redirectUrl += "/~" + suffix;
+			
+			throw new RedirectToUrlException(redirectUrl, HttpServletResponse.SC_MOVED_PERMANENTLY);
 		}
+	
+		String projectPath = params.get(ProjectMapperUtils.PARAM_PROJECT).toOptionalString();
+		if (projectPath == null)
+			throw new RestartResponseException(ProjectListPage.class);
 		
-		Project project = OneDev.getInstance(ProjectManager.class).load(projectId);
+		projectPath = StringUtils.strip(projectPath, "/");
+		
+		Project project = getProjectManager().findByPath(projectPath);
+		if (project == null)
+			throw new EntityNotFoundException();
+
+		Long projectId = project.getId();
 		projectModel = new LoadableDetachableModel<Project>() {
 
 			@Override
@@ -150,6 +160,14 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 			
 		};
 		projectModel.setObject(project);
+		
+		if (!(this instanceof ProjectSettingPage) 
+				&& !(this instanceof ProjectChildrenPage)
+				&& !(this instanceof NoProjectStoragePage) 
+				&& getProject().getStorageServerUUID(false) == null) {
+			throw new RestartResponseException(NoProjectStoragePage.class, 
+					NoProjectStoragePage.paramsOf(getProject()));
+		}
 	}
 	
 	protected Map<String, ObjectId> getObjectIdCache() {
@@ -255,6 +273,9 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 			settingMenuItems.add(new SidebarMenuItem.Page(null, "Tag Protection", 
 					TagProtectionsPage.class, TagProtectionsPage.paramsOf(getProject())));
 			
+			settingMenuItems.add(new SidebarMenuItem.Page(null, "Code Analysis", 
+					CodeAnalysisSettingPage.class, CodeAnalysisSettingPage.paramsOf(getProject())));
+			
 			List<SidebarMenuItem> buildSettingMenuItems = new ArrayList<>();
 			
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Job Secrets", 
@@ -289,7 +310,7 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 			menuItems.add(new SidebarMenuItem.SubMenu("sliders", "Settings", settingMenuItems));
 		}
 		
-		String avatarUrl = OneDev.getInstance(AvatarManager.class).getAvatarUrl(getProject().getId());
+		String avatarUrl = OneDev.getInstance(AvatarManager.class).getProjectAvatarUrl(getProject().getId());
 		SidebarMenu.Header menuHeader = new SidebarMenu.Header(avatarUrl, getProject().getName()) {
 			
 			@Override
@@ -468,7 +489,7 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 		}
 		
 		String urlOfProjectImage = getSettingManager().getSystemSetting().getServerUrl() +
-				OneDev.getInstance(AvatarManager.class).getAvatarUrl(getProject().getId());
+				OneDev.getInstance(AvatarManager.class).getProjectAvatarUrl(getProject().getId());
 		
 		new OpenGraphHeaderMeta(OpenGraphHeaderMetaType.Title, getProject().getPath()).render(response);
 		new OpenGraphHeaderMeta(OpenGraphHeaderMetaType.Description, description).render(response);
@@ -487,7 +508,7 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 	
 	protected abstract void navToProject(Project project);
 	
-	private ProjectManager getProjectManager() {
+	protected static ProjectManager getProjectManager() {
 		return OneDev.getInstance(ProjectManager.class);
 	}
 	
@@ -504,5 +525,20 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 		}
 		return builds;
 	}
-
+	
+	public static PageParameters paramsOf(Long projectId) {
+		ProjectFacade project = getProjectManager().findFacadeById(projectId);
+		return paramsOf(project.getPath());
+	}
+	
+	public static PageParameters paramsOf(String projectPath) {
+		PageParameters params = new PageParameters();
+		params.add(ProjectMapperUtils.PARAM_PROJECT, projectPath);
+		return params;
+	}
+	
+	public static PageParameters paramsOf(Project project) {
+		return paramsOf(project.getPath());
+	}
+	
 }

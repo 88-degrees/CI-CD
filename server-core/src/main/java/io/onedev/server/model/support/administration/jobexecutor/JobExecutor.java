@@ -13,20 +13,22 @@ import javax.annotation.Nullable;
 import javax.validation.constraints.NotEmpty;
 import javax.ws.rs.core.Response;
 
-import org.apache.wicket.protocol.ws.api.IWebSocketConnection;
-
 import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
 
 import io.onedev.commons.loader.ExtensionPoint;
 import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
-import io.onedev.server.buildspec.job.JobContext;
-import io.onedev.server.terminal.ShellSession;
+import io.onedev.server.ServerConfig;
+import io.onedev.server.job.AgentInfo;
+import io.onedev.server.job.JobContext;
+import io.onedev.server.search.entity.agent.AgentQuery;
+import io.onedev.server.terminal.Shell;
+import io.onedev.server.terminal.Terminal;
 import io.onedev.server.terminal.TerminalManager;
 import io.onedev.server.util.ExceptionUtils;
 import io.onedev.server.util.PKCS12CertExtractor;
-import io.onedev.server.util.ServerConfig;
 import io.onedev.server.util.usage.Usage;
 import io.onedev.server.util.validation.annotation.DnsName;
 import io.onedev.server.web.editable.annotation.Editable;
@@ -46,6 +48,8 @@ public abstract class JobExecutor implements Serializable {
 	private String jobAuthorization;
 	
 	private boolean shellAccessEnabled;
+	
+	private boolean sitePublishEnabled;
 	
 	private int cacheTTL = 7;
 	
@@ -80,7 +84,17 @@ public abstract class JobExecutor implements Serializable {
 	public void setShellAccessEnabled(boolean shellAccessEnabled) {
 		this.shellAccessEnabled = shellAccessEnabled;
 	}
-	
+
+	@Editable(order=30, description="Enable this to allow to run site publish step. OneDev will serve project "
+			+ "site files as is. To avoid XSS attack, make sure this executor can only be used by trusted jobs")
+	public boolean isSitePublishEnabled() {
+		return sitePublishEnabled;
+	}
+
+	public void setSitePublishEnabled(boolean sitePublishEnabled) {
+		this.sitePublishEnabled = sitePublishEnabled;
+	}
+
 	@SuppressWarnings("unused")
 	private static boolean isTerminalSupported() {
 		return OneDev.getInstance(TerminalManager.class).isTerminalSupported();
@@ -110,11 +124,14 @@ public abstract class JobExecutor implements Serializable {
 		this.cacheTTL = cacheTTL;
 	}
 	
-	public abstract void execute(JobContext jobContext);
+	@Nullable
+	public abstract AgentQuery getAgentRequirement();
+	
+	public abstract void execute(JobContext jobContext, TaskLogger jobLogger, @Nullable AgentInfo agentInfo);
 	
 	public abstract void resume(JobContext jobContext);
 	
-	public abstract ShellSession openShell(IWebSocketConnection connection, JobContext jobContext);
+	public abstract Shell openShell(JobContext jobContext, Terminal terminal);
 	
 	public boolean isPlaceholderAllowed() {
 		return true;

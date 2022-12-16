@@ -12,11 +12,11 @@ import javax.persistence.criteria.Root;
 
 import com.google.common.base.Preconditions;
 
-import io.onedev.commons.loader.ListenerRegistry;
 import io.onedev.server.entitymanager.PullRequestChangeManager;
 import io.onedev.server.entitymanager.PullRequestReviewManager;
-import io.onedev.server.event.pullrequest.PullRequestReviewRequested;
-import io.onedev.server.event.pullrequest.PullRequestReviewerRemoved;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.pullrequest.PullRequestReviewRequested;
+import io.onedev.server.event.project.pullrequest.PullRequestReviewerRemoved;
 import io.onedev.server.model.PullRequest;
 import io.onedev.server.model.PullRequestChange;
 import io.onedev.server.model.PullRequestReview;

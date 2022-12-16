@@ -6,8 +6,7 @@ import java.util.List;
 
 import javax.annotation.Nullable;
 
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.server.OneDev;
+import io.onedev.server.model.Project;
 import io.onedev.server.util.BeanUtils;
 import io.onedev.server.util.DateUtils;
 import io.onedev.server.util.ReflectionUtils;
@@ -96,7 +95,7 @@ public class EditableUtils {
 			} else {
 				description = VariableInterpolator.HELP;
 			}
-			return StringUtils.replace(description, "$docRoot", OneDev.getInstance().getDocRoot());
+			return description;
 		} else if (element.getAnnotation(WorkingPeriod.class) != null) {
 			String description = getDescription(element, editable);
 			if (description.length() != 0) {
@@ -106,11 +105,11 @@ public class EditableUtils {
 			} else {
 				description = DateUtils.WORKING_PERIOD_HELP;
 			}
-			return StringUtils.replace(description, "$docRoot", OneDev.getInstance().getDocRoot());
+			return description;
 		} else {
 			String description = getDescription(element, editable);
 			if (description.length() != 0) 
-				return StringUtils.replace(description, "$docRoot", OneDev.getInstance().getDocRoot());
+				return description;
 			else 
 				return null;
 		} 
@@ -140,6 +139,22 @@ public class EditableUtils {
 	@Nullable
 	public static String getPlaceholder(AnnotatedElement element) {
 		Editable editable = element.getAnnotation(Editable.class);
+		Project project = Project.get();
+		if (project != null && project.getParent() == null) {
+			String placeholder = editable.rootProjectPlaceholder();
+			if (placeholder.length() != 0) {
+				return placeholder;
+			} else if (editable.rootProjectPlaceholderProvider().length() != 0) {
+				Class<?> clazz;
+				if (element instanceof Class) 
+					clazz = (Class<?>) element;
+				else if (element instanceof Method)
+					clazz = ((Method) element).getDeclaringClass();
+				else 
+					throw new RuntimeException("Unexpected element type: " + element);
+				return (String) ReflectionUtils.invokeStaticMethod(clazz, editable.rootProjectPlaceholderProvider());
+			}
+		}
 		String placeholder = editable.placeholder();
 		if (placeholder.length() != 0) {
 			return placeholder;

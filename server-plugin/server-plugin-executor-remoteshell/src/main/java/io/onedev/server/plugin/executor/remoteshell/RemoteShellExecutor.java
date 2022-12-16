@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 
-import org.apache.wicket.protocol.ws.api.IWebSocketConnection;
 import org.eclipse.jetty.websocket.api.Session;
 
 import io.onedev.agent.AgentData;
@@ -19,14 +18,18 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
 import io.onedev.server.buildspec.job.CacheSpec;
-import io.onedev.server.buildspec.job.JobContext;
-import io.onedev.server.job.resource.AgentAwareRunnable;
-import io.onedev.server.job.resource.ResourceManager;
+import io.onedev.server.cluster.ClusterManager;
+import io.onedev.server.job.AgentInfo;
+import io.onedev.server.job.JobContext;
+import io.onedev.server.job.ResourceAllocator;
+import io.onedev.server.job.ResourceRunnable;
+import io.onedev.server.job.log.LogManager;
+import io.onedev.server.job.log.LogTask;
 import io.onedev.server.plugin.executor.servershell.ServerShellExecutor;
 import io.onedev.server.search.entity.agent.AgentQuery;
-import io.onedev.server.tasklog.JobLogManager;
-import io.onedev.server.terminal.RemoteSession;
-import io.onedev.server.terminal.ShellSession;
+import io.onedev.server.terminal.AgentShell;
+import io.onedev.server.terminal.Shell;
+import io.onedev.server.terminal.Terminal;
 import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.editable.annotation.Horizontal;
 
@@ -56,77 +59,105 @@ public class RemoteShellExecutor extends ServerShellExecutor {
 	}
 
 	@Override
-	public void execute(JobContext jobContext) {
-		AgentQuery parsedQeury = AgentQuery.parse(agentQuery, true);
-		TaskLogger jobLogger = jobContext.getLogger();
-		OneDev.getInstance(ResourceManager.class).run(new AgentAwareRunnable() {
+	public AgentQuery getAgentRequirement() {
+		return AgentQuery.parse(agentQuery, true);		
+	}
+	
+	@Override
+	public void execute(JobContext jobContext, TaskLogger jobLogger, AgentInfo agentInfo) {
+		jobLogger.log(String.format("Executing job (executor: %s, agent: %s)...", 
+				getName(), agentInfo.getData().getName()));
 
-			@Override
-			public void runOn(Long agentId, Session agentSession, AgentData agentData) {
-				jobLogger.log(String.format("Executing job (executor: %s, agent: %s)...", getName(), agentData.getName()));
-				jobContext.notifyJobRunning(agentId);
-
-				if (!jobContext.getServices().isEmpty()) {
-					throw new ExplicitException("This job requires services, which can only be supported "
-							+ "by docker aware executors");
-				}
-				
-				for (CacheSpec cacheSpec: jobContext.getCacheSpecs()) {
-					if (new File(cacheSpec.getPath()).isAbsolute()) {
-						throw new ExplicitException("Shell executor does not support "
-								+ "absolute cache path: " + cacheSpec.getPath());
-					}
-				}
-				
-				String jobToken = jobContext.getJobToken();
-				List<String> trustCertContent = getTrustCertContent();
-				ShellJobData jobData = new ShellJobData(jobToken, getName(), jobContext.getProjectPath(), 
-						jobContext.getProjectId(), jobContext.getRefName(), jobContext.getCommitId().name(), 
-						jobContext.getBuildNumber(), jobContext.getActions(), trustCertContent);
-				
-				RemoteShellExecutor.this.agentSession = agentSession;
-				try {
-					WebsocketUtils.call(agentSession, jobData, 0);
-				} catch (InterruptedException | TimeoutException e) {
-					new Message(MessageTypes.CANCEL_JOB, jobToken).sendBy(agentSession);
-				} 
-				
-			}
-			
-		}, new HashMap<>(), parsedQeury, jobContext.getResourceRequirements(), jobLogger);
+		if (!jobContext.getServices().isEmpty()) {
+			throw new ExplicitException("This job requires services, which can only be supported "
+					+ "by docker aware executors");
+		}
 		
+		for (CacheSpec cacheSpec: jobContext.getCacheSpecs()) {
+			if (new File(cacheSpec.getPath()).isAbsolute()) {
+				throw new ExplicitException("Shell executor does not support "
+						+ "absolute cache path: " + cacheSpec.getPath());
+			}
+		}
+		
+		String jobToken = jobContext.getJobToken();
+		List<String> trustCertContent = getTrustCertContent();
+		ShellJobData jobData = new ShellJobData(jobToken, getName(), jobContext.getProjectPath(), 
+				jobContext.getProjectId(), jobContext.getRefName(), jobContext.getCommitId().name(), 
+				jobContext.getBuildNumber(), jobContext.getActions(), trustCertContent);
+
+		agentSession = agentInfo.getSession();
+		try {
+			WebsocketUtils.call(agentSession, jobData, 0);
+		} catch (InterruptedException | TimeoutException e) {
+			new Message(MessageTypes.CANCEL_JOB, jobToken).sendBy(agentSession);
+		}
+	}
+	
+	private LogManager getLogManager() {
+		return OneDev.getInstance(LogManager.class);
+	}
+	
+	private ClusterManager getClusterManager() {
+		return OneDev.getInstance(ClusterManager.class);
+	}
+	
+	private ResourceAllocator getResourceAllocator() {
+		return OneDev.getInstance(ResourceAllocator.class);
 	}
 
 	@Override
 	public void test(TestData testData, TaskLogger jobLogger) {
-		JobLogManager logManager = OneDev.getInstance(JobLogManager.class);
 		String jobToken = UUID.randomUUID().toString();
-		logManager.registerLogger(jobToken, jobLogger);
+		UUID localServerUUID = getClusterManager().getLocalServerUUID();
+		getLogManager().addJobLogger(jobToken, jobLogger);
 		try {
-			AgentQuery parsedQeury = AgentQuery.parse(agentQuery, true);
-			
-			OneDev.getInstance(ResourceManager.class).run(new AgentAwareRunnable() {
-	
-				@Override
-				public void runOn(Long agentId, Session agentSession, AgentData agentData) {
-					jobLogger.log(String.format("Testing on agent '%s'...", agentData.getName()));
-	
-					TestShellJobData jobData = new TestShellJobData(jobToken, testData.getCommands());
-					
-					try {
-						WebsocketUtils.call(agentSession, jobData, 0);
-					} catch (InterruptedException | TimeoutException e) {
-						new Message(MessageTypes.CANCEL_JOB, jobToken).sendBy(agentSession);
-					} 
-					
-				}
-				
-			}, new HashMap<>(), parsedQeury, new HashMap<>(), jobLogger);
+			jobLogger.log("Waiting for resources...");
+			getResourceAllocator().run(
+					new TestRunnable(jobToken, this, testData, localServerUUID), 
+					getAgentRequirement(), new HashMap<>());
 		} finally {
-			logManager.deregisterLogger(jobToken);
+			getLogManager().removeJobLogger(jobToken);
 		}
 	}
 
+	private void testLocal(String jobToken, AgentInfo agentInfo, 
+			TestData testData, UUID dispatcherMemberUUID) {
+		TaskLogger jobLogger = new TaskLogger() {
+
+			@Override
+			public void log(String message, String sessionId) {
+				getClusterManager().runOnServer(
+						dispatcherMemberUUID, 
+						new LogTask(jobToken, message, sessionId));
+			}
+			
+		};
+		
+		AgentData agentData = agentInfo.getData();
+		Session agentSession = agentInfo.getSession();
+		jobLogger.log(String.format("Testing on agent '%s'...", agentData.getName()));
+		
+		TestShellJobData jobData = new TestShellJobData(jobToken, testData.getCommands());
+
+		if (getLogManager().getJobLogger(jobToken) == null) {
+			getLogManager().addJobLogger(jobToken, jobLogger);
+			try {
+				WebsocketUtils.call(agentSession, jobData, 0);
+			} catch (InterruptedException | TimeoutException e) {
+				new Message(MessageTypes.CANCEL_JOB, jobToken).sendBy(agentSession);
+			} finally {
+				getLogManager().removeJobLogger(jobToken);
+			}
+		} else {
+			try {
+				WebsocketUtils.call(agentSession, jobData, 0);
+			} catch (InterruptedException | TimeoutException e) {
+				new Message(MessageTypes.CANCEL_JOB, jobToken).sendBy(agentSession);
+			} 
+		}
+	}
+	
 	@Override
 	public void resume(JobContext jobContext) {
 		if (agentSession != null) 
@@ -134,11 +165,38 @@ public class RemoteShellExecutor extends ServerShellExecutor {
 	}
 
 	@Override
-	public ShellSession openShell(IWebSocketConnection connection, JobContext jobContext) {
+	public Shell openShell(JobContext jobContext, Terminal terminal) {
 		if (agentSession != null) 
-			return new RemoteSession(connection, agentSession, jobContext.getJobToken());
+			return new AgentShell(terminal, agentSession, jobContext.getJobToken());
 		else
 			throw new ExplicitException("Shell not ready");
 	}
 
+	private static class TestRunnable implements ResourceRunnable {
+
+		private static final long serialVersionUID = 1L;
+
+		private final String jobToken;
+		
+		private final RemoteShellExecutor jobExecutor;
+		
+		private final TestData testData;
+		
+		private final UUID dispatcherServerUUID;
+		
+		public TestRunnable(String jobToken, RemoteShellExecutor jobExecutor, 
+				TestData testData, UUID dispatcherServerUUID) {
+			this.jobToken = jobToken;
+			this.jobExecutor = jobExecutor;
+			this.testData = testData;
+			this.dispatcherServerUUID = dispatcherServerUUID;
+		}
+		
+		@Override
+		public void run(AgentInfo agentInfo) {
+			jobExecutor.testLocal(jobToken, agentInfo, testData, dispatcherServerUUID);
+		}
+		
+	}
+	
 }

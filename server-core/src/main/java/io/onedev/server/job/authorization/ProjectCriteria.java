@@ -10,11 +10,11 @@ import javax.persistence.criteria.From;
 import javax.persistence.criteria.Predicate;
 
 import io.onedev.commons.utils.PathUtils;
-import io.onedev.server.util.ProjectAndBranch;
+import io.onedev.server.job.authorization.JobAuthorization.Context;
 import io.onedev.server.util.criteria.Criteria;
 import io.onedev.server.util.match.WildcardUtils;
 
-public class ProjectCriteria extends Criteria<ProjectAndBranch> {
+public class ProjectCriteria extends Criteria<Context> {
 
 	private static final long serialVersionUID = 1L;
 	
@@ -25,8 +25,8 @@ public class ProjectCriteria extends Criteria<ProjectAndBranch> {
 	}
 
 	@Override
-	public boolean matches(ProjectAndBranch projectAndBranch) {
-		return WildcardUtils.matchPath(projectPath, projectAndBranch.getProject().getPath());
+	public boolean matches(Context context) {
+		return WildcardUtils.matchPath(projectPath, context.getProject().getPath());
 	}
 
 	@Override
@@ -45,7 +45,7 @@ public class ProjectCriteria extends Criteria<ProjectAndBranch> {
 	}
 
 	@Override
-	public Predicate getPredicate(CriteriaQuery<?> query, From<ProjectAndBranch, ProjectAndBranch> from,
+	public Predicate getPredicate(CriteriaQuery<?> query, From<Context, Context> from,
 			CriteriaBuilder builder) {
 		throw new UnsupportedOperationException();
 	}

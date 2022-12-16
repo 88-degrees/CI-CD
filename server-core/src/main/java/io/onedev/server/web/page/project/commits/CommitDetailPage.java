@@ -17,7 +17,6 @@ import org.apache.wicket.RestartResponseException;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
 import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.extensions.ajax.markup.html.AjaxLazyLoadPanel;
 import org.apache.wicket.markup.head.IHeaderResponse;
 import org.apache.wicket.markup.head.JavaScriptHeaderItem;
 import org.apache.wicket.markup.head.OnDomReadyHeaderItem;
@@ -58,7 +57,7 @@ import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
 import io.onedev.server.entitymanager.PullRequestManager;
 import io.onedev.server.git.BlobIdent;
 import io.onedev.server.git.GitUtils;
-import io.onedev.server.git.RefInfo;
+import io.onedev.server.git.service.RefFacade;
 import io.onedev.server.infomanager.CommitInfoManager;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.CodeComment;
@@ -73,6 +72,7 @@ import io.onedev.server.util.JobSecretAuthorizationContext;
 import io.onedev.server.util.JobSecretAuthorizationContextAware;
 import io.onedev.server.util.diff.WhitespaceOption;
 import io.onedev.server.web.asset.emoji.Emojis;
+import io.onedev.server.web.component.AjaxLazyLoadPanel;
 import io.onedev.server.web.component.branch.create.CreateBranchLink;
 import io.onedev.server.web.component.contributorpanel.ContributorPanel;
 import io.onedev.server.web.component.createtag.CreateTagLink;
@@ -240,26 +240,26 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 					}
 					
 				};
-				fragment.add(new ListView<RefInfo>("refs", new LoadableDetachableModel<List<RefInfo>>() {
+				fragment.add(new ListView<RefFacade>("refs", new LoadableDetachableModel<List<RefFacade>>() {
 
 					@Override
-					protected List<RefInfo> load() {
+					protected List<RefFacade> load() {
 						Collection<ObjectId> descendants = OneDev.getInstance(CommitInfoManager.class)
-								.getDescendants(getProject(), Sets.newHashSet(getCommit().getId()));
+								.getDescendants(getProject().getId(), Sets.newHashSet(getCommit().getId()));
 						descendants.add(getCommit().getId());
 					
-						List<RefInfo> refs = new ArrayList<>();
-						refs.addAll(getProject().getBranchRefInfos());
-						refs.addAll(getProject().getTagRefInfos());
+						List<RefFacade> refs = new ArrayList<>();
+						refs.addAll(getProject().getBranchRefs());
+						refs.addAll(getProject().getTagRefs());
 						return refs.stream().filter(ref->descendants.contains(ref.getPeeledObj())).collect(Collectors.toList());
 					}
 					
 				}) {
 
 					@Override
-					protected void populateItem(ListItem<RefInfo> item) {
-						String ref = item.getModelObject().getRef().getName();
-						String branch = GitUtils.ref2branch(ref); 
+					protected void populateItem(ListItem<RefFacade> item) {
+						String refName = item.getModelObject().getName();
+						String branch = GitUtils.ref2branch(refName); 
 						if (branch != null) {
 							BlobIdent blobIdent = new BlobIdent(branch, null, FileMode.TREE.getBits());
 							ProjectBlobPage.State state = new ProjectBlobPage.State(blobIdent);
@@ -270,7 +270,7 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 							item.add(link);
 							item.add(AttributeAppender.append("class", "branch ref"));
 						} else {
-							String tag = Preconditions.checkNotNull(GitUtils.ref2tag(ref));
+							String tag = Preconditions.checkNotNull(GitUtils.ref2tag(refName));
 							BlobIdent blobIdent = new BlobIdent(tag, null, FileMode.TREE.getBits());
 							ProjectBlobPage.State state = new ProjectBlobPage.State(blobIdent);
 							Link<Void> link = new ViewStateAwarePageLink<Void>("link", ProjectBlobPage.class, 

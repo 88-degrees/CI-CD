@@ -44,7 +44,7 @@ public class PublishCPDReportStep extends PublishProblemReportStep {
 
 	private static final long serialVersionUID = 1L;
 	
-	@Editable(order=100, description="Specify CPD result xml file relative to <a href='$docRoot/pages/concepts.md#job-workspace'>job workspace</a>, "
+	@Editable(order=100, description="Specify CPD result xml file under <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a>, "
 			+ "for instance, <tt>target/cpd.xml</tt>. Use * or ? for pattern match")
 	@Interpolative(variableSuggester="suggestVariables")
 	@Patterns(path=true)
@@ -122,7 +122,7 @@ public class PublishCPDReportStep extends PublishProblemReportStep {
 							ProjectBlobPage.fillParams(params, state);
 							
 							PageParametersEncoder paramsEncoder = new PageParametersEncoder();
-							String url  = "/projects/" + build.getProject().getId() + "/blob/" + paramsEncoder.encodePageParameters(params);
+							String url  = "/" + build.getProject().getPath() + "/~files/" + paramsEncoder.encodePageParameters(params);
 							String message = String.format(""
 									+ "Duplicated with '%s' at <a href='%s'>line %s - %s</a>", 
 									HtmlEscape.escapeHtml5(duplicateWith.blobPath), url, duplicateWith.range.getFromRow()+1, 

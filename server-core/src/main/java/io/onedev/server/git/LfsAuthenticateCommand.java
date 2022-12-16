@@ -54,7 +54,7 @@ public class LfsAuthenticateCommand implements Command, ServerSessionAware {
 	
 	private static final Logger logger = LoggerFactory.getLogger(LfsAuthenticateCommand.class);
 	
-	private final String command;
+	private final String commandString;
 	
     private OutputStream out;
     
@@ -64,8 +64,8 @@ public class LfsAuthenticateCommand implements Command, ServerSessionAware {
     
 	private ServerSession session;
 
-	LfsAuthenticateCommand(String command) {
-		this.command = command;
+	LfsAuthenticateCommand(String commandString) {
+		this.commandString = commandString;
 	}
 	
     @Override
@@ -100,7 +100,7 @@ public class LfsAuthenticateCommand implements Command, ServerSessionAware {
 		        try {
 		        	String accessToken = OneDev.getInstance(UserManager.class).load(userId).getAccessToken();
 		        	String projectPath = StringUtils.strip(StringUtils.substringBefore(
-		        			command.substring(COMMAND_PREFIX.length()+1), " "), "/\\");
+		        			commandString.substring(COMMAND_PREFIX.length()+1), " "), "/\\");
 		        	Project project = OneDev.getInstance(ProjectManager.class).findByPath(projectPath);
 		        	if (project == null)
 		        		throw new ExplicitException("Project not found: " + projectPath);

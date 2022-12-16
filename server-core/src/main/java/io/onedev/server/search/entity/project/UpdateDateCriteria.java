@@ -9,6 +9,7 @@ import javax.persistence.criteria.Path;
 import javax.persistence.criteria.Predicate;
 
 import io.onedev.server.model.Project;
+import io.onedev.server.model.ProjectUpdate;
 import io.onedev.server.search.entity.EntityQuery;
 import io.onedev.server.util.criteria.Criteria;
 
@@ -30,7 +31,7 @@ public class UpdateDateCriteria extends Criteria<Project> {
 
 	@Override
 	public Predicate getPredicate(CriteriaQuery<?> query, From<Project, Project> from, CriteriaBuilder builder) {
-		Path<Date> attribute = ProjectQuery.getPath(from, Project.PROP_UPDATE_DATE);
+		Path<Date> attribute = ProjectQuery.getPath(from, Project.PROP_UPDATE + "." + ProjectUpdate.PROP_DATE);
 		if (operator == ProjectQueryLexer.IsUntil)
 			return builder.lessThan(attribute, date);
 		else
@@ -40,9 +41,9 @@ public class UpdateDateCriteria extends Criteria<Project> {
 	@Override
 	public boolean matches(Project project) {
 		if (operator == ProjectQueryLexer.IsUntil)
-			return project.getUpdateDate().before(date);
+			return project.getUpdate().getDate().before(date);
 		else
-			return project.getUpdateDate().after(date);
+			return project.getUpdate().getDate().after(date);
 	}
 
 	@Override

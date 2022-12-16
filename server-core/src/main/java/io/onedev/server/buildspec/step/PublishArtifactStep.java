@@ -30,8 +30,8 @@ public class PublishArtifactStep extends ServerSideStep {
 	
 	private String artifacts;
 	
-	@Editable(order=50, name="From Path", placeholder="Job workspace", description="Optionally specify path "
-			+ "relative to <a href='$docRoot/pages/concepts.md#job-workspace'>job workspace</a> to publish "
+	@Editable(order=50, name="From Directory", placeholder="Job workspace", description="Optionally specify path "
+			+ "relative to <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a> to publish "
 			+ "artifacts from. Leave empty to use job workspace itself")
 	@Interpolative(variableSuggester="suggestVariables")
 	@SafePath
@@ -44,8 +44,8 @@ public class PublishArtifactStep extends ServerSideStep {
 		this.sourcePath = sourcePath;
 	}
 	
-	@Editable(order=100, description="Specify files to publish as job artifacts relative to "
-			+ "source path specified above. Use * or ? for pattern match")
+	@Editable(order=100, description="Specify files under above directory to be published. "
+			+ "Use * or ? for pattern match")
 	@Interpolative(variableSuggester="suggestVariables")
 	@Patterns(path=true)
 	@NotEmpty
@@ -69,13 +69,12 @@ public class PublishArtifactStep extends ServerSideStep {
 
 	@Override
 	public Map<String, byte[]> run(Build build, File inputDir, TaskLogger jobLogger) {
-		LockUtils.write(build.getArtifactsLockKey(), new Callable<Void>() {
+		LockUtils.write(build.getArtifactsLockName(), new Callable<Void>() {
 
 			@Override
 			public Void call() throws Exception {
-				File artifactsDir = build.getArtifactsDir();
 				OneDev.getInstance(StorageManager.class).initArtifactsDir(build.getProject().getId(), build.getNumber());
-				FileUtils.copyDirectory(inputDir, artifactsDir);
+				FileUtils.copyDirectory(inputDir, build.getArtifactsDir());
 				return null;
 			}
 			

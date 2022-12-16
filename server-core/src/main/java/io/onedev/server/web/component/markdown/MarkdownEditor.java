@@ -52,6 +52,7 @@ import com.google.common.base.Preconditions;
 
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.server.OneDev;
+import io.onedev.server.attachment.AttachmentSupport;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.markdown.MarkdownManager;
 import io.onedev.server.model.Build;
@@ -308,8 +309,6 @@ public class MarkdownEditor extends FormComponentPanel<String> {
 			container.add(new LazyResourceLoader("lazyResourceLoader", Model.of((String)null)));
 		}
 		
-		container.add(new WebMarkupContainer("syntaxHelp")
-				.add(AttributeAppender.append("href", OneDev.getInstance().getDocRoot() + "/pages/markdown-syntax.md")));
 		container.add(new WebMarkupContainer("canAttachFile").setVisible(getAttachmentSupport()!=null));
 		
 		container.add(actionBehavior = new AbstractPostAjaxBehavior() {
@@ -400,7 +399,7 @@ public class MarkdownEditor extends FormComponentPanel<String> {
 						} else {
 							userMap.put("searchKey", noSpaceName);
 						}
-						String avatarUrl = avatarManager.getAvatarUrl(user);
+						String avatarUrl = avatarManager.getUserAvatarUrl(user.getId());
 						userMap.put("avatarUrl", avatarUrl);
 						userList.add(userMap);
 					}

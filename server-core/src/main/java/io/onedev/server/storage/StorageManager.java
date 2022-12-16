@@ -4,6 +4,10 @@ import java.io.File;
 
 public interface StorageManager {
     
+	File getProjectsDir();
+	
+	File getProjectDir(Long projectId);
+	
 	/**
 	 * Get directory to store git repository of specified project
 	 * 
@@ -21,6 +25,14 @@ public interface StorageManager {
     File getProjectIndexDir(Long projectId);
 
     /**
+     * Get directory to store static content of specified project
+     * 
+     * @return
+     * 			directory to store static content. The directory will be exist after calling this method
+     */
+    File getProjectSiteDir(Long projectId);
+    
+    /**
      * Get directory to store additional info of specified project
      * 
      * @return
@@ -32,8 +44,6 @@ public interface StorageManager {
     
     void initArtifactsDir(Long projectId, Long buildNumber);
     
-    File getInfoDir();
-    
     File getIndexDir();
     
     /**
@@ -44,8 +54,6 @@ public interface StorageManager {
      */
     File getProjectAttachmentDir(Long projectId);
     
-    File getUserInfoDir(Long userId);
-    
     /**
      * Get directory to store build related files such as logs, artifacts and reports
      * 
@@ -54,6 +62,5 @@ public interface StorageManager {
      * 			will be exist after calling this method
      */
     File getBuildDir(Long projectId, Long buildNumber);
-    
-    void deleteProjectDir(Long projectId);
+
 }

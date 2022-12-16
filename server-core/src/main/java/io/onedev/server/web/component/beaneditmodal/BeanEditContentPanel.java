@@ -6,8 +6,10 @@ import java.util.Collection;
 import javax.annotation.Nullable;
 
 import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
 import org.apache.wicket.ajax.markup.html.form.AjaxButton;
+import org.apache.wicket.behavior.AttributeAppender;
 import org.apache.wicket.feedback.FencedFeedbackPanel;
 import org.apache.wicket.markup.html.WebMarkupContainer;
 import org.apache.wicket.markup.html.basic.Label;
@@ -16,6 +18,7 @@ import org.apache.wicket.markup.html.panel.Panel;
 import org.apache.wicket.request.cycle.RequestCycle;
 
 import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.web.ajaxlistener.ConfirmLeaveListener;
 import io.onedev.server.web.editable.BeanContext;
 import io.onedev.server.web.editable.BeanEditor;
 import io.onedev.server.web.editable.EditableUtils;
@@ -62,6 +65,13 @@ abstract class BeanEditContentPanel extends Panel {
 		form.add(new AjaxButton("ok") {
 
 			@Override
+			protected void onInitialize() {
+				super.onInitialize();
+				if (isDirtyAware())
+					add(AttributeAppender.append("class", "dirty-aware"));
+			}
+
+			@Override
 			protected void onSubmit(AjaxRequestTarget target, Form<?> form) {
 				super.onSubmit(target, form);
 				onSave(target);
@@ -71,6 +81,12 @@ abstract class BeanEditContentPanel extends Panel {
 		form.add(new AjaxLink<Void>("cancel") {
 
 			@Override
+			protected void updateAjaxAttributes(AjaxRequestAttributes attributes) {
+				super.updateAjaxAttributes(attributes);
+				attributes.getAjaxCallListeners().add(new ConfirmLeaveListener());
+			}
+
+			@Override
 			public void onClick(AjaxRequestTarget target) {
 				BeanEditContentPanel.this.onCancel(target);
 			}
@@ -78,6 +94,12 @@ abstract class BeanEditContentPanel extends Panel {
 		});
 		form.add(new AjaxLink<Void>("close") {
 
+			@Override
+			protected void updateAjaxAttributes(AjaxRequestAttributes attributes) {
+				super.updateAjaxAttributes(attributes);
+				attributes.getAjaxCallListeners().add(new ConfirmLeaveListener());
+			}
+			
 			@Override
 			public void onClick(AjaxRequestTarget target) {
 				BeanEditContentPanel.this.onCancel(target);
@@ -99,4 +121,9 @@ abstract class BeanEditContentPanel extends Panel {
 	protected abstract void onSave(AjaxRequestTarget target);
 	
 	protected abstract void onCancel(AjaxRequestTarget target);
+	
+	protected boolean isDirtyAware() {
+		return true;
+	}
+	
 }

@@ -13,8 +13,8 @@ import org.hibernate.criterion.Order;
 import org.hibernate.criterion.Projections;
 import org.hibernate.criterion.Restrictions;
 
-import io.onedev.commons.loader.ListenerRegistry;
 import io.onedev.commons.loader.ManagedSerializedForm;
+import io.onedev.server.event.ListenerRegistry;
 import io.onedev.server.event.entity.EntityPersisted;
 import io.onedev.server.event.entity.EntityRemoved;
 import io.onedev.server.model.AbstractEntity;
@@ -141,9 +141,8 @@ public class DefaultDao implements Dao, Serializable {
 	@Override
 	public <T extends AbstractEntity> List<T> queryAfter(Class<T> entityClass, Long afterEntityId, int count) {
 		EntityCriteria<T> criteria = EntityCriteria.of(entityClass);
+		criteria.add(Restrictions.gt(AbstractEntity.PROP_ID, afterEntityId));
 		criteria.addOrder(Order.asc(AbstractEntity.PROP_ID));
-		if (afterEntityId != null) 
-			criteria.add(Restrictions.gt(AbstractEntity.PROP_ID, afterEntityId));
 		return query(criteria, 0, count);
 	}
 	

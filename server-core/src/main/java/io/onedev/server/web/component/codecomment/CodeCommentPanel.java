@@ -36,12 +36,14 @@ import org.apache.wicket.request.cycle.RequestCycle;
 import com.google.common.collect.Sets;
 
 import io.onedev.server.OneDev;
+import io.onedev.server.attachment.AttachmentSupport;
+import io.onedev.server.attachment.ProjectAttachmentSupport;
 import io.onedev.server.entitymanager.CodeCommentManager;
 import io.onedev.server.entitymanager.CodeCommentReplyManager;
 import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
 import io.onedev.server.entitymanager.UrlManager;
 import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.infomanager.UserInfoManager;
+import io.onedev.server.infomanager.VisitInfoManager;
 import io.onedev.server.model.CodeComment;
 import io.onedev.server.model.CodeCommentReply;
 import io.onedev.server.model.CodeCommentStatusChange;
@@ -55,13 +57,11 @@ import io.onedev.server.util.facade.UserCache;
 import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
 import io.onedev.server.web.ajaxlistener.ConfirmLeaveListener;
 import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.component.markdown.AttachmentSupport;
 import io.onedev.server.web.component.markdown.MarkdownViewer;
 import io.onedev.server.web.component.markdown.SuggestionSupport;
 import io.onedev.server.web.component.project.comment.CommentInput;
 import io.onedev.server.web.component.user.ident.Mode;
 import io.onedev.server.web.component.user.ident.UserIdentPanel;
-import io.onedev.server.web.util.ProjectAttachmentSupport;
 
 @SuppressWarnings("serial")
 public abstract class CodeCommentPanel extends Panel {
@@ -431,7 +431,7 @@ public abstract class CodeCommentPanel extends Panel {
 					prevActivityContainer = newActivityContainer;
 				}
 				
-				OneDev.getInstance(UserInfoManager.class).visitCodeComment(SecurityUtils.getUser(), getComment());
+				OneDev.getInstance(VisitInfoManager.class).visitCodeComment(SecurityUtils.getUser(), getComment());
 			}
 			
 			@Override
@@ -447,7 +447,7 @@ public abstract class CodeCommentPanel extends Panel {
 	@Override
 	protected void onBeforeRender() {
 		if (SecurityUtils.getUser() != null) 
-			OneDev.getInstance(UserInfoManager.class).visitCodeComment(SecurityUtils.getUser(), getComment());
+			OneDev.getInstance(VisitInfoManager.class).visitCodeComment(SecurityUtils.getUser(), getComment());
 		super.onBeforeRender();
 	}
 

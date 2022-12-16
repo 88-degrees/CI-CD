@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.annotation.Nullable;
 import javax.validation.ConstraintValidatorContext;
+import javax.validation.constraints.NotEmpty;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Invocation;
@@ -26,14 +27,12 @@ import javax.ws.rs.core.Response;
 import org.apache.http.client.utils.URIBuilder;
 import org.glassfish.jersey.client.ClientProperties;
 import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
-import javax.validation.constraints.NotEmpty;
 import org.joda.time.format.ISODateTimeFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.unbescape.html.HtmlEscape;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.google.common.base.Preconditions;
 
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.bootstrap.SensitiveMasker;
@@ -60,7 +59,6 @@ import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 import io.onedev.server.persistence.dao.Dao;
-import io.onedev.server.storage.StorageManager;
 import io.onedev.server.util.JerseyUtils;
 import io.onedev.server.util.JerseyUtils.PageDataConsumer;
 import io.onedev.server.util.Pair;
@@ -139,7 +137,7 @@ public class ImportServer implements Serializable, Validatable {
 		return organizations;
 	}
 	
-	List<String> listRepositories(@Nullable String organization) {
+	List<String> listRepositories(@Nullable String organization, boolean includeForks) {
 		Client client = newClient();
 		try {
 			String apiEndpoint;
@@ -158,7 +156,8 @@ public class ImportServer implements Serializable, Validatable {
 			})) {
 				String repoName = repoNode.get("name").asText();
 				String ownerName = repoNode.get("owner").get("login").asText();
-				repositories.add(ownerName + "/" + repoName);
+				if (includeForks || !repoNode.get("fork").asBoolean())
+					repositories.add(ownerName + "/" + repoName);
 			}					
 			Collections.sort(repositories);
 			return repositories;
@@ -221,9 +220,10 @@ public class ImportServer implements Serializable, Validatable {
 		return userOpt.orElse(null);
 	}
 	
-	ImportResult importIssues(String gitHubRepo, Project oneDevProject, boolean useExistingIssueNumbers, 
-			IssueImportOption importOption, Map<String, Optional<User>> users, boolean dryRun, TaskLogger logger) {
+	ImportResult importIssues(String gitHubRepo, Project oneDevProject, IssueImportOption importOption, 
+			Map<String, Optional<User>> users, boolean dryRun, TaskLogger logger) {
 		Client client = newClient();
+		IssueManager issueManager = OneDev.getInstance(IssueManager.class);
 		try {
 			Set<String> nonExistentMilestones = new HashSet<>();
 			Set<String> nonExistentLogins = new HashSet<>();
@@ -277,12 +277,13 @@ public class ImportServer implements Serializable, Validatable {
 						issue.setDescription(issueNode.get("body").asText(null));
 						issue.setNumberScope(oneDevProject.getForkRoot());
 
-						Long oldNumber = issueNode.get("number").asLong();
 						Long newNumber;
-						if (dryRun || useExistingIssueNumbers)
+						Long oldNumber = issueNode.get("number").asLong();
+						if (dryRun || (issueManager.find(oneDevProject, oldNumber) == null && !issueNumberMappings.containsValue(oldNumber))) 
 							newNumber = oldNumber;
 						else
-							newNumber = OneDev.getInstance(IssueManager.class).getNextNumber(oneDevProject);
+							newNumber = issueManager.getNextNumber(oneDevProject);
+						
 						issue.setNumber(newNumber);
 						issueNumberMappings.put(oldNumber, newNumber);
 						
@@ -430,7 +431,7 @@ public class ImportServer implements Serializable, Validatable {
 					if (issue.getDescription() != null) 
 						issue.setDescription(migrator.migratePrefixed(issue.getDescription(), "#"));
 					
-					OneDev.getInstance(IssueManager.class).save(issue);
+					issueManager.save(issue);
 					for (IssueSchedule schedule: issue.getSchedules())
 						dao.persist(schedule);
 					for (IssueField field: issue.getFields())
@@ -452,6 +453,8 @@ public class ImportServer implements Serializable, Validatable {
 			
 			return result;
 		} finally {
+			if (!dryRun)
+				issueManager.resetNextNumber(oneDevProject.getForkRoot());
 			client.close();
 		}
 	}
@@ -533,73 +536,78 @@ public class ImportServer implements Serializable, Validatable {
 	}
 
 	String importProjects(ImportRepositories repositories, ProjectImportOption option, boolean dryRun, TaskLogger logger) {
-		Collection<Long> projectIds = new ArrayList<>();
 		Client client = newClient();
 		try {
 			Map<String, Optional<User>> users = new HashMap<>();
 			ImportResult result = new ImportResult();
 			for (ProjectMapping projectMapping: repositories.getProjectMappings()) {
-				logger.log("Cloning code from repository " + projectMapping.getGitHubRepo() + "...");
+				ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);				
+				Project project = projectManager.setup(projectMapping.getOneDevProject());
 				
 				String apiEndpoint = getApiEndpoint("/repos/" + projectMapping.getGitHubRepo());
 				JsonNode repoNode = get(client, apiEndpoint, logger);
-				ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);				
-				Project project = projectManager.initialize(projectMapping.getOneDevProject());
-				Preconditions.checkState(project.isNew());
+				
 				project.setDescription(repoNode.get("description").asText(null));
 				project.setIssueManagement(repoNode.get("has_issues").asBoolean());
-				
 				boolean isPrivate = repoNode.get("private").asBoolean();
 				if (!isPrivate && option.getPublicRole() != null)
 					project.setDefaultRole(option.getPublicRole());
-				
-				URIBuilder builder = new URIBuilder(repoNode.get("clone_url").asText());
-				builder.setUserInfo("git", getAccessToken());
-				
-				SensitiveMasker.push(new SensitiveMasker() {
 
-					@Override
-					public String mask(String text) {
-						return StringUtils.replace(text, getAccessToken(), "******");
-					}
+				if (project.isNew() || project.getDefaultBranch() == null) {
+					logger.log("Cloning code from repository " + projectMapping.getGitHubRepo() + "...");
+					URIBuilder builder = new URIBuilder(repoNode.get("clone_url").asText());
+					builder.setUserInfo("git", getAccessToken());
 					
-				});
-				try {
-					if (dryRun) { 
-						new LsRemoteCommand().remote(builder.build().toString()).refs("HEAD").quiet(true).call();
-					} else {
-						projectManager.clone(project, builder.build().toString());
-						projectIds.add(project.getId());
+					SensitiveMasker.push(new SensitiveMasker() {
+
+						@Override
+						public String mask(String text) {
+							return StringUtils.replace(text, getAccessToken(), "******");
+						}
+						
+					});
+					try {
+						if (dryRun) { 
+							new LsRemoteCommand(builder.build().toString()).refs("HEAD").quiet(true).run();
+						} else {
+							if (project.isNew()) 
+								projectManager.create(project);
+							projectManager.clone(project, builder.build().toString());
+						}
+					} finally {
+						SensitiveMasker.pop();
 					}
-				} finally {
-					SensitiveMasker.pop();
+				} else {
+					logger.warning("Skipping code clone as the project already has code");
 				}
 
 				if (option.getIssueImportOption() != null) {
-					List<Milestone> milestones = new ArrayList<>();
 					logger.log("Importing milestones from repository " + projectMapping.getGitHubRepo() + "...");
 					apiEndpoint = getApiEndpoint("/repos/" + projectMapping.getGitHubRepo() + "/milestones?state=all");
 					for (JsonNode milestoneNode: list(client, apiEndpoint, logger)) {
-						Milestone milestone = new Milestone();
-						milestone.setName(milestoneNode.get("title").asText());
-						milestone.setDescription(milestoneNode.get("description").asText(null));
-						milestone.setProject(project);
-						String dueDateString = milestoneNode.get("due_on").asText(null);
-						if (dueDateString != null) 
-							milestone.setDueDate(ISODateTimeFormat.dateTimeNoMillis().parseDateTime(dueDateString).toDate());
-						if (milestoneNode.get("state").asText().equals("closed"))
-							milestone.setClosed(true);
-						
-						milestones.add(milestone);
-						project.getMilestones().add(milestone);
-						
-						if (!dryRun)
-							OneDev.getInstance(MilestoneManager.class).save(milestone);
+						String milestoneName = milestoneNode.get("title").asText();
+						Milestone milestone = project.getMilestone(milestoneName);
+						if (milestone == null) {
+							milestone = new Milestone();
+							milestone.setName(milestoneName);
+							milestone.setDescription(milestoneNode.get("description").asText(null));
+							milestone.setProject(project);
+							String dueDateString = milestoneNode.get("due_on").asText(null);
+							if (dueDateString != null) 
+								milestone.setDueDate(ISODateTimeFormat.dateTimeNoMillis().parseDateTime(dueDateString).toDate());
+							if (milestoneNode.get("state").asText().equals("closed"))
+								milestone.setClosed(true);
+							
+							project.getMilestones().add(milestone);
+							
+							if (!dryRun)
+								OneDev.getInstance(MilestoneManager.class).save(milestone);
+						}
 					}
 					
 					logger.log("Importing issues from repository " + projectMapping.getGitHubRepo() + "...");
 					ImportResult currentResult = importIssues(projectMapping.getGitHubRepo(), 
-							project, true, option.getIssueImportOption(), users, dryRun, logger);
+							project, option.getIssueImportOption(), users, dryRun, logger);
 					result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
 					result.nonExistentMilestones.addAll(currentResult.nonExistentMilestones);
 					result.unmappedIssueLabels.addAll(currentResult.unmappedIssueLabels);
@@ -609,9 +617,7 @@ public class ImportServer implements Serializable, Validatable {
 			}
 			
 			return result.toHtml("Repositories imported successfully");
-		} catch (Exception e) {
-			for (Long projectId: projectIds)
-				OneDev.getInstance(StorageManager.class).deleteProjectDir(projectId);
+		} catch (URISyntaxException e) {
 			throw new RuntimeException(e);
 		} finally {
 			client.close();

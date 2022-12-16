@@ -49,12 +49,12 @@ import com.google.common.collect.Sets;
 import io.onedev.commons.codeassist.parser.TerminalExpect;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.server.OneDev;
-import io.onedev.server.buildspec.job.JobManager;
 import io.onedev.server.entitymanager.BuildManager;
 import io.onedev.server.entitymanager.BuildParamManager;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.git.BlobIdent;
+import io.onedev.server.job.JobManager;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.Build.Status;
 import io.onedev.server.model.BuildLabel;
@@ -153,9 +153,11 @@ public abstract class BuildListPanel extends Panel {
 		try {
 			return BuildQuery.merge(baseQuery, BuildQuery.parse(getProject(), queryString, true, true));
 		} catch (ExplicitException e) {
+			getFeedbackMessages().clear();
 			error(e.getMessage());
 			return null;
 		} catch (Exception e) {
+			getFeedbackMessages().clear();
 			info("Performing fuzzy query");
 			try {
 				EntityQuery.getProjectScopedNumber(getProject(), queryString);

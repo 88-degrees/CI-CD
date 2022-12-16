@@ -17,7 +17,7 @@ import io.onedev.server.buildspec.job.JobAware;
 import io.onedev.server.buildspec.job.SubmitReason;
 import io.onedev.server.buildspec.param.spec.ParamSpec;
 import io.onedev.server.buildspec.param.supply.ParamSupply;
-import io.onedev.server.event.ProjectEvent;
+import io.onedev.server.event.project.ProjectEvent;
 import io.onedev.server.util.ComponentContext;
 import io.onedev.server.util.match.Matcher;
 import io.onedev.server.util.match.PathMatcher;
@@ -53,7 +53,7 @@ public abstract class JobTrigger implements Serializable {
 	@Editable(name="Applicable Projects", order=900, placeholder="Any project", description=""
 			+ "Optionally specify space-separated projects applicable for this trigger. "
 			+ "This is useful for instance when you want to prevent the job from being "
-			+ "triggered in forked projects. Use '**', '*' or '?' for <a href='$docRoot/pages/path-wildcard.md' target='_blank'>path wildcard match</a>. "
+			+ "triggered in forked projects. Use '**', '*' or '?' for <a href='https://docs.onedev.io/appendix/path-wildcard' target='_blank'>path wildcard match</a>. "
 			+ "Prefix with '-' to exclude. Leave empty to match all projects")
 	@Patterns(suggester="suggestProjects", path=true)
 	public String getProjects() {

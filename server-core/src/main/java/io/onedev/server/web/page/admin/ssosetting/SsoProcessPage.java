@@ -26,7 +26,7 @@ import io.onedev.server.web.page.simple.security.LoginPage;
 @SuppressWarnings("serial")
 public class SsoProcessPage extends BasePage {
 
-	public static final String MOUNT_PATH = "sso";
+	public static final String MOUNT_PATH = "~sso";
 	
 	public static final String COOKIE_CONNECTOR = "ssoConnector";
 	
@@ -95,6 +95,15 @@ public class SsoProcessPage extends BasePage {
 	
 	public static Cookie getConnectorCookie() {
 		return ((WebRequest) RequestCycle.get().getRequest()).getCookie(COOKIE_CONNECTOR);
+	}
+	
+	public static void clearConnectorCookie() {
+		// Use servlet api to clear cookie which will work even if page is redirected
+		HttpServletResponse response = (HttpServletResponse) RequestCycle.get().getResponse().getContainerResponse();
+		Cookie cookie = new Cookie(COOKIE_CONNECTOR, "");
+		cookie.setMaxAge(0);
+		cookie.setPath("/");
+		response.addCookie(cookie);
 	}
 		
 	public static PageParameters paramsOf(String stage, String connector) {

@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
@@ -22,24 +23,23 @@ import javax.ws.rs.core.Response;
 
 import org.apache.shiro.authz.UnauthorizedException;
 import org.eclipse.jgit.lib.ObjectId;
-import javax.validation.constraints.NotEmpty;
 import org.joda.time.DateTime;
 
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.server.entitymanager.PullRequestChangeManager;
 import io.onedev.server.entitymanager.PullRequestManager;
 import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.git.GitUtils;
+import io.onedev.server.git.service.GitService;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.PullRequest;
 import io.onedev.server.model.PullRequestAssignment;
 import io.onedev.server.model.PullRequestChange;
 import io.onedev.server.model.PullRequestComment;
 import io.onedev.server.model.PullRequestReview;
+import io.onedev.server.model.PullRequestReview.Status;
 import io.onedev.server.model.PullRequestUpdate;
 import io.onedev.server.model.PullRequestWatch;
 import io.onedev.server.model.User;
-import io.onedev.server.model.PullRequestReview.Status;
 import io.onedev.server.model.support.pullrequest.MergePreview;
 import io.onedev.server.model.support.pullrequest.MergeStrategy;
 import io.onedev.server.rest.annotation.Api;
@@ -51,9 +51,9 @@ import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.ProjectAndBranch;
 
 @Api(order=3000, description="In most cases, pull request resource is operated with pull request id, which is different from pull request number. "
-		+ "To get pull request id of a particular pull request number, use the <a href='/help/api/io.onedev.server.rest.PullRequestResource/queryBasicInfo'>Query Basic Info</a> operation with query for "
+		+ "To get pull request id of a particular pull request number, use the <a href='/~help/api/io.onedev.server.rest.PullRequestResource/queryBasicInfo'>Query Basic Info</a> operation with query for "
 		+ "instance <code>&quot;Number&quot; is &quot;projectName#100&quot;</code>")
-@Path("/pull-requests")
+@Path("/pulls")
 @Consumes(MediaType.APPLICATION_JSON)
 @Produces(MediaType.APPLICATION_JSON)
 @Singleton
@@ -65,12 +65,16 @@ public class PullRequestResource {
 	
 	private final UserManager userManager;
 	
+	private final GitService gitService;
+	
 	@Inject
 	public PullRequestResource(PullRequestManager pullRequestManager, 
-			PullRequestChangeManager pullRequestChangeManager, UserManager userManager) {
+			PullRequestChangeManager pullRequestChangeManager, 
+			UserManager userManager, GitService gitService) {
 		this.pullRequestManager = pullRequestManager;
 		this.pullRequestChangeManager = pullRequestChangeManager;
 		this.userManager = userManager;
+		this.gitService = gitService;
 	}
 
 	@Api(order=100)
@@ -178,7 +182,7 @@ public class PullRequestResource {
 	@Api(order=1100)
 	@GET
     public List<PullRequest> queryBasicInfo(
-    		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in <a href='/pull-requests'>pull requests page</a>", example="\"Number\" is \"projectName#100\"") String query, 
+    		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in <a href='/pulls'>pull requests page</a>", example="\"Number\" is \"projectName#100\"") String query, 
     		@QueryParam("offset") @Api(example="0") int offset, 
     		@QueryParam("count") @Api(example="100") int count) {
 		
@@ -222,9 +226,9 @@ public class PullRequestResource {
 		}
 
 		request = new PullRequest();
-		ObjectId baseCommitId = GitUtils.getMergeBase(
-				target.getProject().getRepository(), target.getObjectId(), 
-				source.getProject().getRepository(), source.getObjectId());
+		ObjectId baseCommitId = gitService.getMergeBase(
+				target.getProject(), target.getObjectId(), 
+				source.getProject(), source.getObjectId());
 		
 		if (baseCommitId == null)
 			throw new InvalidParamException("No common base for target and source");
