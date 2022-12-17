@@ -23,6 +23,14 @@ You can also jump to symbol definition in diff while reviewing commits or pull r
 
 ![jumpsymbol](doc/images/symbol.gif)
 
+<a href="https://donate.cafe/Tenet">
+  <img style="width:111px" src="https://newbie.zeromesh.net/donate.7.6.svg" />
+</a>
+
+<a href="https://brianmacdonald.github.io/Ethonate/address#0xD5645363C02044482983E60a58eb8A0a8DA2588C">
+  <img style="width:111px" src="https://brianmacdonald.github.io/Ethonate/svg/eth-donate-blue.svg" />
+</a>
+
 ### Code Search with Regular Expression
 
 You may switch to any commit, and search code with regular expression. OneDev under the hood indexes the code with Lucene incrementally. At search time, literal tri-grams in the regular expression are extracted for a coarse search, followed by exact match in the result. This makes the regex search blazing fast, even for large repositories like Linux.
