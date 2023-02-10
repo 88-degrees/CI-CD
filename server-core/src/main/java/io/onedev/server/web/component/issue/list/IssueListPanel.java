@@ -1,58 +1,6 @@
 package io.onedev.server.web.component.issue.list;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
-
-import javax.annotation.Nullable;
-
-import org.apache.commons.collections4.CollectionUtils;
-import org.apache.commons.collections4.Predicate;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.wicket.Component;
-import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.ajax.form.AjaxFormComponentUpdatingBehavior;
-import org.apache.wicket.ajax.markup.html.AjaxLink;
-import org.apache.wicket.ajax.markup.html.form.AjaxButton;
-import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
-import org.apache.wicket.event.Broadcast;
-import org.apache.wicket.event.IEvent;
-import org.apache.wicket.extensions.markup.html.repeater.data.grid.ICellPopulator;
-import org.apache.wicket.extensions.markup.html.repeater.data.table.AbstractColumn;
-import org.apache.wicket.extensions.markup.html.repeater.data.table.DataTable;
-import org.apache.wicket.extensions.markup.html.repeater.data.table.IColumn;
-import org.apache.wicket.extensions.markup.html.repeater.data.table.NavigationToolbar;
-import org.apache.wicket.extensions.markup.html.repeater.data.table.NoRecordsToolbar;
-import org.apache.wicket.extensions.markup.html.repeater.util.SortableDataProvider;
-import org.apache.wicket.feedback.FencedFeedbackPanel;
-import org.apache.wicket.markup.ComponentTag;
-import org.apache.wicket.markup.head.CssHeaderItem;
-import org.apache.wicket.markup.head.IHeaderResponse;
-import org.apache.wicket.markup.html.WebMarkupContainer;
-import org.apache.wicket.markup.html.basic.Label;
-import org.apache.wicket.markup.html.form.Form;
-import org.apache.wicket.markup.html.form.TextField;
-import org.apache.wicket.markup.html.link.BookmarkablePageLink;
-import org.apache.wicket.markup.html.list.ListItem;
-import org.apache.wicket.markup.html.list.ListView;
-import org.apache.wicket.markup.html.navigation.paging.PagingNavigator;
-import org.apache.wicket.markup.html.panel.Fragment;
-import org.apache.wicket.markup.html.panel.Panel;
-import org.apache.wicket.markup.repeater.Item;
-import org.apache.wicket.markup.repeater.RepeatingView;
-import org.apache.wicket.model.AbstractReadOnlyModel;
-import org.apache.wicket.model.IModel;
-import org.apache.wicket.model.LoadableDetachableModel;
-import org.apache.wicket.model.Model;
-import org.apache.wicket.request.cycle.RequestCycle;
-import org.apache.wicket.request.mapper.parameter.PageParameters;
-
 import com.google.common.collect.Sets;
-
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.codeassist.parser.TerminalExpect;
 import io.onedev.commons.utils.ExplicitException;
@@ -67,7 +15,7 @@ import io.onedev.server.model.Issue;
 import io.onedev.server.model.IssueLink;
 import io.onedev.server.model.LinkSpec;
 import io.onedev.server.model.Project;
-import io.onedev.server.model.support.LastUpdate;
+import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.issue.field.spec.ChoiceField;
 import io.onedev.server.model.support.issue.field.spec.DateField;
@@ -118,6 +66,48 @@ import io.onedev.server.web.util.Cursor;
 import io.onedev.server.web.util.LoadableDetachableDataProvider;
 import io.onedev.server.web.util.PagingHistorySupport;
 import io.onedev.server.web.util.QuerySaveSupport;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.Predicate;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.wicket.Component;
+import org.apache.wicket.Session;
+import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.ajax.form.AjaxFormComponentUpdatingBehavior;
+import org.apache.wicket.ajax.markup.html.AjaxLink;
+import org.apache.wicket.ajax.markup.html.form.AjaxButton;
+import org.apache.wicket.behavior.AttributeAppender;
+import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
+import org.apache.wicket.event.Broadcast;
+import org.apache.wicket.event.IEvent;
+import org.apache.wicket.extensions.markup.html.repeater.data.grid.ICellPopulator;
+import org.apache.wicket.extensions.markup.html.repeater.data.table.*;
+import org.apache.wicket.extensions.markup.html.repeater.util.SortableDataProvider;
+import org.apache.wicket.feedback.FencedFeedbackPanel;
+import org.apache.wicket.markup.ComponentTag;
+import org.apache.wicket.markup.head.CssHeaderItem;
+import org.apache.wicket.markup.head.IHeaderResponse;
+import org.apache.wicket.markup.html.WebMarkupContainer;
+import org.apache.wicket.markup.html.basic.Label;
+import org.apache.wicket.markup.html.form.Form;
+import org.apache.wicket.markup.html.form.TextField;
+import org.apache.wicket.markup.html.link.BookmarkablePageLink;
+import org.apache.wicket.markup.html.list.ListItem;
+import org.apache.wicket.markup.html.list.ListView;
+import org.apache.wicket.markup.html.navigation.paging.PagingNavigator;
+import org.apache.wicket.markup.html.panel.Fragment;
+import org.apache.wicket.markup.html.panel.Panel;
+import org.apache.wicket.markup.repeater.Item;
+import org.apache.wicket.markup.repeater.RepeatingView;
+import org.apache.wicket.model.AbstractReadOnlyModel;
+import org.apache.wicket.model.IModel;
+import org.apache.wicket.model.LoadableDetachableModel;
+import org.apache.wicket.model.Model;
+import org.apache.wicket.request.cycle.RequestCycle;
+import org.apache.wicket.request.mapper.parameter.PageParameters;
+
+import javax.annotation.Nullable;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 @SuppressWarnings("serial")
 public abstract class IssueListPanel extends Panel {
@@ -177,6 +167,8 @@ public abstract class IssueListPanel extends Panel {
 	@Nullable
 	private Object parse(@Nullable String queryString, IssueQuery baseQuery) {
 		IssueQueryParseOption option = new IssueQueryParseOption().withCurrentUserCriteria(true);
+		if (getProject() != null)
+			option.withCurrentProjectCriteria(true);
 		try {
 			return IssueQuery.merge(baseQuery, IssueQuery.parse(getProject(), queryString, option, true));
 		} catch (Exception e) {
@@ -379,6 +371,8 @@ public abstract class IssueListPanel extends Panel {
 		queryInput = new TextField<String>("input", queryStringModel);
 		
 		IssueQueryParseOption option = new IssueQueryParseOption().withCurrentUserCriteria(true);
+		if (getProject() != null)
+			option.withCurrentProjectCriteria(true);
 		
 		queryInput.add(new IssueQueryBehavior(new AbstractReadOnlyModel<Project>() {
 
@@ -659,7 +653,7 @@ public abstract class IssueListPanel extends Panel {
 				
 									@Override
 									protected List<Project> load() {
-										return getTargetProjects();
+										return getTargetProjects(true);
 									}
 									
 								}) {
@@ -681,9 +675,10 @@ public abstract class IssueListPanel extends Panel {
 												Collection<Issue> issues = new ArrayList<>();
 												for (IModel<Issue> each: selectionColumn.getSelections())
 													issues.add(each.getObject());
-												OneDev.getInstance(IssueManager.class).move(getTargetProject(), issues);
-												selectionColumn.getSelections().clear();
-												target.add(body);
+												OneDev.getInstance(IssueManager.class).move(issues, getProject(), getTargetProject());
+												setResponsePage(ProjectIssueListPage.class,
+														ProjectIssueListPage.paramsOf(getTargetProject(), null, 0));
+												Session.get().success("Issues moved");
 											}
 											
 											@Override
@@ -722,6 +717,88 @@ public abstract class IssueListPanel extends Panel {
 					}
 					
 				});
+
+				menuItems.add(new MenuItem() {
+
+					@Override
+					public String getLabel() {
+						return "Copy Selected Issues To...";
+					}
+
+					@Override
+					public WebMarkupContainer newLink(String id) {
+						return new DropdownLink(id) {
+
+							@Override
+							protected Component newContent(String id, FloatingPanel dropdown2) {
+								return new ProjectSelector(id, new LoadableDetachableModel<List<Project>>() {
+
+									@Override
+									protected List<Project> load() {
+										return getTargetProjects(false);
+									}
+
+								}) {
+
+									@Override
+									protected void onSelect(AjaxRequestTarget target, Project project) {
+										dropdown.close();
+										dropdown2.close();
+
+										Long projectId = project.getId();
+										new ConfirmModalPanel(target) {
+
+											private Project getTargetProject() {
+												return OneDev.getInstance(ProjectManager.class).load(projectId);
+											}
+
+											@Override
+											protected void onConfirm(AjaxRequestTarget target) {
+												Collection<Issue> issues = new ArrayList<>();
+												for (IModel<Issue> each: selectionColumn.getSelections())
+													issues.add(each.getObject());
+												OneDev.getInstance(IssueManager.class).copy(issues, getProject(), getTargetProject());
+												setResponsePage(ProjectIssueListPage.class,
+														ProjectIssueListPage.paramsOf(getTargetProject(), null, 0));
+												Session.get().success("Issues copied");
+											}
+
+											@Override
+											protected String getConfirmMessage() {
+												return "Type <code>yes</code> below to copy selected issues to project '" + getTargetProject() + "'";
+											}
+
+											@Override
+											protected String getConfirmInput() {
+												return "yes";
+											}
+
+										};
+									}
+
+								}.add(AttributeAppender.append("class", "no-current"));
+							}
+
+							@Override
+							protected void onConfigure() {
+								super.onConfigure();
+								setEnabled(!selectionColumn.getSelections().isEmpty());
+							}
+
+							@Override
+							protected void onComponentTag(ComponentTag tag) {
+								super.onComponentTag(tag);
+								configure();
+								if (!isEnabled()) {
+									tag.put("disabled", "disabled");
+									tag.put("title", "Please select issues to copy");
+								}
+							}
+
+						};
+					}
+
+				});
 				
 				menuItems.add(new MenuItem() {
 
@@ -744,7 +821,7 @@ public abstract class IssueListPanel extends Panel {
 										Collection<Issue> issues = new ArrayList<>();
 										for (IModel<Issue> each: selectionColumn.getSelections())
 											issues.add(each.getObject());
-										OneDev.getInstance(IssueManager.class).delete(issues);
+										OneDev.getInstance(IssueManager.class).delete(issues, getProject());
 										selectionColumn.getSelections().clear();
 										target.add(body);
 									}
@@ -877,7 +954,7 @@ public abstract class IssueListPanel extends Panel {
 				
 									@Override
 									protected List<Project> load() {
-										return getTargetProjects();
+										return getTargetProjects(true);
 									}
 									
 								}) {
@@ -901,9 +978,10 @@ public abstract class IssueListPanel extends Panel {
 												for (Iterator<Issue> it = (Iterator<Issue>) dataProvider.iterator(0, issuesTable.getItemCount()); it.hasNext();) {
 													issues.add(it.next());
 												}
-												OneDev.getInstance(IssueManager.class).move(getTargetProject(), issues);
-												selectionColumn.getSelections().clear();
-												target.add(body);
+												OneDev.getInstance(IssueManager.class).move(issues, getProject(), getTargetProject());
+												setResponsePage(ProjectIssueListPage.class, 
+														ProjectIssueListPage.paramsOf(getTargetProject(), null, 0));
+												Session.get().success("Issues moved");
 											}
 											
 											@Override
@@ -942,7 +1020,91 @@ public abstract class IssueListPanel extends Panel {
 					}
 					
 				});
-				
+
+				menuItems.add(new MenuItem() {
+
+					@Override
+					public String getLabel() {
+						return "Copy All Queried Issues To...";
+					}
+
+					@Override
+					public WebMarkupContainer newLink(String id) {
+						return new DropdownLink(id) {
+
+							@Override
+							protected Component newContent(String id, FloatingPanel dropdown2) {
+								return new ProjectSelector(id, new LoadableDetachableModel<List<Project>>() {
+
+									@Override
+									protected List<Project> load() {
+										return getTargetProjects(false);
+									}
+
+								}) {
+
+									@SuppressWarnings("unchecked")
+									@Override
+									protected void onSelect(AjaxRequestTarget target, Project project) {
+										dropdown.close();
+										dropdown2.close();
+
+										Long projectId = project.getId();
+										new ConfirmModalPanel(target) {
+
+											private Project getTargetProject() {
+												return OneDev.getInstance(ProjectManager.class).load(projectId);
+											}
+
+											@Override
+											protected void onConfirm(AjaxRequestTarget target) {
+												Collection<Issue> issues = new ArrayList<>();
+												for (Iterator<Issue> it = (Iterator<Issue>) dataProvider.iterator(0, issuesTable.getItemCount()); it.hasNext();) {
+													issues.add(it.next());
+												}
+												OneDev.getInstance(IssueManager.class).copy(issues, getProject(), getTargetProject());
+												setResponsePage(ProjectIssueListPage.class,
+														ProjectIssueListPage.paramsOf(getTargetProject(), null, 0));
+												Session.get().success("Issues copied");
+											}
+
+											@Override
+											protected String getConfirmMessage() {
+												return "Type <code>yes</code> below to copy all queried issues to project '" + getTargetProject() + "'";
+											}
+
+											@Override
+											protected String getConfirmInput() {
+												return "yes";
+											}
+
+										};
+									}
+
+								}.add(AttributeAppender.append("class", "no-current"));
+							}
+
+							@Override
+							protected void onConfigure() {
+								super.onConfigure();
+								setEnabled(issuesTable.getItemCount() != 0);
+							}
+
+							@Override
+							protected void onComponentTag(ComponentTag tag) {
+								super.onComponentTag(tag);
+								configure();
+								if (!isEnabled()) {
+									tag.put("disabled", "disabled");
+									tag.put("title", "No issues to copy");
+								}
+							}
+
+						};
+					}
+
+				});
+
 				menuItems.add(new MenuItem() {
 
 					@Override
@@ -966,7 +1128,8 @@ public abstract class IssueListPanel extends Panel {
 										Collection<Issue> issues = new ArrayList<>();
 										for (Iterator<Issue> it = (Iterator<Issue>) dataProvider.iterator(0, issuesTable.getItemCount()); it.hasNext();) 
 											issues.add(it.next());
-										OneDev.getInstance(IssueManager.class).delete(issues);
+										OneDev.getInstance(IssueManager.class).delete(issues, getProject());
+										dataProvider.detach();
 										selectionColumn.getSelections().clear();
 										target.add(body);
 									}
@@ -1008,7 +1171,7 @@ public abstract class IssueListPanel extends Panel {
 				return menuItems;
 			}
 			
-			private List<Project> getTargetProjects() {
+			private List<Project> getTargetProjects(boolean excludeCurrent) {
 				Collection<Project> collection = getProjectManger().getPermittedProjects(new AccessProject());
 				ProjectCache cache = getProjectManger().cloneCache();
 				
@@ -1020,7 +1183,9 @@ public abstract class IssueListPanel extends Panel {
 					}
 					
 				});
-				collection.remove(getProject());
+				
+				if (excludeCurrent)
+					collection.remove(getProject());
 				
 				List<Project> list = new ArrayList<>(collection);
 				list.sort(cache.comparingPath());
@@ -1256,14 +1421,14 @@ public abstract class IssueListPanel extends Panel {
 				}	
 				fragment.add(fieldsView);
 				
-				LastUpdate lastUpdate = issue.getLastUpdate();
-				if (lastUpdate.getUser() != null) 
-					fragment.add(new UserIdentPanel("user", lastUpdate.getUser(), Mode.NAME));
+				LastActivity lastActivity = issue.getLastActivity();
+				if (lastActivity.getUser() != null) 
+					fragment.add(new UserIdentPanel("user", lastActivity.getUser(), Mode.NAME));
 				else 
 					fragment.add(new WebMarkupContainer("user").setVisible(false));
-				fragment.add(new Label("activity", lastUpdate.getActivity()));
-				fragment.add(new Label("date", DateUtils.formatAge(lastUpdate.getDate()))
-					.add(new AttributeAppender("title", DateUtils.formatDateTime(lastUpdate.getDate()))));
+				fragment.add(new Label("activity", lastActivity.getDescription()));
+				fragment.add(new Label("date", DateUtils.formatAge(lastActivity.getDate()))
+					.add(new AttributeAppender("title", DateUtils.formatDateTime(lastActivity.getDate()))));
 
 				fragment.add(new ListView<Issue>("linkedIssues", new LoadableDetachableModel<List<Issue>>() {
 
@@ -1330,11 +1495,12 @@ public abstract class IssueListPanel extends Panel {
 				Item<Issue> item = super.newRowItem(id, index, model);
 				Issue issue = model.getObject();
 				item.add(AttributeAppender.append("class", 
-						issue.isVisitedAfter(issue.getLastUpdate().getDate())?"issue":"issue new"));
+						issue.isVisitedAfter(issue.getLastActivity().getDate())?"issue":"issue new"));
 				return item;
 			}
 			
 		});
+		body.add(new WebMarkupContainer("tips").setVisible(getPage() instanceof ProjectIssueListPage));
 		
 		if (getPagingHistorySupport() != null)
 			issuesTable.setCurrentPage(getPagingHistorySupport().getCurrentPage());

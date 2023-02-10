@@ -21,6 +21,7 @@ import io.onedev.server.model.Issue;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.Choice;
 import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.model.support.inputspec.choiceinput.defaultvalueprovider.DefaultValue;
 import io.onedev.server.model.support.inputspec.choiceinput.defaultvalueprovider.SpecifiedDefaultValue;
 import io.onedev.server.model.support.inputspec.showcondition.ShowCondition;
 import io.onedev.server.model.support.inputspec.showcondition.ValueIsOneOf;
@@ -108,7 +109,10 @@ public class GlobalIssueSetting implements Serializable {
 		type.setChoiceProvider(specifiedChoices);
 		
 		SpecifiedDefaultValue specifiedDefaultValue = new SpecifiedDefaultValue();
-		specifiedDefaultValue.setValue("Bug");
+		DefaultValue defaultValue = new DefaultValue();
+		defaultValue.setValue("New Feature");
+		specifiedDefaultValue.getDefaultValues().add(defaultValue);
+		
 		type.setDefaultValueProvider(specifiedDefaultValue);
 		
 		fieldSpecs.add(type);
@@ -143,7 +147,9 @@ public class GlobalIssueSetting implements Serializable {
 		priority.setChoiceProvider(specifiedChoices);
 		
 		specifiedDefaultValue = new SpecifiedDefaultValue();
-		specifiedDefaultValue.setValue("Normal");
+		defaultValue = new DefaultValue();
+		defaultValue.setValue("Normal");
+		specifiedDefaultValue.getDefaultValues().add(defaultValue);
 		priority.setDefaultValueProvider(specifiedDefaultValue);
 		
 		fieldSpecs.add(priority);
@@ -197,7 +203,7 @@ public class GlobalIssueSetting implements Serializable {
 		transition.setFromStates(Lists.newArrayList("Open"));
 		transition.setToState("Closed");
 		BranchUpdateTrigger branchUpdate = new BranchUpdateTrigger();
-		branchUpdate.setBranches("master main");
+		branchUpdate.setBranches("main");
 		transition.setTrigger(branchUpdate);
 		
 		transitionSpecs.add(transition);
@@ -206,7 +212,7 @@ public class GlobalIssueSetting implements Serializable {
 		transition.setFromStates(Lists.newArrayList("Open"));
 		transition.setToState("Closed");
 		BuildSuccessfulTrigger buildSuccessful = new BuildSuccessfulTrigger();
-		buildSuccessful.setBranches("master main");
+		buildSuccessful.setBranches("main");
 		buildSuccessful.setIssueQuery("\"Type\" is \"Build Failure\" and (\"Failed Build\" is current or \"Failed Build\" is previous)");
 		transition.setTrigger(buildSuccessful);
 		
@@ -265,7 +271,8 @@ public class GlobalIssueSetting implements Serializable {
 		namedQueries.add(new NamedIssueQuery("Blocked Issues", "any \"Blocked By\" matching(\"State\" is \"Open\") or any \"Child Issue\" matching(\"State\" is \"Open\")"));
 		namedQueries.add(new NamedIssueQuery("Submitted by me", "submitted by me"));
 		namedQueries.add(new NamedIssueQuery("Submitted recently", "\"Submit Date\" is since \"last week\""));
-		namedQueries.add(new NamedIssueQuery("Updated recently", "\"Update Date\" is since \"last week\""));
+		namedQueries.add(new NamedIssueQuery("Mentioned me", "mentioned me"));
+		namedQueries.add(new NamedIssueQuery("Has activity recently", "\"Last Activity Date\" is since \"last week\""));
 		namedQueries.add(new NamedIssueQuery("Open & Critical", "\"State\" is \"Open\" and \"Priority\" is \"Critical\""));
 		namedQueries.add(new NamedIssueQuery("Open & Unassigned", "\"State\" is \"Open\" and \"Assignees\" is empty"));
 		namedQueries.add(new NamedIssueQuery("Closed", "\"State\" is \"Closed\""));
@@ -549,7 +556,7 @@ public class GlobalIssueSetting implements Serializable {
 		for (FieldSpec field: getFieldSpecs())
 			usage.add(field.onDeleteUser(userName));
 		
-		return usage.prefix("issue setting");
+		return usage.prefix("issue settings");
 	}
 	
 	public void onRenameGroup(String oldName, String newName) {
@@ -563,7 +570,7 @@ public class GlobalIssueSetting implements Serializable {
 		for (FieldSpec field: getFieldSpecs())
 			usage.add(field.onDeleteGroup(groupName));
 		
-		return usage.prefix("issue setting");
+		return usage.prefix("issue settings");
 	}
 	
 	public void onMoveProject(String oldPath, String newPath) {
@@ -602,7 +609,7 @@ public class GlobalIssueSetting implements Serializable {
 		for (IssueTemplate template: getIssueTemplates()) 
 			usage.add(template.getQueryUpdater().onDeleteProject(projectPath).prefix("description template #" + index++));
 		
-		return usage.prefix("issue setting");
+		return usage.prefix("issue settings");
 		
 	}
 	
@@ -618,7 +625,7 @@ public class GlobalIssueSetting implements Serializable {
 		for (TransitionSpec transition: getTransitionSpecs())
 			usage.add(transition.onDeleteRole(roleName).prefix("state transition #" + index++));
 		
-		return usage.prefix("issue setting");
+		return usage.prefix("issue settings");
 	}
 	
 	public void onRenameLink(String oldName, String newName) {
@@ -659,7 +666,7 @@ public class GlobalIssueSetting implements Serializable {
 		if (listLinks.contains(linkName))
 			usage.add(new Usage().add("fields & links").prefix("-> issues"));
 		
-		return usage.prefix("issue setting");
+		return usage.prefix("issue settings");
 	}
 	
 	public StateSpec getInitialStateSpec() {

@@ -1,39 +1,29 @@
 package io.onedev.server.model.support.administration.jobexecutor;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-
-import java.io.File;
-import java.io.IOException;
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-
-import javax.annotation.Nullable;
-import javax.validation.constraints.NotEmpty;
-import javax.ws.rs.core.Response;
-
-import com.google.common.base.Splitter;
 import com.google.common.base.Throwables;
-
 import io.onedev.commons.loader.ExtensionPoint;
-import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
-import io.onedev.server.ServerConfig;
-import io.onedev.server.job.AgentInfo;
+import io.onedev.server.entitymanager.AgentManager;
+import io.onedev.server.entitymanager.BuildManager;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.build.BuildRunning;
 import io.onedev.server.job.JobContext;
-import io.onedev.server.search.entity.agent.AgentQuery;
-import io.onedev.server.terminal.Shell;
-import io.onedev.server.terminal.Terminal;
+import io.onedev.server.model.Build;
+import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.terminal.TerminalManager;
 import io.onedev.server.util.ExceptionUtils;
-import io.onedev.server.util.PKCS12CertExtractor;
 import io.onedev.server.util.usage.Usage;
 import io.onedev.server.util.validation.annotation.DnsName;
 import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.editable.annotation.JobAuthorization;
 import io.onedev.server.web.editable.annotation.ShowCondition;
+
+import javax.annotation.Nullable;
+import javax.validation.constraints.NotEmpty;
+import javax.ws.rs.core.Response;
+import java.io.Serializable;
+import java.util.Date;
 
 @ExtensionPoint
 @Editable
@@ -124,14 +114,7 @@ public abstract class JobExecutor implements Serializable {
 		this.cacheTTL = cacheTTL;
 	}
 	
-	@Nullable
-	public abstract AgentQuery getAgentRequirement();
-	
-	public abstract void execute(JobContext jobContext, TaskLogger jobLogger, @Nullable AgentInfo agentInfo);
-	
-	public abstract void resume(JobContext jobContext);
-	
-	public abstract Shell openShell(JobContext jobContext, Terminal terminal);
+	public abstract void execute(JobContext jobContext, TaskLogger jobLogger);
 	
 	public boolean isPlaceholderAllowed() {
 		return true;
@@ -173,27 +156,17 @@ public abstract class JobExecutor implements Serializable {
 		}
 	}
 	
-	protected List<String> getTrustCertContent() {
-		List<String> trustCertContent = new ArrayList<>();
-		ServerConfig serverConfig = OneDev.getInstance(ServerConfig.class); 
-		File keystoreFile = serverConfig.getKeystoreFile();
-		if (keystoreFile != null) {
-			String password = serverConfig.getKeystorePassword();
-			for (Map.Entry<String, String> entry: new PKCS12CertExtractor(keystoreFile, password).extact().entrySet()) 
-				trustCertContent.addAll(Splitter.on('\n').trimResults().splitToList(entry.getValue()));
-		}
-		if (serverConfig.getTrustCertsDir() != null) {
-			for (File file: serverConfig.getTrustCertsDir().listFiles()) {
-				if (file.isFile()) {
-					try {
-						trustCertContent.addAll(FileUtils.readLines(file, UTF_8));
-					} catch (IOException e) {
-						throw new RuntimeException(e);
-					}
-				}
-			}
-		}
-		return trustCertContent;
+	protected void notifyJobRunning(Long buildId, @Nullable Long agentId) {
+		OneDev.getInstance(TransactionManager.class).run(() -> {
+			BuildManager buildManager = OneDev.getInstance(BuildManager.class);
+			Build build = buildManager.load(buildId);
+			build.setStatus(Build.Status.RUNNING);
+			build.setRunningDate(new Date());
+			if (agentId != null)
+				build.setAgent(OneDev.getInstance(AgentManager.class).load(agentId));
+			buildManager.save(build);
+			OneDev.getInstance(ListenerRegistry.class).post(new BuildRunning(build));
+		});
 	}
 	
 	protected String getErrorMessage(Exception exception) {
@@ -203,5 +176,5 @@ public abstract class JobExecutor implements Serializable {
 		else
 			return Throwables.getStackTraceAsString(exception);
 	}
-	
+
 }

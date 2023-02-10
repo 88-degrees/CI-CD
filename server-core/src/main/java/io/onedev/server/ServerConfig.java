@@ -1,9 +1,5 @@
 package io.onedev.server;
 
-import java.io.File;
-
-import javax.annotation.Nullable;
-
 public interface ServerConfig {
 	
 	/**
@@ -13,14 +9,6 @@ public interface ServerConfig {
 	 * 			http port of the server, or <i>0</i> if http port is not defined
 	 */
 	int getHttpPort();
-	
-	@Nullable
-	File getKeystoreFile();
-	
-	String getKeystorePassword();
-	
-	@Nullable
-	File getTrustCertsDir();
 	
 	/**
      * Get ssh port configured for the server.
@@ -33,9 +21,5 @@ public interface ServerConfig {
 	String getClusterIp();
 	
 	int getClusterPort();
-	
-	int getServerCpu();
-	
-	int getServerMemory();
 	
 }

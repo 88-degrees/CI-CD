@@ -1,40 +1,6 @@
 package io.onedev.server.web.page.layout;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.servlet.http.Cookie;
-
-import org.apache.shiro.subject.PrincipalCollection;
-import org.apache.wicket.Component;
-import org.apache.wicket.RestartResponseAtInterceptPageException;
-import org.apache.wicket.RestartResponseException;
-import org.apache.wicket.Session;
-import org.apache.wicket.ajax.AbstractDefaultAjaxBehavior;
-import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.markup.head.IHeaderResponse;
-import org.apache.wicket.markup.head.JavaScriptHeaderItem;
-import org.apache.wicket.markup.head.OnDomReadyHeaderItem;
-import org.apache.wicket.markup.head.OnLoadHeaderItem;
-import org.apache.wicket.markup.html.WebMarkupContainer;
-import org.apache.wicket.markup.html.basic.Label;
-import org.apache.wicket.markup.html.image.ExternalImage;
-import org.apache.wicket.markup.html.link.BookmarkablePageLink;
-import org.apache.wicket.markup.html.link.ExternalLink;
-import org.apache.wicket.markup.html.link.Link;
-import org.apache.wicket.markup.html.list.ListItem;
-import org.apache.wicket.markup.html.list.ListView;
-import org.apache.wicket.markup.html.panel.Fragment;
-import org.apache.wicket.model.LoadableDetachableModel;
-import org.apache.wicket.model.Model;
-import org.apache.wicket.request.cycle.RequestCycle;
-import org.apache.wicket.request.http.WebRequest;
-import org.apache.wicket.request.mapper.parameter.PageParameters;
-
 import com.google.common.collect.Lists;
-
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.commons.loader.Plugin;
 import io.onedev.server.OneDev;
@@ -86,11 +52,7 @@ import io.onedev.server.web.page.admin.servicedesk.ServiceDeskSettingPage;
 import io.onedev.server.web.page.admin.sshserverkey.SshServerKeyPage;
 import io.onedev.server.web.page.admin.ssosetting.SsoConnectorListPage;
 import io.onedev.server.web.page.admin.systemsetting.SystemSettingPage;
-import io.onedev.server.web.page.admin.usermanagement.InvitationListPage;
-import io.onedev.server.web.page.admin.usermanagement.NewInvitationPage;
-import io.onedev.server.web.page.admin.usermanagement.NewUserPage;
-import io.onedev.server.web.page.admin.usermanagement.UserListPage;
-import io.onedev.server.web.page.admin.usermanagement.UserPage;
+import io.onedev.server.web.page.admin.usermanagement.*;
 import io.onedev.server.web.page.base.BasePage;
 import io.onedev.server.web.page.help.IncompatibilitiesPage;
 import io.onedev.server.web.page.my.MyPage;
@@ -105,6 +67,35 @@ import io.onedev.server.web.page.my.twofactorauthentication.MyTwoFactorAuthentic
 import io.onedev.server.web.page.simple.security.LoginPage;
 import io.onedev.server.web.page.simple.security.LogoutPage;
 import io.onedev.server.web.util.WicketUtils;
+import org.apache.shiro.subject.PrincipalCollection;
+import org.apache.wicket.Component;
+import org.apache.wicket.RestartResponseAtInterceptPageException;
+import org.apache.wicket.RestartResponseException;
+import org.apache.wicket.Session;
+import org.apache.wicket.ajax.AbstractDefaultAjaxBehavior;
+import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.behavior.AttributeAppender;
+import org.apache.wicket.markup.head.IHeaderResponse;
+import org.apache.wicket.markup.head.JavaScriptHeaderItem;
+import org.apache.wicket.markup.head.OnDomReadyHeaderItem;
+import org.apache.wicket.markup.head.OnLoadHeaderItem;
+import org.apache.wicket.markup.html.WebMarkupContainer;
+import org.apache.wicket.markup.html.basic.Label;
+import org.apache.wicket.markup.html.image.ExternalImage;
+import org.apache.wicket.markup.html.link.BookmarkablePageLink;
+import org.apache.wicket.markup.html.link.ExternalLink;
+import org.apache.wicket.markup.html.link.Link;
+import org.apache.wicket.markup.html.list.ListItem;
+import org.apache.wicket.markup.html.list.ListView;
+import org.apache.wicket.markup.html.panel.Fragment;
+import org.apache.wicket.model.LoadableDetachableModel;
+import org.apache.wicket.model.Model;
+import org.apache.wicket.request.cycle.RequestCycle;
+import org.apache.wicket.request.http.WebRequest;
+import org.apache.wicket.request.mapper.parameter.PageParameters;
+
+import javax.servlet.http.Cookie;
+import java.util.*;
 
 @SuppressWarnings("serial")
 public abstract class LayoutPage extends BasePage {
@@ -155,9 +146,9 @@ public abstract class LayoutPage extends BasePage {
 				List<SidebarMenuItem> menuItems = new ArrayList<>(customization.getMainMenuItems());
 				if (SecurityUtils.isAdministrator()) {
 					List<SidebarMenuItem> administrationMenuItems = new ArrayList<>();
-					administrationMenuItems.add(new SidebarMenuItem.Page(null, "System Setting", 
+					administrationMenuItems.add(new SidebarMenuItem.Page(null, "System Settings", 
 							SystemSettingPage.class, new PageParameters()));
-					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Security Setting", 
+					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Security Settings", 
 							SecuritySettingPage.class, new PageParameters()));
 					List<SidebarMenuItem> userManagementMenuItems = new ArrayList<>();
 					userManagementMenuItems.add(new SidebarMenuItem.Page(null, "Users", UserListPage.class, 
@@ -202,17 +193,17 @@ public abstract class LayoutPage extends BasePage {
 					issueSettingMenuItems.add(new SidebarMenuItem.Page(null, "Description Templates", 
 							IssueTemplateListPage.class, new PageParameters()));
 
-					administrationMenuItems.add(new SidebarMenuItem.SubMenu(null, "Issue Setting", issueSettingMenuItems));
+					administrationMenuItems.add(new SidebarMenuItem.SubMenu(null, "Issue Settings", issueSettingMenuItems));
 					
 					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Job Executors", 
 							JobExecutorsPage.class, new PageParameters()));
 					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Agents", 
 							AgentListPage.class, AgentListPage.paramsOf(0), Lists.newArrayList(AgentDetailPage.class)));
 					
-					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Mail Setting", 
+					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Mail Settings", 
 							MailSettingPage.class, new PageParameters()));
 					
-					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Service Desk Setting", 
+					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Service Desk Settings", 
 							ServiceDeskSettingPage.class, new PageParameters()));
 					
 					List<SidebarMenuItem> notificationTemplateSettingMenuItems = new ArrayList<>();
@@ -227,23 +218,43 @@ public abstract class LayoutPage extends BasePage {
 					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Label Management", 
 							LabelManagementPage.class, new PageParameters()));
 					
-					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Performance Setting", 
+					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Performance Settings", 
 							PerformanceSettingPage.class, new PageParameters()));
 					
 					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Groovy Scripts", 
 							GroovyScriptListPage.class, new PageParameters()));
-					
-					for (AdministrationSettingContribution contribution: 
-							OneDev.getExtensions(AdministrationSettingContribution.class)) {
-						for (Class<? extends Serializable> settingClass: contribution.getSettingClasses()) {
-							administrationMenuItems.add(new SidebarMenuItem.Page(
-									null, 
-									EditableUtils.getDisplayName(settingClass), 
-									ContributedAdministrationSettingPage.class, 
-									ContributedAdministrationSettingPage.paramsOf(settingClass)));
+
+					List<Class<? extends ContributedAdministrationSetting>> contributedSettingClasses = new ArrayList<>();
+					for (AdministrationSettingContribution contribution:OneDev.getExtensions(AdministrationSettingContribution.class)) {
+						for (Class<? extends ContributedAdministrationSetting> settingClass: contribution.getSettingClasses())
+							contributedSettingClasses.add(settingClass);
+					}
+					contributedSettingClasses.sort(Comparator.comparingInt(EditableUtils::getOrder));
+
+					Map<String, List<SidebarMenuItem>> contributedMenuItems = new HashMap<>();
+					for (var contributedSettingClass: contributedSettingClasses) {
+						var group = EditableUtils.getGroup(contributedSettingClass);
+						if (group == null)
+							group = "";
+						var contributedMenuItemsOfGroup = contributedMenuItems.get(group);
+						if (contributedMenuItemsOfGroup == null) {
+							contributedMenuItemsOfGroup = new ArrayList<>();
+							contributedMenuItems.put(group, contributedMenuItemsOfGroup);
+						}
+						contributedMenuItemsOfGroup.add(new SidebarMenuItem.Page(
+								null,
+								EditableUtils.getDisplayName(contributedSettingClass),
+								ContributedAdministrationSettingPage.class,
+								ContributedAdministrationSettingPage.paramsOf(contributedSettingClass)));
+					}
+					for (var entry: contributedMenuItems.entrySet()) {
+						if (entry.getKey().length() == 0) {
+							administrationMenuItems.addAll(entry.getValue());
+						} else {
+							administrationMenuItems.add(new SidebarMenuItem.SubMenu(null, entry.getKey(), entry.getValue()));
 						}
 					}
-
+					
 					administrationMenuItems.add(new SidebarMenuItem.Page(null, "Branding", 
 							BrandingSettingPage.class, new PageParameters()));
 					

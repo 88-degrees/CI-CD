@@ -42,8 +42,8 @@ import io.onedev.server.model.IssueAuthorization;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
 import io.onedev.server.model.UserAuthorization;
-import io.onedev.server.model.support.BranchProtection;
-import io.onedev.server.model.support.TagProtection;
+import io.onedev.server.model.support.code.BranchProtection;
+import io.onedev.server.model.support.code.TagProtection;
 import io.onedev.server.persistence.IdManager;
 import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.annotation.Sessional;
@@ -55,10 +55,14 @@ import io.onedev.server.security.permission.ConfidentialIssuePermission;
 import io.onedev.server.util.facade.UserCache;
 import io.onedev.server.util.facade.UserFacade;
 import io.onedev.server.util.usage.Usage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Singleton
 public class DefaultUserManager extends BaseEntityManager<User> implements UserManager {
 
+	private static final Logger logger = LoggerFactory.getLogger(DefaultUserManager.class);
+	
     private final ProjectManager projectManager;
     
     private final SettingManager settingManager;
@@ -152,14 +156,18 @@ public class DefaultUserManager extends BaseEntityManager<User> implements UserM
 	public void delete(User user) {
     	Usage usage = new Usage();
 		for (Project project: projectManager.query()) {
-			Usage usedInProject = new Usage();
-			for (BranchProtection protection: project.getBranchProtections()) 
-				usedInProject.add(protection.onDeleteUser(user.getName()));
-			for (TagProtection protection: project.getTagProtections()) 
-				usedInProject.add(protection.onDeleteUser(user.getName()));
-			usedInProject.add(project.getIssueSetting().onDeleteUser(user.getName()));
-			usedInProject.prefix("project '" + project.getPath() + "': setting");
-			usage.add(usedInProject);
+			try {
+				Usage usedInProject = new Usage();
+				for (BranchProtection protection : project.getBranchProtections())
+					usedInProject.add(protection.onDeleteUser(user.getName()));
+				for (TagProtection protection : project.getTagProtections())
+					usedInProject.add(protection.onDeleteUser(user.getName()));
+				usedInProject.add(project.getIssueSetting().onDeleteUser(user.getName()));
+				usedInProject.prefix("project '" + project.getPath() + "': settings");
+				usage.add(usedInProject);
+			} catch (Exception e) {
+				logger.error("Failed to check user reference in project: {}", project.getPath());
+			}
 		}
 
 		usage.add(settingManager.onDeleteUser(user.getName()));
@@ -181,7 +189,7 @@ public class DefaultUserManager extends BaseEntityManager<User> implements UserM
     	query.setParameter("unknown", getUnknown());
     	query.executeUpdate();
     	
-    	query = getSession().createQuery("update PullRequest set lastUpdate.user=:unknown where lastUpdate.user=:user");
+    	query = getSession().createQuery("update PullRequest set lastActivity.user=:unknown where lastActivity.user=:user");
     	query.setParameter("user", user);
     	query.setParameter("unknown", getUnknown());
     	query.executeUpdate();
@@ -201,7 +209,7 @@ public class DefaultUserManager extends BaseEntityManager<User> implements UserM
     	query.setParameter("unknown", getUnknown());
     	query.executeUpdate();
     	
-    	query = getSession().createQuery("update CodeComment set lastUpdate.user=:unknown where lastUpdate.user=:user");
+    	query = getSession().createQuery("update CodeComment set lastActivity.user=:unknown where lastActivity.user=:user");
     	query.setParameter("user", user);
     	query.setParameter("unknown", getUnknown());
     	query.executeUpdate();
@@ -221,7 +229,7 @@ public class DefaultUserManager extends BaseEntityManager<User> implements UserM
     	query.setParameter("unknown", getUnknown());
     	query.executeUpdate();
     	
-    	query = getSession().createQuery("update Issue set lastUpdate.user=:unknown where lastUpdate.user=:user");
+    	query = getSession().createQuery("update Issue set lastActivity.user=:unknown where lastActivity.user=:user");
     	query.setParameter("user", user);
     	query.setParameter("unknown", getUnknown());
     	query.executeUpdate();

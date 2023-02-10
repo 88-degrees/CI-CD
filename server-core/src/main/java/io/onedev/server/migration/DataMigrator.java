@@ -1,5 +1,28 @@
 package io.onedev.server.migration;
 
+import com.google.common.base.Preconditions;
+import com.thoughtworks.xstream.core.JVM;
+import io.onedev.commons.bootstrap.Bootstrap;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.OneDev;
+import io.onedev.server.markdown.MarkdownManager;
+import io.onedev.server.markdown.MentionParser;
+import io.onedev.server.model.*;
+import io.onedev.server.util.CryptoUtils;
+import io.onedev.server.util.Pair;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.tuple.Triple;
+import org.dom4j.Element;
+import org.dom4j.Node;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import oshi.SystemInfo;
+import oshi.hardware.HardwareAbstractionLayer;
+
+import javax.annotation.Nullable;
+import javax.inject.Singleton;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -9,45 +32,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.Stack;
-import java.util.UUID;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import javax.annotation.Nullable;
-import javax.inject.Singleton;
-
-import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.commons.lang3.tuple.Triple;
-import org.dom4j.Element;
-import org.dom4j.Node;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Preconditions;
-import com.thoughtworks.xstream.core.JVM;
-
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestComment;
-import io.onedev.server.model.User;
-import io.onedev.server.util.Pair;
-import oshi.SystemInfo;
-import oshi.hardware.HardwareAbstractionLayer;
 
 @Singleton
 @SuppressWarnings("unused")
@@ -2159,7 +2146,7 @@ public class DataMigrator {
 			} else if (file.getName().startsWith("Users.xml")) {
 				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
 				for (Element element: dom.getRootElement().elements()) {
-					element.addElement("accessToken").setText(RandomStringUtils.randomAlphanumeric(40));
+					element.addElement("accessToken").setText(CryptoUtils.generateSecret());
 					element.addElement("ssoInfo").addElement("subject").setText(UUID.randomUUID().toString());
 				}
 				dom.writeToFile(file, false);
@@ -2705,7 +2692,7 @@ public class DataMigrator {
 					element.addElement("ssoInfo").addElement("subject").setText(UUID.randomUUID().toString());
 					element.addElement("email").setText("unknown email");
 					element.addElement("alternateEmails");
-					element.addElement("accessToken").setText(RandomStringUtils.randomAlphanumeric(User.ACCESS_TOKEN_LEN));
+					element.addElement("accessToken").setText(CryptoUtils.generateSecret());
 					element.addElement("userProjectQueries");
 					element.addElement("userIssueQueries");
 					element.addElement("userIssueQueryWatches");
@@ -4556,5 +4543,349 @@ public class DataMigrator {
 			}
 		}
 	}
+
+	private void migrate107(File dataDir, Stack<Integer> versions) {
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Settings.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String key = element.elementTextTrim("key");
+					if (key.equals("SYSTEM")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							var gitConfigElement = valueElement.element("gitConfig");
+							gitConfigElement.setName("gitLocation");
+							var clazz = gitConfigElement.attributeValue("class").replace(
+									"io.onedev.server.git.config.",
+									"io.onedev.server.git.location.");
+							gitConfigElement.addAttribute("class", clazz);
+
+							var curlConfigElement = valueElement.element("curlConfig");
+							curlConfigElement.setName("curlLocation");
+							clazz = curlConfigElement.attributeValue("class").replace(
+									"io.onedev.server.git.config.",
+									"io.onedev.server.git.location.");
+							curlConfigElement.addAttribute("class", clazz);
+						}
+					} else if (key.equals("SSO_CONNECTORS")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							for (Element connectorElement: valueElement.elements()) {
+								if (connectorElement.getName().contains("OpenIdConnector")) {
+									Element issuerUrlElement = connectorElement.element("issuerUrl");
+									issuerUrlElement.setName("configurationDiscoveryUrl");
+									issuerUrlElement.setText(issuerUrlElement.getText().trim() + "/.well-known/openid-configuration"); 
+								}
+							}
+						}
+					} else if (key.equals("JOB_EXECUTORS")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							for (Element executorElement: valueElement.elements()) {
+								if (executorElement.getName().contains("KubernetesExecutor")) {
+									executorElement.addElement("cpuRequest").setText("250m");
+									executorElement.addElement("memoryRequest").setText("256Mi");
+								}
+							}
+						}
+					} else if (key.equals("PERFORMANCE")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							int cpuIntensiveTaskConcurrency;
+							try {
+								HardwareAbstractionLayer hardware = new SystemInfo().getHardware();
+								cpuIntensiveTaskConcurrency = hardware.getProcessor().getLogicalProcessorCount();
+							} catch (Exception e) {
+								cpuIntensiveTaskConcurrency = 4;
+							}
+							valueElement.addElement("cpuIntensiveTaskConcurrency")
+									.setText(String.valueOf(cpuIntensiveTaskConcurrency));
+						}
+					}
+				}
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("Projects.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					element.addElement("gitPackConfig");
+					
+					for (var branchProtectionElement: element.element("branchProtections").elements()) {
+						branchProtectionElement.setName("io.onedev.server.model.support.code.BranchProtection");
+						for (var fileProtectionElement: branchProtectionElement.element("fileProtections").elements()) 
+							fileProtectionElement.setName("io.onedev.server.model.support.code.FileProtection");
+					}
+					for (var tagProtectionElement: element.element("tagProtections").elements()) {
+						tagProtectionElement.setName("io.onedev.server.model.support.code.TagProtection");
+					}
+				}
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("Agents.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element : dom.getRootElement().elements()) {
+					element.element("memory").detach();
+					Element cpuElement = element.element("cpu");
+					cpuElement.setName("cpus");
+					cpuElement.setText(String.valueOf(Integer.parseInt(cpuElement.getTextTrim())/1000));
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+	}
+
+	private Set<String> getMentioned108(Map<String, String> userIds, String content) {
+		Set<String> mentioned = new HashSet<>();
+		MarkdownManager markdownManager = OneDev.getInstance(MarkdownManager.class);
+		for (String userName: new MentionParser().parseMentions(markdownManager.render(content))) {
+			String userId = userIds.get(userName);
+			if (userId != null)
+				mentioned.add(userId);
+		}
+		return mentioned;
+	}
 	
+	private void migrate108(File dataDir, Stack<Integer> versions) {
+		Set<Pair<String, String>> issueMentions = new HashSet<>();
+		Set<Pair<String, String>> pullRequestMentions = new HashSet<>();
+		Set<Pair<String, String>> codeCommentMentions = new HashSet<>();
+
+		Map<String, String> userIds = new HashMap<>();
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Users.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					userIds.put(element.elementText("name").trim(), 
+							element.elementTextTrim("id"));
+				}
+			}
+		}
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Issues.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String issueId = element.elementTextTrim("id");
+					Element descriptionElement = element.element("description");
+					if (descriptionElement != null) {
+						getMentioned108(userIds, descriptionElement.getText()).forEach(userId -> {
+							issueMentions.add(new Pair<>(issueId, userId));		
+						});
+					}
+				}
+			} else if (file.getName().startsWith("IssueComments.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String issueId = element.elementTextTrim("issue");
+					Element contentElement = element.element("content");
+					if (contentElement != null) {
+						getMentioned108(userIds, contentElement.getText()).forEach(userId -> {
+							issueMentions.add(new Pair<>(issueId, userId));
+						});
+					}
+				}
+			} else if (file.getName().startsWith("PullRequests.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String requestId = element.elementTextTrim("id");
+					Element descriptionElement = element.element("description");
+					if (descriptionElement != null) {
+						getMentioned108(userIds, descriptionElement.getText()).forEach(userId -> {
+							pullRequestMentions.add(new Pair<>(requestId, userId));
+						});
+					}
+				}
+			} else if (file.getName().startsWith("PullRequestComments.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String requestId = element.elementTextTrim("request");
+					Element contentElement = element.element("content");
+					if (contentElement != null) {
+						getMentioned108(userIds, contentElement.getText()).forEach(userId -> {
+							pullRequestMentions.add(new Pair<>(requestId, userId));
+						});
+					}
+				}
+			} else if (file.getName().startsWith("CodeComments.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String commentId = element.elementTextTrim("id");
+					Element contentElement = element.element("content");
+					if (contentElement != null) {
+						getMentioned108(userIds, contentElement.getText()).forEach(userId -> {
+							codeCommentMentions.add(new Pair<>(commentId, userId));
+						});
+					}
+				}
+			} else if (file.getName().startsWith("CodeCommentReplys.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					String commentId = element.elementTextTrim("comment");
+					Element contentElement = element.element("content");
+					if (contentElement != null) {
+						getMentioned108(userIds, contentElement.getText()).forEach(userId -> {
+							codeCommentMentions.add(new Pair<>(commentId, userId));
+						});
+					}
+				}
+			}
+		}
+
+		VersionedXmlDoc mentionsDom;
+		File mentionsFile = new File(dataDir, "IssueMentions.xml");
+		mentionsDom = new VersionedXmlDoc();
+		Element mentionsElement = mentionsDom.addElement("list");
+
+		Long id = 1L;
+		for (Pair<String, String> issueMention : issueMentions) {
+			Element mentionElement = mentionsElement.addElement("io.onedev.server.model.IssueMention");
+			mentionElement.addElement("id").setText(String.valueOf(id++));
+			mentionElement.addAttribute("revision", "0.0");
+			mentionElement.addElement("issue").setText(issueMention.getFirst());
+			mentionElement.addElement("user").setText(issueMention.getSecond());
+		}
+		mentionsDom.writeToFile(mentionsFile, true);
+
+		mentionsFile = new File(dataDir, "PullRequestMentions.xml");
+		mentionsDom = new VersionedXmlDoc();
+		mentionsElement = mentionsDom.addElement("list");
+
+		id = 1L;
+		for (Pair<String, String> it : pullRequestMentions) {
+			Element mentionElement = mentionsElement.addElement("io.onedev.server.model.PullRequestMention");
+			mentionElement.addElement("id").setText(String.valueOf(id++));
+			mentionElement.addAttribute("revision", "0.0");
+			mentionElement.addElement("request").setText(it.getFirst());
+			mentionElement.addElement("user").setText(it.getSecond());
+		}
+		mentionsDom.writeToFile(mentionsFile, true);
+
+		mentionsFile = new File(dataDir, "CodeCommentMentions.xml");
+		mentionsDom = new VersionedXmlDoc();
+		mentionsElement = mentionsDom.addElement("list");
+
+		id = 1L;
+		for (Pair<String, String> it : codeCommentMentions) {
+			Element mentionElement = mentionsElement.addElement("io.onedev.server.model.CodeCommentMention");
+			mentionElement.addElement("id").setText(String.valueOf(id++));
+			mentionElement.addAttribute("revision", "0.0");
+			mentionElement.addElement("comment").setText(it.getFirst());
+			mentionElement.addElement("user").setText(it.getSecond());
+		}
+		mentionsDom.writeToFile(mentionsFile, true);
+	}
+
+	private void migrate109(File dataDir, Stack<Integer> versions) {
+		var updateIds = new HashSet<>();
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Projects.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element updateElement = element.element("update");
+					updateIds.add(updateElement.getTextTrim());
+					updateElement.setName("dynamics");
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("ProjectUpdates.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					if (!updateIds.contains(element.elementTextTrim("id"))) {
+						element.detach();
+					} else {
+						element.element("date").setName("lastActivityDate");
+						element.setName("io.onedev.server.model.ProjectDynamics");
+					}
+				}
+				FileUtils.deleteFile(file);
+				String newFileName = file.getName().replace("Update", "Dynamics");
+				dom.writeToFile(new File(file.getParent(), newFileName), false);
+			} else if (file.getName().startsWith("Issues.xml") 
+					|| file.getName().startsWith("CodeComments.xml") 
+					|| file.getName().startsWith("PullRequests.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element lastUpdateElement = element.element("lastUpdate");
+					lastUpdateElement.setName("lastActivity");
+					lastUpdateElement.element("activity").setName("description");
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().contains(".xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				List<Node> selectedNodes = new ArrayList<>();
+				selectedNodes.addAll(dom.selectNodes("//io.onedev.server.model.support.pullrequest.NamedPullRequestQuery"));
+				selectedNodes.addAll(dom.selectNodes("//io.onedev.server.model.support.issue.NamedIssueQuery"));
+				selectedNodes.addAll(dom.selectNodes("//io.onedev.server.model.support.NamedCodeCommentQuery"));
+				selectedNodes.addAll(dom.selectNodes("//io.onedev.server.model.support.NamedProjectQuery"));
+				for (Node node : selectedNodes) {
+					if (node instanceof Element) {
+						Element element = (Element) node;
+						Element queryElement = element.element("query");
+						if (queryElement != null)
+							queryElement.setText(queryElement.getText().trim().replace("\"Update Date\"", "\"Last Activity Date\""));
+					}
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+	}
+
+	private void migrate110(File dataDir, Stack<Integer> versions) {
+		var updateIds = new HashSet<>();
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Users.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					element.element("accessToken").setText(CryptoUtils.generateSecret());
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+	}
+	
+	private void migrate111(File dataDir, Stack<Integer> versions) {
+		for (File file: dataDir.listFiles()) {
+			if (file.getName().startsWith("Projects.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					Element buildSettingElement = element.element("buildSetting");
+					buildSettingElement.addElement("jobProperties");
+				}
+				dom.writeToFile(file, false);
+			} else if (file.getName().startsWith("Settings.xml")) {
+				VersionedXmlDoc dom = VersionedXmlDoc.fromFile(file);
+				for (Element element: dom.getRootElement().elements()) {
+					if (element.elementTextTrim("key").equals("ISSUE")) {
+						Element valueElement = element.element("value");
+						if (valueElement != null) {
+							for (Element fieldSpecElement: valueElement.element("fieldSpecs").elements()) {
+								if (fieldSpecElement.getName().equals("io.onedev.server.model.support.issue.field.spec.ChoiceField")) {
+									Element defaultValueProviderElement = fieldSpecElement.element("defaultValueProvider");
+									if (defaultValueProviderElement != null 
+											&& defaultValueProviderElement.attributeValue("class").contains("SpecifiedDefaultValue")) {
+										Element defaultValueElement = defaultValueProviderElement.element("value");
+										Element defaultValuesElement = defaultValueProviderElement.addElement("defaultValues");
+										defaultValueElement.detach();
+										defaultValuesElement.addElement("io.onedev.server.model.support.inputspec.choiceinput.defaultvalueprovider.DefaultValue").add(defaultValueElement);
+									}
+									Element defaultMultiValueProviderElement = fieldSpecElement.element("defaultMultiValueProvider");
+									if (defaultMultiValueProviderElement != null
+											&& defaultMultiValueProviderElement.attributeValue("class").contains("SpecifiedDefaultMultiValue")) {
+										Element defaultValueElement = defaultMultiValueProviderElement.element("value");
+										Element defaultValuesElement = defaultMultiValueProviderElement.addElement("defaultValues");
+										defaultValueElement.detach();
+										defaultValuesElement.addElement("io.onedev.server.model.support.inputspec.choiceinput.defaultmultivalueprovider.DefaultMultiValue").add(defaultValueElement);
+									}
+								}
+							}
+						}
+					}
+				}
+				dom.writeToFile(file, false);
+			}
+		}
+	}
+
 }

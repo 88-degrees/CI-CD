@@ -116,7 +116,7 @@ public class KubernetesResource {
 						
 						JobContext jobContext = jobManager.getJobContext(getJobToken(), true);
 						Map<String, byte[]> outputFiles = jobManager.runServerStep(jobContext, 
-								stepPosition, filesDir, placeholderValues, new TaskLogger() {
+								stepPosition, filesDir, placeholderValues, true, new TaskLogger() {
 
 							@Override
 							public void log(String message, String sessionId) {
@@ -162,7 +162,7 @@ public class KubernetesResource {
 				File tempDir = FileUtils.createTempDir();
 				try {
 					jobManager.copyDependencies(jobContext, tempDir);
-					FileUtils.tar(tempDir, Lists.newArrayList("**"), new ArrayList<>(), output, false);
+					FileUtils.tar(tempDir, output, false);
 					output.flush();
 				} finally {
 					FileUtils.deleteDir(tempDir);

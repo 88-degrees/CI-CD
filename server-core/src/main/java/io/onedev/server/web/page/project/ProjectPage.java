@@ -1,43 +1,8 @@
 package io.onedev.server.web.page.project;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import javax.persistence.EntityNotFoundException;
-import javax.servlet.http.HttpServletResponse;
-
-import org.apache.commons.lang3.StringUtils;
-import org.apache.wicket.Component;
-import org.apache.wicket.RestartResponseException;
-import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.markup.ComponentTag;
-import org.apache.wicket.markup.head.CssHeaderItem;
-import org.apache.wicket.markup.head.IHeaderResponse;
-import org.apache.wicket.markup.html.WebMarkupContainer;
-import org.apache.wicket.markup.html.basic.Label;
-import org.apache.wicket.markup.html.link.BookmarkablePageLink;
-import org.apache.wicket.markup.html.list.ListItem;
-import org.apache.wicket.markup.html.list.ListView;
-import org.apache.wicket.markup.html.panel.Fragment;
-import org.apache.wicket.markup.repeater.RepeatingView;
-import org.apache.wicket.model.IModel;
-import org.apache.wicket.model.LoadableDetachableModel;
-import org.apache.wicket.request.Request;
-import org.apache.wicket.request.cycle.RequestCycle;
-import org.apache.wicket.request.flow.RedirectToUrlException;
-import org.apache.wicket.request.mapper.parameter.PageParameters;
-import org.eclipse.jgit.lib.ObjectId;
-
 import com.google.common.collect.Lists;
-
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.BuildManager;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.Build;
@@ -89,21 +54,46 @@ import io.onedev.server.web.page.project.setting.ProjectSettingContribution;
 import io.onedev.server.web.page.project.setting.ProjectSettingPage;
 import io.onedev.server.web.page.project.setting.authorization.ProjectAuthorizationsPage;
 import io.onedev.server.web.page.project.setting.avatar.AvatarEditPage;
-import io.onedev.server.web.page.project.setting.branchprotection.BranchProtectionsPage;
-import io.onedev.server.web.page.project.setting.build.ActionAuthorizationsPage;
-import io.onedev.server.web.page.project.setting.build.BuildPreservationsPage;
-import io.onedev.server.web.page.project.setting.build.DefaultFixedIssueFiltersPage;
-import io.onedev.server.web.page.project.setting.build.JobSecretsPage;
-import io.onedev.server.web.page.project.setting.codeanalysis.CodeAnalysisSettingPage;
+import io.onedev.server.web.page.project.setting.build.*;
+import io.onedev.server.web.page.project.setting.code.analysis.CodeAnalysisSettingPage;
+import io.onedev.server.web.page.project.setting.code.branchprotection.BranchProtectionsPage;
+import io.onedev.server.web.page.project.setting.code.git.GitPackConfigPage;
+import io.onedev.server.web.page.project.setting.code.pullrequest.PullRequestSettingPage;
+import io.onedev.server.web.page.project.setting.code.tagprotection.TagProtectionsPage;
 import io.onedev.server.web.page.project.setting.general.GeneralProjectSettingPage;
 import io.onedev.server.web.page.project.setting.pluginsettings.ContributedProjectSettingPage;
 import io.onedev.server.web.page.project.setting.servicedesk.ProjectServiceDeskSettingPage;
-import io.onedev.server.web.page.project.setting.tagprotection.TagProtectionsPage;
 import io.onedev.server.web.page.project.setting.webhook.WebHooksPage;
 import io.onedev.server.web.page.project.stats.ProjectContribsPage;
 import io.onedev.server.web.page.project.stats.SourceLinesPage;
 import io.onedev.server.web.page.project.tags.ProjectTagsPage;
 import io.onedev.server.web.util.ProjectAware;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.wicket.Component;
+import org.apache.wicket.RestartResponseException;
+import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.behavior.AttributeAppender;
+import org.apache.wicket.markup.ComponentTag;
+import org.apache.wicket.markup.head.CssHeaderItem;
+import org.apache.wicket.markup.head.IHeaderResponse;
+import org.apache.wicket.markup.html.WebMarkupContainer;
+import org.apache.wicket.markup.html.basic.Label;
+import org.apache.wicket.markup.html.link.BookmarkablePageLink;
+import org.apache.wicket.markup.html.list.ListItem;
+import org.apache.wicket.markup.html.list.ListView;
+import org.apache.wicket.markup.html.panel.Fragment;
+import org.apache.wicket.markup.repeater.RepeatingView;
+import org.apache.wicket.model.IModel;
+import org.apache.wicket.model.LoadableDetachableModel;
+import org.apache.wicket.request.Request;
+import org.apache.wicket.request.cycle.RequestCycle;
+import org.apache.wicket.request.flow.RedirectToUrlException;
+import org.apache.wicket.request.mapper.parameter.PageParameters;
+import org.eclipse.jgit.lib.ObjectId;
+
+import javax.persistence.EntityNotFoundException;
+import javax.servlet.http.HttpServletResponse;
+import java.util.*;
 
 @SuppressWarnings("serial")
 public abstract class ProjectPage extends LayoutPage implements ProjectAware {
@@ -261,25 +251,35 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 		
 		if (SecurityUtils.canManage(getProject())) {
 			List<SidebarMenuItem> settingMenuItems = new ArrayList<>();
-			settingMenuItems.add(new SidebarMenuItem.Page(null, "General Setting", 
+			settingMenuItems.add(new SidebarMenuItem.Page(null, "General Settings", 
 					GeneralProjectSettingPage.class, GeneralProjectSettingPage.paramsOf(getProject())));
 			settingMenuItems.add(new SidebarMenuItem.Page(null, "Edit Avatar", 
 					AvatarEditPage.class, AvatarEditPage.paramsOf(getProject())));
 			settingMenuItems.add(new SidebarMenuItem.Page(null, "Authorizations", 
 					ProjectAuthorizationsPage.class, ProjectAuthorizationsPage.paramsOf(getProject())));
-			
-			settingMenuItems.add(new SidebarMenuItem.Page(null, "Branch Protection", 
+
+			List<SidebarMenuItem> codeSettingMenuItems = new ArrayList<>();
+			codeSettingMenuItems.add(new SidebarMenuItem.Page(null, "Branch Protection", 
 					BranchProtectionsPage.class, BranchProtectionsPage.paramsOf(getProject())));
-			settingMenuItems.add(new SidebarMenuItem.Page(null, "Tag Protection", 
+			codeSettingMenuItems.add(new SidebarMenuItem.Page(null, "Tag Protection", 
 					TagProtectionsPage.class, TagProtectionsPage.paramsOf(getProject())));
-			
-			settingMenuItems.add(new SidebarMenuItem.Page(null, "Code Analysis", 
+			codeSettingMenuItems.add(new SidebarMenuItem.Page(null, "Code Analysis", 
 					CodeAnalysisSettingPage.class, CodeAnalysisSettingPage.paramsOf(getProject())));
+			if (getProject().isCodeManagement()) {
+				codeSettingMenuItems.add(new SidebarMenuItem.Page(null, "Git Pack Config",
+						GitPackConfigPage.class, GitPackConfigPage.paramsOf(getProject())));
+			}
+			codeSettingMenuItems.add(new SidebarMenuItem.Page(null, "Pull Request",
+					PullRequestSettingPage.class, PullRequestSettingPage.paramsOf(getProject())));
+			
+			settingMenuItems.add(new SidebarMenuItem.SubMenu(null, "Code", codeSettingMenuItems));
 			
 			List<SidebarMenuItem> buildSettingMenuItems = new ArrayList<>();
 			
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Job Secrets", 
 					JobSecretsPage.class, JobSecretsPage.paramsOf(getProject())));
+			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Job Properties",
+					JobPropertiesPage.class, JobPropertiesPage.paramsOf(getProject())));
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Action Authorizations", 
 					ActionAuthorizationsPage.class, ActionAuthorizationsPage.paramsOf(getProject())));
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Build Preserve Rules", 
@@ -297,13 +297,34 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 			settingMenuItems.add(new SidebarMenuItem.Page(null, "Web Hooks", 
 					WebHooksPage.class, WebHooksPage.paramsOf(getProject())));
 			
+			List<Class<? extends ContributedProjectSetting>> contributedSettingClasses = new ArrayList<>();
 			for (ProjectSettingContribution contribution:OneDev.getExtensions(ProjectSettingContribution.class)) {
-				for (Class<? extends ContributedProjectSetting> settingClass: contribution.getSettingClasses()) {
-					settingMenuItems.add(new SidebarMenuItem.Page(
-							null, 
-							EditableUtils.getDisplayName(settingClass), 
-							ContributedProjectSettingPage.class, 
-							ContributedProjectSettingPage.paramsOf(getProject(), settingClass)));
+				for (Class<? extends ContributedProjectSetting> settingClass: contribution.getSettingClasses()) 
+					contributedSettingClasses.add(settingClass);
+			}
+			contributedSettingClasses.sort(Comparator.comparingInt(EditableUtils::getOrder));
+			
+			Map<String, List<SidebarMenuItem>> contributedSettingMenuItems = new HashMap<>();
+			for (var contributedSettingClass: contributedSettingClasses) {
+				var group = EditableUtils.getGroup(contributedSettingClass);
+				if (group == null)
+					group = "";
+				var contributedSettingMenuItemsOfGroup = contributedSettingMenuItems.get(group);
+				if (contributedSettingMenuItemsOfGroup == null) {
+					contributedSettingMenuItemsOfGroup = new ArrayList<>();
+					contributedSettingMenuItems.put(group, contributedSettingMenuItemsOfGroup);
+				}
+				contributedSettingMenuItemsOfGroup.add(new SidebarMenuItem.Page(
+						null,
+						EditableUtils.getDisplayName(contributedSettingClass),
+						ContributedProjectSettingPage.class,
+						ContributedProjectSettingPage.paramsOf(getProject(), contributedSettingClass)));
+			}
+			for (var entry: contributedSettingMenuItems.entrySet()) {
+				if (entry.getKey().length() == 0) {
+					settingMenuItems.addAll(entry.getValue());
+				} else {
+					settingMenuItems.add(new SidebarMenuItem.SubMenu(null, entry.getKey(), entry.getValue()));
 				}
 			}
 			
@@ -513,18 +534,6 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 	}
 	
 	protected abstract Component newProjectTitle(String componentId);
-	
-	protected Collection<Build> getBuilds(ObjectId commitId) {
-		if (buildsCache == null)
-			buildsCache = new HashMap<>();
-		Collection<Build> builds = buildsCache.get(commitId);
-		if (builds == null) {
-			BuildManager buildManager = OneDev.getInstance(BuildManager.class);
-			builds = buildManager.query(getProject(), commitId, null, null, null, new HashMap<>(), null);
-			buildsCache.put(commitId, builds);
-		}
-		return builds;
-	}
 	
 	public static PageParameters paramsOf(Long projectId) {
 		ProjectFacade project = getProjectManager().findFacadeById(projectId);

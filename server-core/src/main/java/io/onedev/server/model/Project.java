@@ -1,85 +1,18 @@
 package io.onedev.server.model;
 
-import static io.onedev.server.model.Project.PROP_NAME;
-
-import java.lang.reflect.InvocationTargetException;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.Stack;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.FetchType;
-import javax.persistence.Index;
-import javax.persistence.JoinColumn;
-import javax.persistence.Lob;
-import javax.persistence.ManyToOne;
-import javax.persistence.OneToMany;
-import javax.persistence.OneToOne;
-import javax.persistence.Table;
-import javax.persistence.UniqueConstraint;
-import javax.validation.Validator;
-import javax.validation.constraints.NotEmpty;
-
-import org.apache.commons.collections4.map.AbstractReferenceMap.ReferenceStrength;
-import org.apache.commons.collections4.map.ReferenceMap;
-import org.apache.shiro.authz.Permission;
-import org.apache.tika.mime.MediaType;
-import org.apache.wicket.util.encoding.UrlEncoder;
-import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.FileMode;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.revwalk.LastCommitsOfChildren;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.hibernate.annotations.Cache;
-import org.hibernate.annotations.CacheConcurrencyStrategy;
-import org.hibernate.annotations.DynamicUpdate;
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.LinearRange;
 import io.onedev.commons.utils.PathUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.OneDev;
 import io.onedev.server.buildspec.BuildSpec;
-import io.onedev.server.entitymanager.BuildManager;
-import io.onedev.server.entitymanager.BuildQueryPersonalizationManager;
-import io.onedev.server.entitymanager.CodeCommentQueryPersonalizationManager;
-import io.onedev.server.entitymanager.CommitQueryPersonalizationManager;
-import io.onedev.server.entitymanager.EmailAddressManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.IssueQueryPersonalizationManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.PullRequestQueryPersonalizationManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UrlManager;
-import io.onedev.server.git.BlameBlock;
-import io.onedev.server.git.Blob;
-import io.onedev.server.git.BlobIdent;
-import io.onedev.server.git.BlobIdentFilter;
-import io.onedev.server.git.GitUtils;
-import io.onedev.server.git.LfsObject;
+import io.onedev.server.entitymanager.*;
+import io.onedev.server.git.*;
 import io.onedev.server.git.exception.ObjectNotFoundException;
 import io.onedev.server.git.service.GitService;
 import io.onedev.server.git.service.RefFacade;
@@ -87,23 +20,17 @@ import io.onedev.server.git.signature.SignatureVerificationKeyLoader;
 import io.onedev.server.git.signature.SignatureVerified;
 import io.onedev.server.infomanager.CommitInfoManager;
 import io.onedev.server.model.Build.Status;
-import io.onedev.server.model.support.BranchProtection;
-import io.onedev.server.model.support.CodeAnalysisSetting;
-import io.onedev.server.model.support.FileProtection;
-import io.onedev.server.model.support.LabelSupport;
-import io.onedev.server.model.support.NamedCodeCommentQuery;
-import io.onedev.server.model.support.NamedCommitQuery;
-import io.onedev.server.model.support.TagProtection;
-import io.onedev.server.model.support.WebHook;
-import io.onedev.server.model.support.build.BuildPreservation;
-import io.onedev.server.model.support.build.DefaultFixedIssueFilter;
-import io.onedev.server.model.support.build.JobSecret;
-import io.onedev.server.model.support.build.NamedBuildQuery;
-import io.onedev.server.model.support.build.ProjectBuildSetting;
+import io.onedev.server.model.support.*;
+import io.onedev.server.model.support.build.*;
 import io.onedev.server.model.support.build.actionauthorization.ActionAuthorization;
+import io.onedev.server.model.support.code.BranchProtection;
+import io.onedev.server.model.support.code.FileProtection;
+import io.onedev.server.model.support.code.GitPackConfig;
+import io.onedev.server.model.support.code.TagProtection;
 import io.onedev.server.model.support.issue.BoardSpec;
 import io.onedev.server.model.support.issue.NamedIssueQuery;
 import io.onedev.server.model.support.issue.ProjectIssueSetting;
+import io.onedev.server.model.support.pullrequest.MergeStrategy;
 import io.onedev.server.model.support.pullrequest.NamedPullRequestQuery;
 import io.onedev.server.model.support.pullrequest.ProjectPullRequestSetting;
 import io.onedev.server.rest.annotation.Api;
@@ -125,12 +52,38 @@ import io.onedev.server.web.editable.annotation.Markdown;
 import io.onedev.server.web.page.project.setting.ContributedProjectSetting;
 import io.onedev.server.web.util.ProjectAware;
 import io.onedev.server.web.util.WicketUtils;
+import org.apache.commons.collections4.map.AbstractReferenceMap.ReferenceStrength;
+import org.apache.commons.collections4.map.ReferenceMap;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.shiro.authz.Permission;
+import org.apache.tika.mime.MediaType;
+import org.apache.wicket.util.encoding.UrlEncoder;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.LastCommitsOfChildren;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.hibernate.annotations.Cache;
+import org.hibernate.annotations.CacheConcurrencyStrategy;
+import org.hibernate.annotations.DynamicUpdate;
+
+import javax.annotation.Nullable;
+import javax.persistence.*;
+import javax.validation.Validator;
+import javax.validation.constraints.NotEmpty;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+
+import static io.onedev.server.model.Project.PROP_NAME;
 
 @Entity
 @Table(
 		indexes={
 				@Index(columnList="o_parent_id"), @Index(columnList="o_forkedFrom_id"),
-				@Index(columnList="o_update_id"), @Index(columnList=PROP_NAME)
+				@Index(columnList="o_dynamics_id"), @Index(columnList=PROP_NAME)
 		}, 
 		uniqueConstraints={@UniqueConstraint(columnNames={"o_parent_id", PROP_NAME})}
 )
@@ -158,9 +111,11 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	
 	public static final String PROP_FORKED_FROM = "forkedFrom";
 	
-	public static final String NAME_UPDATE_DATE = "Update Date";
+	public static final String NAME_LAST_ACTIVITY_DATE = "Last Activity Date";
+
+	public static final String NAME_LAST_COMMIT_DATE = "Last Commit Date";
 	
-	public static final String PROP_UPDATE = "update";
+	public static final String PROP_DYNAMICS = "dynamics";
 	
 	public static final String NAME_LABEL = "Label";
 	
@@ -181,13 +136,14 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	public static final String NULL_SERVICE_DESK_PREFIX = "<$NullServiceDesk$>";
 	
 	public static final List<String> QUERY_FIELDS = Lists.newArrayList(
-			NAME_NAME, NAME_PATH, NAME_LABEL, NAME_SERVICE_DESK_NAME, NAME_DESCRIPTION, NAME_UPDATE_DATE);
+			NAME_NAME, NAME_PATH, NAME_LABEL, NAME_SERVICE_DESK_NAME, NAME_DESCRIPTION, NAME_LAST_ACTIVITY_DATE, NAME_LAST_COMMIT_DATE);
 
 	public static final Map<String, String> ORDER_FIELDS = CollectionUtils.newLinkedHashMap(
 			NAME_PATH, PROP_PATH,
 			NAME_NAME, PROP_NAME, 
 			NAME_SERVICE_DESK_NAME, PROP_SERVICE_DESK_NAME,
-			NAME_UPDATE_DATE, PROP_UPDATE + "." + ProjectUpdate.PROP_DATE);
+			NAME_LAST_ACTIVITY_DATE, PROP_DYNAMICS + "." + ProjectDynamics.PROP_LAST_ACTIVITY_DATE,
+			NAME_LAST_COMMIT_DATE, PROP_DYNAMICS + "." + ProjectDynamics.PROP_LAST_COMMIT_DATE);
 	
 	static ThreadLocal<Stack<Project>> stack =  new ThreadLocal<Stack<Project>>() {
 
@@ -206,23 +162,27 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		stack.get().pop();
 	}
 	
-	private static final ReferenceMap<ObjectId, Optional<BuildSpec>> buildSpecCache = 
+	private static final ReferenceMap<ObjectId, Optional<byte[]>> buildSpecBytesCache = 
 			new ReferenceMap<>(ReferenceStrength.HARD, ReferenceStrength.SOFT);
-    
+
+	private transient Map<ObjectId, Optional<BuildSpec>> buildSpecCache;
+
 	@ManyToOne(fetch=FetchType.LAZY)
 	@JoinColumn(nullable=true)
 	@Api(description="Represents the project from which this project is forked. Remove this property if "
-			+ "the project is not a fork when create/update the project")
+			+ "the project is not a fork when create/update the project. May be null")
 	private Project forkedFrom;
 	
 	@ManyToOne(fetch=FetchType.LAZY)
 	@JoinColumn(nullable=true)
-	@Api(description="Represents the parent project. Remove this property if the project does not have a parent project")
+	@Api(description="Represents the parent project. Remove this property if the project does not " +
+			"have a parent project. May be null")
 	private Project parent;
-	
-	@OneToOne(fetch=FetchType.LAZY)
+
+	@JsonIgnore
+	@OneToOne(fetch = FetchType.LAZY)
 	@JoinColumn(unique=true, nullable=false)
-	private ProjectUpdate update;
+	private ProjectDynamics dynamics;
 
 	@Column(nullable=false)
 	private String name;
@@ -232,6 +192,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	private String path;
 	
 	@Column(length=MAX_DESCRIPTION_LEN)
+	@Api(description = "May be null")
 	private String description;
 	
     @OneToMany(mappedBy="project")
@@ -280,7 +241,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	@ManyToOne(fetch=FetchType.LAZY)
 	@JoinColumn(nullable=true)
 	@Api(description="This represents default role of the project. Remove this property if the project should not "
-			+ "have a default role when create/update the project")
+			+ "have a default role when create/update the project. May be null.")
     private Role defaultRole;
     
 	@OneToMany(mappedBy="project", cascade=CascadeType.REMOVE)
@@ -316,7 +277,13 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	private boolean codeManagement = true;
 	
 	private boolean issueManagement = true;
+
+	@Lob
+	@Column(length=65535)
+	private GitPackConfig gitPackConfig = new GitPackConfig();
 	
+	@Lob
+	@Column(length=65535)
 	private CodeAnalysisSetting codeAnalysisSetting = new CodeAnalysisSetting();
 	
 	// SQL Server does not allow duplicate null values for unique column. So we use 
@@ -380,6 +347,8 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	private transient List<Milestone> sortedMilestones;
 	
 	private transient Optional<UUID> storageServerUUID;
+
+	private transient Map<ObjectId, Collection<Build>> buildsCache;
 	
 	@Editable(order=100)
 	@ProjectName
@@ -448,12 +417,12 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		this.createDate = createDate;
 	}
 
-	public ProjectUpdate getUpdate() {
-		return update;
+	public ProjectDynamics getDynamics() {
+		return dynamics;
 	}
 
-	public void setUpdate(ProjectUpdate update) {
-		this.update = update;
+	public void setDynamics(ProjectDynamics dynamics) {
+		this.dynamics = dynamics;
 	}
 
 	public Collection<PullRequest> getIncomingRequests() {
@@ -772,25 +741,46 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	 * 			Exception when build spec is defined but not valid
 	 */
 	@Nullable
-	public BuildSpec getBuildSpec(ObjectId commitId) {
-		Optional<BuildSpec> buildSpec;
-		synchronized (buildSpecCache) {
-			buildSpec = buildSpecCache.get(commitId);
+	private BuildSpec loadBuildSpec(ObjectId commitId) {
+		Optional<byte[]> buildSpecBytes;
+		synchronized (buildSpecBytesCache) {
+			buildSpecBytes = buildSpecBytesCache.get(commitId);
 		}
-		if (buildSpec == null) {
+		if (buildSpecBytes == null) {
 			Blob blob = getBlob(new BlobIdent(commitId.name(), BuildSpec.BLOB_PATH, FileMode.TYPE_FILE), false);
+			BuildSpec buildSpec;
 			if (blob != null) {  
-				buildSpec = Optional.fromNullable(BuildSpec.parse(blob.getBytes()));
+				buildSpec = BuildSpec.parse(blob.getBytes());
 			} else { 
 				Blob oldBlob = getBlob(new BlobIdent(commitId.name(), ".onedev-buildspec", FileMode.TYPE_FILE), false);
 				if (oldBlob != null)
-					buildSpec = Optional.fromNullable(BuildSpec.parse(oldBlob.getBytes()));
+					buildSpec = BuildSpec.parse(oldBlob.getBytes());
 				else
-					buildSpec = Optional.absent();
+					buildSpec = null;
 			}
-			synchronized (buildSpecCache) {
-				buildSpecCache.put(commitId, buildSpec);
+			if (buildSpec != null)
+				buildSpecBytes = Optional.of(SerializationUtils.serialize(buildSpec));
+			else
+				buildSpecBytes = Optional.absent();
+			synchronized (buildSpecBytesCache) {
+				buildSpecBytesCache.put(commitId, buildSpecBytes);
 			}
+			return buildSpec;
+		} else if (buildSpecBytes.isPresent()) {
+			return SerializationUtils.deserialize(buildSpecBytes.get());
+		} else {
+			return null;
+		}
+	}
+	
+	@Nullable
+	public BuildSpec getBuildSpec(ObjectId commitId) {
+		if (buildSpecCache == null)
+			buildSpecCache = new HashMap<>();
+		Optional<BuildSpec> buildSpec = buildSpecCache.get(commitId);
+		if (buildSpec == null) {
+			buildSpec = Optional.fromNullable(loadBuildSpec(commitId));
+			buildSpecCache.put(commitId, buildSpec);
 		}
 		return buildSpec.orNull();
 	}
@@ -887,7 +877,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	public void setCodeManagement(boolean codeManagement) {
 		this.codeManagement = codeManagement;
 	}
-	
+
 	@Editable(order=300, description="Whether or not to enable issue management for the project")
 	public boolean isIssueManagement() {
 		return issueManagement;
@@ -910,6 +900,14 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			this.serviceDeskName = serviceDeskName;
 		else if (!this.serviceDeskName.startsWith(NULL_SERVICE_DESK_PREFIX))
 			this.serviceDeskName = NULL_SERVICE_DESK_PREFIX + UUID.randomUUID().toString();
+	}
+
+	public GitPackConfig getGitPackConfig() {
+		return gitPackConfig;
+	}
+
+	public void setGitPackConfig(GitPackConfig gitPackConfig) {
+		this.gitPackConfig = gitPackConfig;
 	}
 
 	public CodeAnalysisSetting getCodeAnalysisSetting() {
@@ -946,6 +944,18 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			}
 		}
 		return jobSecrets;
+	}
+
+	public List<JobProperty> getHierarchyJobProperties() {
+		List<JobProperty> jobProperties = new ArrayList<>(getBuildSetting().getJobProperties());
+		if (getParent() != null) {
+			Set<String> names = jobProperties.stream().map(it->it.getName()).collect(Collectors.toSet());
+			for (JobProperty jobProperty : getParent().getHierarchyJobProperties()) {
+				if (!names.contains(jobProperty.getName()))
+					jobProperties.add(jobProperty);
+			}
+		}
+		return jobProperties;
 	}
 	
 	public List<ActionAuthorization> getHierarchyActionAuthorizations() {
@@ -1008,8 +1018,9 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			namedCodeCommentQueries = new ArrayList<>(); 
 			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Unresolved", "unresolved"));
 			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Created by me", "created by me"));
+			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Mentioned me", "mentioned me"));
 			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Created recently", "\"Create Date\" is since \"last week\""));
-			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Updated recently", "\"Update Date\" is since \"last week\""));
+			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Has activity recently", "\"Last Activity Date\" is since \"last week\""));
 			namedCodeCommentQueries.add(new NamedCodeCommentQuery("Resolved", "resolved"));
 			namedCodeCommentQueries.add(new NamedCodeCommentQuery("All", null));
 		}
@@ -1333,7 +1344,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			}
 			return false;
 		} else {
-			return PatternSet.parse(branches).matches(matcher, "master");
+			return PatternSet.parse(branches).matches(matcher, "main");
 		}
 	}
 	
@@ -1390,8 +1401,10 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	
 	@Nullable
 	public static Project get() {
-		if (!stack.get().isEmpty()) { 
+		if (!stack.get().isEmpty()) {
 			return stack.get().peek();
+		} else if (Build.get() != null) {
+			return Build.get().getProject();
 		} else {
 			ComponentContext componentContext = ComponentContext.get();
 			if (componentContext != null) {
@@ -1632,6 +1645,28 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 
 		return PatternSet.parse("**");
 	}
+
+	public MergeStrategy findDefaultMergeStrategy() {
+		Project current = this;
+		do {
+			if (current.getPullRequestSetting().getDefaultMergeStrategy() != null)
+				return current.getPullRequestSetting().getDefaultMergeStrategy();
+			current = current.getParent();
+		} while (current != null);
+
+		return MergeStrategy.CREATE_MERGE_COMMIT;
+	}
+
+	public boolean findPullRequestWithLFS() {
+		Project current = this;
+		do {
+			if (current.getPullRequestSetting().isWithLFS() != null)
+				return current.getPullRequestSetting().isWithLFS();
+			current = current.getParent();
+		} while (current != null);
+
+		return false;
+	}
 	
 	public String getSiteLockName() {
 		return getSiteLockName(getId());
@@ -1640,5 +1675,17 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	public static String getSiteLockName(Long projectId) {
 		return "project-site:" + projectId;
 	}
-	
+
+	public Collection<Build> getBuilds(ObjectId commitId) {
+		if (buildsCache == null)
+			buildsCache = new HashMap<>();
+		Collection<Build> builds = buildsCache.get(commitId);
+		if (builds == null) {
+			BuildManager buildManager = OneDev.getInstance(BuildManager.class);
+			builds = buildManager.query(this, commitId, null, null, null, new HashMap<>(), null);
+			buildsCache.put(commitId, builds);
+		}
+		return builds;
+	}
+
 }

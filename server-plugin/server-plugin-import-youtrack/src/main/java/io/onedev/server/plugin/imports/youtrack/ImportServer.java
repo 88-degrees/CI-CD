@@ -1,76 +1,22 @@
 package io.onedev.server.plugin.imports.youtrack;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.Serializable;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-import javax.validation.ConstraintValidatorContext;
-import javax.validation.constraints.NotEmpty;
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.Invocation;
-import javax.ws.rs.client.WebTarget;
-import javax.ws.rs.core.Response;
-
-import org.apache.http.client.utils.URIBuilder;
-import org.apache.wicket.MetaDataKey;
-import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.unbescape.html.HtmlEscape;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.collect.Sets;
-
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
 import io.onedev.server.attachment.AttachmentManager;
-import io.onedev.server.entitymanager.IssueLinkManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.LinkSpecManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.entitymanager.*;
 import io.onedev.server.entityreference.ReferenceMigrator;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.IssueField;
-import io.onedev.server.model.IssueLink;
-import io.onedev.server.model.IssueSchedule;
-import io.onedev.server.model.LinkSpec;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.User;
-import io.onedev.server.model.support.LastUpdate;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.issue.IssuesImported;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.StateSpec;
-import io.onedev.server.model.support.issue.field.spec.ChoiceField;
-import io.onedev.server.model.support.issue.field.spec.DateField;
-import io.onedev.server.model.support.issue.field.spec.DateTimeField;
-import io.onedev.server.model.support.issue.field.spec.FieldSpec;
-import io.onedev.server.model.support.issue.field.spec.FloatField;
-import io.onedev.server.model.support.issue.field.spec.IntegerField;
-import io.onedev.server.model.support.issue.field.spec.TextField;
-import io.onedev.server.model.support.issue.field.spec.UserChoiceField;
-import io.onedev.server.model.support.issue.field.spec.WorkingPeriodField;
+import io.onedev.server.model.support.issue.field.spec.*;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.DateUtils;
@@ -81,6 +27,30 @@ import io.onedev.server.util.validation.Validatable;
 import io.onedev.server.util.validation.annotation.ClassValidating;
 import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.editable.annotation.Password;
+import org.apache.commons.lang3.tuple.ImmutableTriple;
+import org.apache.commons.lang3.tuple.Triple;
+import org.apache.http.client.utils.URIBuilder;
+import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.unbescape.html.HtmlEscape;
+
+import javax.annotation.Nullable;
+import javax.validation.ConstraintValidatorContext;
+import javax.validation.constraints.NotEmpty;
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.ClientBuilder;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.Response;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Serializable;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 @Editable
 @ClassValidating
@@ -91,12 +61,6 @@ public class ImportServer implements Serializable, Validatable {
 	private static final Logger logger = LoggerFactory.getLogger(ImportServer.class);
 	
 	private static final int PER_PAGE = 50;
-	
-	static final MetaDataKey<ImportServer> META_DATA_KEY = new MetaDataKey<ImportServer>() {
-
-		private static final long serialVersionUID = 1L;
-		
-	};
 	
 	protected static final String PROP_API_URL = "apiUrl";
 	
@@ -293,7 +257,7 @@ public class ImportServer implements Serializable, Validatable {
 		return option;
 	}
 	
-	private ImportResult importIssues(String youTrackProjectId, Project oneDevProject,  
+	private ImportResult doImportIssues(String youTrackProjectId, Project oneDevProject,  
 			ImportOption option, boolean dryRun, TaskLogger logger) {
 		IssueManager issueManager = OneDev.getInstance(IssueManager.class);
 		Client client = newClient();
@@ -505,11 +469,11 @@ public class ImportServer implements Serializable, Validatable {
 							issue.setSubmitter(SecurityUtils.getUser());
 						}
 						
-						LastUpdate lastUpdate = new LastUpdate();
-						lastUpdate.setActivity("Opened");
-						lastUpdate.setDate(issue.getSubmitDate());
-						lastUpdate.setUser(issue.getSubmitter());
-						issue.setLastUpdate(lastUpdate);
+						LastActivity lastActivity = new LastActivity();
+						lastActivity.setDescription("Opened");
+						lastActivity.setDate(issue.getSubmitDate());
+						lastActivity.setUser(issue.getSubmitter());
+						issue.setLastActivity(lastActivity);
 						
 						StateSpec initialState = getIssueSetting().getInitialStateSpec();
 						for (JsonNode customFieldNode: issueNode.get("customFields")) {
@@ -928,15 +892,23 @@ public class ImportServer implements Serializable, Validatable {
 						
 						for (JsonNode commentNode: issueNode.get("comments")) {
 							String commentContent = commentNode.get("text").asText(null);
-							if (commentContent != null || !commentNode.get("attachments").isEmpty()) {
+							if (StringUtils.isNotBlank(commentContent) || !commentNode.get("attachments").isEmpty()) {
 								IssueComment comment = new IssueComment();
 								comment.setIssue(issue);
 								if (!dryRun) {
 									List<JsonNode> attachmentNodes = new ArrayList<>();
 									for (JsonNode attachmentNode: commentNode.get("attachments"))
 										attachmentNodes.add(attachmentNode);
-									comment.setContent(processAttachments(issue.getUUID(), readableId, 
-											commentContent, attachmentNodes, tooLargeAttachments));
+									String processedContent = processAttachments(issue.getUUID(), readableId,
+											commentContent, attachmentNodes, tooLargeAttachments);
+									if (StringUtils.isNotBlank(processedContent))
+										comment.setContent(processedContent);
+									else 
+										continue;
+								} else if (StringUtils.isNotBlank(commentContent)) {
+									comment.setContent(commentContent);
+								} else {
+									continue;
 								}
 								comment.setDate(new Date(commentNode.get("created").asLong(System.currentTimeMillis())));
 								if (commentNode.hasNonNull("author")) {
@@ -1007,7 +979,7 @@ public class ImportServer implements Serializable, Validatable {
 					if (issue.getDescription() != null) 
 						issue.setDescription(migrator.migratePrefixed(issue.getDescription(), youTrackProjectShortName + "-"));
 					
-					issueManager.save(issue);
+					dao.persist(issue);
 					for (IssueSchedule schedule: issue.getSchedules())
 						dao.persist(schedule);
 					for (IssueField field: issue.getFields())
@@ -1017,18 +989,23 @@ public class ImportServer implements Serializable, Validatable {
 						dao.persist(comment);
 					}
 				}
-				
+
+				Set<Triple<Long, Long, Long>> linkTriples = new HashSet<>();
 				for (Map.Entry<Long, Pair<LinkSpec, List<Long>>> entry: issueLinkInfo.entrySet()) {
 					Issue source = issueMappings.get(entry.getKey());
 					if (source != null) {
 						for (Long targetNumber: entry.getValue().getSecond()) {
 							Issue target = issueMappings.get(targetNumber);
 							if (target != null) {
-								IssueLink link = new IssueLink();
-								link.setSource(source);
-								link.setTarget(target);
-								link.setSpec(entry.getValue().getFirst());
-								OneDev.getInstance(IssueLinkManager.class).save(link);
+								var triple = new ImmutableTriple<>(source.getId(), target.getId(), 
+										entry.getValue().getFirst().getId());
+								if (linkTriples.add(triple)) {
+									IssueLink link = new IssueLink();
+									link.setSource(source);
+									link.setTarget(target);
+									link.setSpec(entry.getValue().getFirst());
+									OneDev.getInstance(IssueLinkManager.class).save(link);
+								}
 							}
 						}
 					}
@@ -1043,6 +1020,9 @@ public class ImportServer implements Serializable, Validatable {
 			result.unmappedIssueStates.addAll(unmappedIssueStates);
 			result.unmappedIssueLinks.addAll(unmappedIssueLinks);
 			result.unmappedIssueTags.addAll(unmappedIssueTags);
+			
+			if (!dryRun && !issues.isEmpty())
+				OneDev.getInstance(ListenerRegistry.class).post(new IssuesImported(oneDevProject, issues));
 			
 			return result;
 		} finally {
@@ -1095,20 +1075,21 @@ public class ImportServer implements Serializable, Validatable {
 				project.setDescription(youTrackProjectDescriptions.get(projectMapping.getYouTrackProject()));
 				project.setIssueManagement(true);
 				
-		       	if (!dryRun && project.isNew()) 
+				boolean newlyCreated = project.isNew();
+		       	if (!dryRun && newlyCreated) 
 					projectManager.create(project);
 
-		       	ImportResult currentResult = importIssues(youTrackProjectId, project, 
-		       			option, dryRun, logger);
-		       	result.mismatchedIssueFields.putAll(currentResult.mismatchedIssueFields);
-		       	result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
-		       	result.tooLargeAttachments.addAll(currentResult.tooLargeAttachments);
-		       	result.unmappedIssueFields.addAll(currentResult.unmappedIssueFields);
-		       	result.unmappedIssueStates.addAll(currentResult.unmappedIssueStates);
-		       	result.unmappedIssueLinks.addAll(currentResult.unmappedIssueLinks);
-		       	result.unmappedIssueTags.addAll(currentResult.unmappedIssueTags);
+				ImportResult currentResult = doImportIssues(youTrackProjectId, project,
+						option, dryRun, logger);
+				result.mismatchedIssueFields.putAll(currentResult.mismatchedIssueFields);
+				result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
+				result.tooLargeAttachments.addAll(currentResult.tooLargeAttachments);
+				result.unmappedIssueFields.addAll(currentResult.unmappedIssueFields);
+				result.unmappedIssueStates.addAll(currentResult.unmappedIssueStates);
+				result.unmappedIssueLinks.addAll(currentResult.unmappedIssueLinks);
+				result.unmappedIssueTags.addAll(currentResult.unmappedIssueTags);
 			}		       	
-
+			
 			return result.toHtml("Projects imported successfully");
 		} finally {
 			client.close();
@@ -1150,7 +1131,7 @@ public class ImportServer implements Serializable, Validatable {
 			String apiEndpoint = getApiEndpoint("/admin/projects?fields=id,name");
 			for (JsonNode projectNode: list(client, apiEndpoint, logger)) {
 				if (youTrackProject.equals(projectNode.get("name").asText())) { 
-					ImportResult result = importIssues(projectNode.get("id").asText(), 
+					ImportResult result = doImportIssues(projectNode.get("id").asText(), 
 							project, option, dryRun, logger);
 					return result.toHtml("Issues imported successfully");
 				}

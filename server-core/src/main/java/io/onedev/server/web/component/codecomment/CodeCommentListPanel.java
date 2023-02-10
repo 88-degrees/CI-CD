@@ -31,7 +31,9 @@ import org.apache.wicket.markup.html.WebMarkupContainer;
 import org.apache.wicket.markup.html.basic.Label;
 import org.apache.wicket.markup.html.form.Form;
 import org.apache.wicket.markup.html.form.TextField;
+import org.apache.wicket.markup.html.link.AbstractLink;
 import org.apache.wicket.markup.html.link.ExternalLink;
+import org.apache.wicket.markup.html.link.Link;
 import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.markup.html.panel.Panel;
 import org.apache.wicket.markup.repeater.Item;
@@ -56,7 +58,7 @@ import io.onedev.server.model.PullRequest;
 import io.onedev.server.model.PullRequestAssignment;
 import io.onedev.server.model.PullRequestReview;
 import io.onedev.server.model.User;
-import io.onedev.server.model.support.LastUpdate;
+import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.search.entity.EntitySort;
 import io.onedev.server.search.entity.codecomment.CodeCommentQuery;
 import io.onedev.server.search.entitytext.CodeCommentTextManager;
@@ -90,6 +92,8 @@ import io.onedev.server.web.util.QuerySaveSupport;
 @SuppressWarnings("serial")
 public abstract class CodeCommentListPanel extends Panel {
 
+	private static final int MAX_DESCRIPTION_LEN = 200;
+	
 	private final IModel<String> queryStringModel;
 	
 	private final IModel<Object> queryModel = new LoadableDetachableModel<Object>() {
@@ -240,6 +244,7 @@ public abstract class CodeCommentListPanel extends Panel {
 						
 						OneDev.getInstance(CodeCommentStatusChangeManager.class).save(changes, note);
 						selectionColumn.getSelections().clear();
+						dataProvider.detach();
 						target.add(body);
 						
 						close();
@@ -256,7 +261,7 @@ public abstract class CodeCommentListPanel extends Panel {
 
 					@Override
 					public String getLabel() {
-						return "Resolve Selected Comments";
+						return "Set Selected Comments as Resolved";
 					}
 					
 					@Override
@@ -291,7 +296,7 @@ public abstract class CodeCommentListPanel extends Panel {
 								configure();
 								if (!isEnabled()) {
 									tag.put("disabled", "disabled");
-									tag.put("title", "Please select comments to resolve");
+									tag.put("title", "Please select comments to set resolved");
 								}
 							}
 							
@@ -304,7 +309,7 @@ public abstract class CodeCommentListPanel extends Panel {
 
 					@Override
 					public String getLabel() {
-						return "Unresolve Selected Comments";
+						return "Set Selected Comments as Unresolved";
 					}
 					
 					@Override
@@ -339,7 +344,7 @@ public abstract class CodeCommentListPanel extends Panel {
 								configure();
 								if (!isEnabled()) {
 									tag.put("disabled", "disabled");
-									tag.put("title", "Please select comments to unresolve");
+									tag.put("title", "Please select comments to set unresolved");
 								}
 							}
 							
@@ -415,7 +420,7 @@ public abstract class CodeCommentListPanel extends Panel {
 
 					@Override
 					public String getLabel() {
-						return "Resolve All Queried Comments";
+						return "Set All Queried Comments as Resolved";
 					}
 					
 					@Override
@@ -426,17 +431,11 @@ public abstract class CodeCommentListPanel extends Panel {
 							public void onClick(AjaxRequestTarget target) {
 								dropdown.close();
 								
-								changeStatus(target, new Provider<Collection<CodeComment>>() {
-
-									@SuppressWarnings("unchecked")
-									@Override
-									public Collection<CodeComment> get() {
-										Collection<CodeComment> comments = new ArrayList<>();
-										for (Iterator<CodeComment> it = (Iterator<CodeComment>) dataProvider.iterator(0, commentsTable.getItemCount()); it.hasNext();) 
-											comments.add(it.next());
-										return comments;
-									}
-									
+								changeStatus(target, (Provider<Collection<CodeComment>>) () -> {
+									Collection<CodeComment> comments = new ArrayList<>();
+									for (Iterator<CodeComment> it = (Iterator<CodeComment>) dataProvider.iterator(0, commentsTable.getItemCount()); it.hasNext();) 
+										comments.add(it.next());
+									return comments;
 								}, true);
 							}
 							
@@ -452,7 +451,7 @@ public abstract class CodeCommentListPanel extends Panel {
 								configure();
 								if (!isEnabled()) {
 									tag.put("disabled", "disabled");
-									tag.put("title", "No comments to resolve");
+									tag.put("title", "No comments to set resolved");
 								}
 							}
 							
@@ -465,7 +464,7 @@ public abstract class CodeCommentListPanel extends Panel {
 
 					@Override
 					public String getLabel() {
-						return "Unresolve All Queried Comments";
+						return "Set All Queried Comments as Unresolved";
 					}
 					
 					@Override
@@ -476,17 +475,11 @@ public abstract class CodeCommentListPanel extends Panel {
 							public void onClick(AjaxRequestTarget target) {
 								dropdown.close();
 								
-								changeStatus(target, new Provider<Collection<CodeComment>>() {
-
-									@SuppressWarnings("unchecked")
-									@Override
-									public Collection<CodeComment> get() {
-										Collection<CodeComment> comments = new ArrayList<>();
-										for (Iterator<CodeComment> it = (Iterator<CodeComment>) dataProvider.iterator(0, commentsTable.getItemCount()); it.hasNext();) 
-											comments.add(it.next());
-										return comments;
-									}
-									
+								changeStatus(target, (Provider<Collection<CodeComment>>) () -> {
+									Collection<CodeComment> comments = new ArrayList<>();
+									for (Iterator<CodeComment> it = (Iterator<CodeComment>) dataProvider.iterator(0, commentsTable.getItemCount()); it.hasNext();) 
+										comments.add(it.next());
+									return comments;
 								}, false);
 							}
 							
@@ -502,7 +495,7 @@ public abstract class CodeCommentListPanel extends Panel {
 								configure();
 								if (!isEnabled()) {
 									tag.put("disabled", "disabled");
-									tag.put("title", "No comments to unresolve");
+									tag.put("title", "No comments to set unresolved");
 								}
 							}
 							
@@ -536,6 +529,7 @@ public abstract class CodeCommentListPanel extends Panel {
 											for (Iterator<CodeComment> it = (Iterator<CodeComment>) dataProvider.iterator(0, commentsTable.getItemCount()); it.hasNext();) 
 												comments.add(it.next());
 											OneDev.getInstance(CodeCommentManager.class).delete(comments);
+											dataProvider.detach();
 											selectionColumn.getSelections().clear();
 											target.add(body);
 										}
@@ -757,15 +751,27 @@ public abstract class CodeCommentListPanel extends Panel {
 			
 		});
 		
-		columns.add(new AbstractColumn<CodeComment, Void>(Model.of("File")) {
+		columns.add(new AbstractColumn<CodeComment, Void>(Model.of("")) {
 
 			@Override
 			public void populateItem(Item<ICellPopulator<CodeComment>> cellItem, String componentId, IModel<CodeComment> rowModel) {
-				Fragment fragment = new Fragment(componentId, "fileFrag", CodeCommentListPanel.this);
 				CodeComment comment = rowModel.getObject();
+				Fragment fragment = new Fragment(componentId, "contentFrag", CodeCommentListPanel.this);
+				String statusLabel;
+				if (comment.isResolved()) {
+					statusLabel = String.format(
+							"<span title='Resolved'><svg class='icon text-success mr-1'><use xlink:href='%s'/></svg></span>",
+							SpriteImage.getVersionedHref("tick-circle-o"));
+				} else {
+					statusLabel = String.format(
+							"<span title='Unresolved'><svg class='icon text-warning mr-1'><use xlink:href='%s'/></svg></span>",
+							SpriteImage.getVersionedHref("dot"));
+				}
+				fragment.add(new Label("status", statusLabel).setEscapeModelStrings(false));
+				
 				WebMarkupContainer link;
 				if (!comment.isValid()) {
-					link = new ActionablePageLink("link", InvalidCodeCommentPage.class, 
+					link = new ActionablePageLink("description", InvalidCodeCommentPage.class, 
 							InvalidCodeCommentPage.paramsOf(comment)) {
 
 						@Override
@@ -778,66 +784,26 @@ public abstract class CodeCommentListPanel extends Panel {
 					};
 				} else {
 					String url = OneDev.getInstance(UrlManager.class).urlFor(comment);
-					link = new ExternalLink("link", UrlUtils.makeRelative(url));
+					link = new ExternalLink("description", UrlUtils.makeRelative(url));
 				}
-				link.add(new Label("label", comment.getMark().getPath()));
+				link.add(new Label("label", StringUtils.abbreviate(comment.getContent(), MAX_DESCRIPTION_LEN)));
 				fragment.add(link);
-				cellItem.add(fragment);
-			}
-
-			@Override
-			public String getCssClass() {
-				return "text-break";
-			}
-			
-		});
-		
-		columns.add(new AbstractColumn<CodeComment, Void>(Model.of("Status")) {
-
-			@Override
-			public void populateItem(Item<ICellPopulator<CodeComment>> cellItem, String componentId, IModel<CodeComment> rowModel) {
-				CodeComment comment = rowModel.getObject();
-				String label;
-				if (comment.isResolved()) {
-					label = String.format(
-							"<svg class='icon text-success mr-1'><use xlink:href='%s'/></svg> %s", 
-							SpriteImage.getVersionedHref("tick-circle-o"), "Resolved");
-				} else {
-					label = String.format(
-							"<svg class='icon text-warning mr-1'><use xlink:href='%s'/></svg> %s", 
-							SpriteImage.getVersionedHref("dot"), "Unresolved");
-				}
-				cellItem.add(new Label(componentId, label).setEscapeModelStrings(false));
-			}
-
-		});
-		
-		columns.add(new AbstractColumn<CodeComment, Void>(Model.of("Last Update")) {
-
-			@Override
-			public void populateItem(Item<ICellPopulator<CodeComment>> cellItem, String componentId, IModel<CodeComment> rowModel) {
-				CodeComment comment = rowModel.getObject();
 				
-				Fragment fragment = new Fragment(componentId, "lastUpdateFrag", CodeCommentListPanel.this);
+				fragment.add(new Label("file", "on file " + comment.getMark().getPath()));
 				
-				LastUpdate lastUpdate = comment.getLastUpdate();
-				if (lastUpdate.getUser() != null) {
-					fragment.add(new UserIdentPanel("user", lastUpdate.getUser(), Mode.NAME));
+				LastActivity lastActivity = comment.getLastActivity();
+				if (lastActivity.getUser() != null) {
+					fragment.add(new UserIdentPanel("user", lastActivity.getUser(), Mode.NAME));
 				} else {
 					fragment.add(new WebMarkupContainer("user").setVisible(false));
 				}
-				fragment.add(new Label("activity", lastUpdate.getActivity()));
-				fragment.add(new Label("date", DateUtils.formatAge(lastUpdate.getDate()))
-					.add(new AttributeAppender("title", DateUtils.formatDateTime(lastUpdate.getDate()))));
+				fragment.add(new Label("activity", lastActivity.getDescription()));
+				fragment.add(new Label("date", DateUtils.formatAge(lastActivity.getDate()))
+						.add(new AttributeAppender("title", DateUtils.formatDateTime(lastActivity.getDate()))));
 				
 				cellItem.add(fragment);
 			}
-
-			@Override
-			public String getCssClass() {
-				return "d-none d-md-table-cell";
-			}
-
+			
 		});
 		
 		body.add(commentsTable = new DefaultDataTable<CodeComment, Void>("comments", columns, dataProvider, 
@@ -848,7 +814,7 @@ public abstract class CodeCommentListPanel extends Panel {
 				Item<CodeComment> item = super.newRowItem(id, index, model);
 				CodeComment comment = model.getObject();
 				item.add(AttributeAppender.append("class", 
-						comment.isVisitedAfter(comment.getLastUpdate().getDate())?"comment":"comment new"));
+						comment.isVisitedAfter(comment.getLastActivity().getDate())?"comment":"comment new"));
 				return item;
 			}
 		});

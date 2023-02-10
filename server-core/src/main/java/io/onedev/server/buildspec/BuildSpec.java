@@ -1,42 +1,10 @@
 package io.onedev.server.buildspec;
 
-import java.io.Serializable;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.Stack;
-import java.util.function.Function;
-
-import javax.annotation.Nullable;
-import javax.validation.ConstraintValidatorContext;
-import javax.validation.ConstraintViolation;
-import javax.validation.Valid;
-import javax.validation.ValidationException;
-import javax.validation.Validator;
-
-import org.apache.commons.lang3.SerializationUtils;
-import org.apache.wicket.Component;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.yaml.snakeyaml.DumperOptions.FlowStyle;
-import org.yaml.snakeyaml.nodes.MappingNode;
-import org.yaml.snakeyaml.nodes.Node;
-import org.yaml.snakeyaml.nodes.NodeTuple;
-import org.yaml.snakeyaml.nodes.ScalarNode;
-import org.yaml.snakeyaml.nodes.SequenceNode;
-import org.yaml.snakeyaml.nodes.Tag;
-
 import com.google.common.base.Preconditions;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
-
 import io.onedev.commons.codeassist.InputCompletion;
 import io.onedev.commons.codeassist.InputStatus;
 import io.onedev.commons.codeassist.InputSuggestion;
@@ -54,6 +22,8 @@ import io.onedev.server.buildspec.step.StepTemplate;
 import io.onedev.server.buildspec.step.UseTemplateStep;
 import io.onedev.server.migration.VersionedYamlDoc;
 import io.onedev.server.migration.XmlBuildSpecMigrator;
+import io.onedev.server.model.Project;
+import io.onedev.server.model.support.build.JobProperty;
 import io.onedev.server.util.ComponentContext;
 import io.onedev.server.util.JobSecretAuthorizationContext;
 import io.onedev.server.util.validation.Validatable;
@@ -62,6 +32,18 @@ import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.page.project.blob.ProjectBlobPage;
 import io.onedev.server.web.util.SuggestionUtils;
 import io.onedev.server.web.util.WicketUtils;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.wicket.Component;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.yaml.snakeyaml.DumperOptions.FlowStyle;
+import org.yaml.snakeyaml.nodes.*;
+
+import javax.annotation.Nullable;
+import javax.validation.*;
+import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.function.Function;
 
 @Editable
 @ClassValidating
@@ -104,7 +86,7 @@ public class BuildSpec implements Serializable, Validatable {
 
 	private List<Service> services = new ArrayList<>();
 	
-	private List<Property> properties = new ArrayList<>();
+	private List<JobProperty> properties = new ArrayList<>();
 	
 	private List<Import> imports = new ArrayList<>();
 	
@@ -116,7 +98,7 @@ public class BuildSpec implements Serializable, Validatable {
 	
 	private transient Map<String, Service> serviceMap;
 	
-	private transient Map<String, Property> propertyMap;
+	private transient Map<String, JobProperty> propertyMap;
 	
 	@Editable
 	@Valid
@@ -152,11 +134,11 @@ public class BuildSpec implements Serializable, Validatable {
 	}
 
 	@Editable
-	public List<Property> getProperties() {
+	public List<JobProperty> getProperties() {
 		return properties;
 	}
 
-	public void setProperties(List<Property> properties) {
+	public void setProperties(List<JobProperty> properties) {
 		this.properties = properties;
 		propertyMap = null;
 	}
@@ -181,7 +163,7 @@ public class BuildSpec implements Serializable, Validatable {
 					newProjectChain.add(aImport.getProjectPath());
 					try {
 						BuildSpec importedBuildSpec = aImport.getBuildSpec();
-						RevCommit commit = aImport.getProject().getRevCommit(aImport.getTag(), true);
+						RevCommit commit = aImport.getProject().getRevCommit(aImport.getRevision(), true);
 						JobSecretAuthorizationContext.push(new JobSecretAuthorizationContext(aImport.getProject(), commit, null));
 						try {
 							importedBuildSpecs.addAll(importedBuildSpec.getImportedBuildSpecs(newProjectChain));
@@ -212,14 +194,18 @@ public class BuildSpec implements Serializable, Validatable {
 		return jobMap;
 	}
 	
-	public Map<String, Property> getPropertyMap() {
+	public Map<String, JobProperty> getPropertyMap() {
 		if (propertyMap == null) { 
 			propertyMap = new LinkedHashMap<>();
-			for (BuildSpec buildSpec: getImportedBuildSpecs(new HashSet<>())) { 
-				for (Property property: buildSpec.getProperties())
+			if (Project.get() != null) {
+				for (JobProperty property : Project.get().getHierarchyJobProperties())
 					propertyMap.put(property.getName(), property);
 			}
-			for (Property property: getProperties())
+			for (BuildSpec buildSpec: getImportedBuildSpecs(new HashSet<>())) { 
+				for (JobProperty property : buildSpec.getProperties())
+					propertyMap.put(property.getName(), property);
+			}
+			for (JobProperty property : getProperties())
 				propertyMap.put(property.getName(), property);
 		}
 		return propertyMap;
@@ -326,7 +312,7 @@ public class BuildSpec implements Serializable, Validatable {
 			}
 		}
 		Set<String> propertyNames = new HashSet<>();
-		for (Property property: properties) {
+		for (JobProperty property : properties) {
 			if (!propertyNames.add(property.getName())) {
 				context.buildConstraintViolationWithTemplate("Duplicate property name (" + property.getName() + ")")
 							.addPropertyNode(PROP_PROPERTIES).addConstraintViolation();
@@ -537,7 +523,7 @@ public class BuildSpec implements Serializable, Validatable {
 			LinearRange match = LinearRange.match(each, matchWith);
 			if (match != null) { 
 				completions.add(new InputCompletion(each, each + status.getContentAfterCaret(), 
-						each.length(), "override imported", match));
+						each.length(), "override", match));
 			}
 		}
 		
@@ -1425,6 +1411,50 @@ public class BuildSpec implements Serializable, Validatable {
 				}				
 			}
 		}			
+	}
+
+	private void migrate19(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specObjectKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specObjectKey.equals("jobs")) {
+				SequenceNode jobsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node jobsNodeItem: jobsNode.getValue()) {
+					MappingNode jobNode = (MappingNode) jobsNodeItem;
+					for (var it = jobNode.getValue().iterator(); it.hasNext();) {
+						String jobTupleKey = ((ScalarNode)it.next().getKeyNode()).getValue();
+						if (jobTupleKey.equals("cpuRequirement") || jobTupleKey.equals("memoryRequirement"))
+							it.remove();
+					}
+				}
+			} else if (specObjectKey.equals("services")) {
+				SequenceNode servicesNode = (SequenceNode) specTuple.getValueNode();
+				for (Node servicesNodeItem: servicesNode.getValue()) {
+					MappingNode serviceNode = (MappingNode) servicesNodeItem;
+					for (var it = serviceNode.getValue().iterator(); it.hasNext();) {
+						String serviceTupleKey = ((ScalarNode)it.next().getKeyNode()).getValue();
+						if (serviceTupleKey.equals("cpuRequirement") || serviceTupleKey.equals("memoryRequirement"))
+							it.remove();
+					}
+				}
+			}
+		}
+	}
+
+	private void migrate20(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specTupleKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specTupleKey.equals("imports")) {
+				SequenceNode importsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node importsNodeItem: importsNode.getValue()) {
+					MappingNode importNode = (MappingNode) importsNodeItem;
+					for (Iterator<NodeTuple> itImportTuple = importNode.getValue().iterator(); itImportTuple.hasNext();) {
+						NodeTuple importTuple = itImportTuple.next();
+						ScalarNode importTupleKeyNode = (ScalarNode)importTuple.getKeyNode();
+						if (importTupleKeyNode.getValue().equals("tag"))
+							importTupleKeyNode.setValue("revision");
+					}
+				}
+			}
+		}
 	}	
-	
 }

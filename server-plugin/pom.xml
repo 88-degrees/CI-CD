@@ -6,7 +6,7 @@
 	<parent>
 		<groupId>io.onedev</groupId>
 		<artifactId>server</artifactId>
-		<version>7.8.14</version>
+		<version>8.0.0</version>
 	</parent>
 	<dependencies>
 		<dependency>
@@ -48,6 +48,6 @@
 		<module>server-plugin-report-cpd</module>
 		<module>server-plugin-sso-discord</module>
 		<module>server-plugin-notification-slack</module>
-    <module>server-plugin-notification-discord</module>
-  </modules>
+    	<module>server-plugin-notification-discord</module>
+    </modules>
 </project>

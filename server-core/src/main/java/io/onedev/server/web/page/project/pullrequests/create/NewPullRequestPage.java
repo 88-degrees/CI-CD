@@ -276,7 +276,8 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 						}
 					}
 				}
-				request.setMergeStrategy(MergeStrategy.CREATE_MERGE_COMMIT);
+				
+				request.setMergeStrategy(target.getProject().findDefaultMergeStrategy());
 			}
 			
 			requestModel = new LoadableDetachableModel<PullRequest>() {
@@ -463,6 +464,11 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 				revisions.add(new Revision(request.getBaseCommitHash(), Revision.Scope.SINCE));
 				revisions.add(new Revision(request.getLatestUpdate().getHeadCommitHash(), Revision.Scope.UNTIL));
 				return new CommitQuery(Lists.newArrayList(new RevisionCriteria(revisions)));
+			}
+
+			@Override
+			protected String getRefName() {
+				return NewPullRequestPage.this.getPullRequest().getSourceRef();
 			}
 
 			@Override
@@ -992,7 +998,7 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 	public Collection<CodeProblem> getOldProblems(String blobPath) {
 		Set<CodeProblem> problems = new HashSet<>();
 		ObjectId baseCommitId = ObjectId.fromString(getPullRequest().getBaseCommitHash());
-		for (Build build: getBuilds(baseCommitId)) {
+		for (Build build: target.getProject().getBuilds(baseCommitId)) {
 			for (CodeProblemContribution contribution: OneDev.getExtensions(CodeProblemContribution.class))
 				problems.addAll(contribution.getCodeProblems(build, blobPath, null));
 		}
@@ -1002,7 +1008,7 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 	@Override
 	public Collection<CodeProblem> getNewProblems(String blobPath) {
 		Set<CodeProblem> problems = new HashSet<>();
-		for (Build build: getBuilds(source.getObjectId())) {
+		for (Build build: source.getProject().getBuilds(source.getObjectId())) {
 			for (CodeProblemContribution contribution: OneDev.getExtensions(CodeProblemContribution.class))
 				problems.addAll(contribution.getCodeProblems(build, blobPath, null));
 		}
@@ -1013,7 +1019,7 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 	public Map<Integer, CoverageStatus> getOldCoverages(String blobPath) {
 		Map<Integer, CoverageStatus> coverages = new HashMap<>();
 		ObjectId baseCommitId = ObjectId.fromString(getPullRequest().getBaseCommitHash());
-		for (Build build: getBuilds(baseCommitId)) {
+		for (Build build: target.getProject().getBuilds(baseCommitId)) {
 			for (LineCoverageContribution contribution: OneDev.getExtensions(LineCoverageContribution.class)) {
 				contribution.getLineCoverages(build, blobPath, null).forEach((key, value) -> {
 					coverages.merge(key, value, (v1, v2) -> v1.mergeWith(v2));
@@ -1026,7 +1032,7 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 	@Override
 	public Map<Integer, CoverageStatus> getNewCoverages(String blobPath) {
 		Map<Integer, CoverageStatus> coverages = new HashMap<>();
-		for (Build build: getBuilds(source.getObjectId())) {
+		for (Build build: source.getProject().getBuilds(source.getObjectId())) {
 			for (LineCoverageContribution contribution: OneDev.getExtensions(LineCoverageContribution.class)) {
 				contribution.getLineCoverages(build, blobPath, null).forEach((key, value) -> {
 					coverages.merge(key, value, (v1, v2) -> v1.mergeWith(v2));

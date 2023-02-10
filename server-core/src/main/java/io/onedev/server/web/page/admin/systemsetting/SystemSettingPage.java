@@ -40,7 +40,7 @@ public class SystemSettingPage extends AdministrationPage {
 			protected void onSubmit() {
 				super.onSubmit();
 				OneDev.getInstance(SettingManager.class).saveSystemSetting(systemSetting);
-				getSession().success("System setting has been saved");
+				getSession().success("System settings have been saved");
 				
 				setResponsePage(SystemSettingPage.class);
 			}
@@ -48,8 +48,8 @@ public class SystemSettingPage extends AdministrationPage {
 		};
 		Collection<String> excludedProps = new HashSet<>();
 		if (new File(Bootstrap.installDir, "IN_DOCKER").exists()) {
-			excludedProps.add("gitConfig");
-			excludedProps.add("curlConfig");
+			excludedProps.add(SystemSetting.PROP_GIT_LOCATION);
+			excludedProps.add(SystemSetting.PROP_CURL_LOCATION);
 		}
 		if (OneDev.getInstance().getIngressUrl() != null)
 			excludedProps.add("serverUrl");
@@ -61,7 +61,7 @@ public class SystemSettingPage extends AdministrationPage {
 
 	@Override
 	protected Component newTopbarTitle(String componentId) {
-		return new Label(componentId, "System Setting");
+		return new Label(componentId, "System Settings");
 	}
 
 }

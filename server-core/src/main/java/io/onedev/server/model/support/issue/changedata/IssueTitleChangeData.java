@@ -42,6 +42,11 @@ public class IssueTitleChangeData extends IssueChangeData {
 	}
 
 	@Override
+	public boolean isMinor() {
+		return true;
+	}
+
+	@Override
 	public ActivityDetail getActivityDetail() {
 		Map<String, String> oldFieldValues = new HashMap<>();
 		oldFieldValues.put("Title", oldTitle);

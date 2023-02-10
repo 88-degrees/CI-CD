@@ -1,73 +1,11 @@
 package io.onedev.server.mail;
 
-import java.io.IOException;
-import java.io.ObjectStreamException;
-import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.attribute.FileTime;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.mail.Authenticator;
-import javax.mail.Folder;
-import javax.mail.FolderClosedException;
-import javax.mail.Message;
-import javax.mail.MessagingException;
-import javax.mail.Multipart;
-import javax.mail.Part;
-import javax.mail.PasswordAuthentication;
-import javax.mail.Session;
-import javax.mail.Store;
-import javax.mail.Transport;
-import javax.mail.internet.AddressException;
-import javax.mail.internet.ContentType;
-import javax.mail.internet.InternetAddress;
-import javax.mail.internet.MimeBodyPart;
-import javax.mail.internet.MimeMessage;
-import javax.mail.internet.MimeMessage.RecipientType;
-import javax.mail.internet.MimeMultipart;
-import javax.mail.internet.MimeUtility;
-
-import org.apache.commons.codec.binary.Base64;
-import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.shiro.authz.Permission;
-import org.apache.shiro.authz.UnauthorizedException;
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Document.OutputSettings;
-import org.jsoup.nodes.Element;
-import org.jsoup.nodes.Node;
-import org.jsoup.nodes.TextNode;
-import org.jsoup.safety.Safelist;
-import org.jsoup.select.NodeTraversor;
-import org.jsoup.select.NodeVisitor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.hazelcast.cluster.MembershipEvent;
 import com.hazelcast.cluster.MembershipListener;
 import com.ibm.icu.impl.locale.XCldrStub.Splitter;
 import com.sun.mail.imap.IMAPFolder;
-
 import edu.emory.mathcs.backport.java.util.Arrays;
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.loader.ManagedSerializedForm;
@@ -78,35 +16,12 @@ import io.onedev.server.attachment.AttachmentManager;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.cluster.ClusterRunnable;
 import io.onedev.server.cluster.ClusterTask;
-import io.onedev.server.entitymanager.EmailAddressManager;
-import io.onedev.server.entitymanager.IssueAuthorizationManager;
-import io.onedev.server.entitymanager.IssueCommentManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.IssueWatchManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.PullRequestCommentManager;
-import io.onedev.server.entitymanager.PullRequestManager;
-import io.onedev.server.entitymanager.PullRequestWatchManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UrlManager;
-import io.onedev.server.entitymanager.UserAuthorizationManager;
-import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.entitymanager.*;
 import io.onedev.server.event.Listen;
 import io.onedev.server.event.entity.EntityPersisted;
 import io.onedev.server.event.system.SystemStarted;
 import io.onedev.server.event.system.SystemStopping;
-import io.onedev.server.model.EmailAddress;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.IssueWatch;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestComment;
-import io.onedev.server.model.PullRequestWatch;
-import io.onedev.server.model.Role;
-import io.onedev.server.model.Setting;
-import io.onedev.server.model.User;
-import io.onedev.server.model.UserAuthorization;
+import io.onedev.server.model.*;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.administration.IssueCreationSetting;
 import io.onedev.server.model.support.administration.SenderAuthorization;
@@ -123,6 +38,44 @@ import io.onedev.server.util.CollectionUtils;
 import io.onedev.server.util.HtmlUtils;
 import io.onedev.server.util.ParsedEmailAddress;
 import io.onedev.server.util.validation.UserNameValidator;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.shiro.authz.Permission;
+import org.apache.shiro.authz.UnauthorizedException;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Document.OutputSettings;
+import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Node;
+import org.jsoup.nodes.TextNode;
+import org.jsoup.safety.Safelist;
+import org.jsoup.select.NodeTraversor;
+import org.jsoup.select.NodeVisitor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.unbescape.html.HtmlEscape;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.mail.*;
+import javax.mail.internet.*;
+import javax.mail.internet.MimeMessage.RecipientType;
+import java.io.IOException;
+import java.io.ObjectStreamException;
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.attribute.FileTime;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 @Singleton
 public class DefaultMailManager implements MailManager, Serializable {
@@ -132,6 +85,8 @@ public class DefaultMailManager implements MailManager, Serializable {
 	private static final int MAX_INBOX_LIFE = 3600;
 	
 	private static final String SENDER_NAME = "~OneDev Notifier";
+	
+	private static final String SIGNATURE_PREFIX = "-- ";
 	
 	private final SettingManager settingManager;
 	
@@ -623,29 +578,52 @@ public class DefaultMailManager implements MailManager, Serializable {
 	}
 	
 	@Nullable
-	private String stripQuotation(MailSendSetting sendSetting, String content) {
-		String marker = null;
+	private String stripQuotationAndSignature(MailSendSetting sendSetting, String content) {
+		String quotationMark = null;
 		if (content.contains(SENDER_NAME)) {
-			marker = SENDER_NAME;
+			quotationMark = SENDER_NAME;
 		} else if (content.contains(sendSetting.getSenderAddress())) {
-			marker = sendSetting.getSenderAddress();
+			quotationMark = sendSetting.getSenderAddress();
 		} else if (sendSetting.getSmtpUser() != null 
 				&& sendSetting.getSmtpUser().contains("@") 
 				&& !sendSetting.getSmtpUser().equalsIgnoreCase(sendSetting.getSenderAddress())) {
-			marker = sendSetting.getSmtpUser();
+			quotationMark = sendSetting.getSmtpUser();
 		}
 		
-		if (marker != null) {
-			content = StringUtils.substringBefore(content, marker);
+		if (quotationMark != null) {
+			content = StringUtils.substringBefore(content, quotationMark);
 			content = StringUtils.substringBeforeLast(content, "\n");
 		}
-				
-		Document document = HtmlUtils.parse(content);
+		
+		Document document = HtmlUtils.parse(stripTextSignature(content));
 		document.select(".gmail_quote").remove();
 		document.outputSettings().prettyPrint(false);
 		
 		return getContent(document);
 	}
+
+	private String stripTextSignature(String content) {
+		var lines = new ArrayList<>();
+		for (var line: Splitter.on('\n').split(content)) {
+			if (line.contains(SIGNATURE_PREFIX)) {
+				Document document = HtmlUtils.parse(line);				
+				if (document.wholeText().trim().equals(SIGNATURE_PREFIX.trim()))
+					break;
+				else 
+					lines.add(line);
+			} else {
+				lines.add(line);
+			}
+		}
+		return StringUtils.join(lines, "\n");
+	}
+	
+	@Nullable
+	private String stripSignature(String content) {
+		Document document = HtmlUtils.parse(stripTextSignature(content));
+		document.outputSettings().prettyPrint(false);
+		return getContent(document);
+	}	
 	
 	@Nullable
 	private String getContent(Document document) {
@@ -681,6 +659,13 @@ public class DefaultMailManager implements MailManager, Serializable {
 		}
 	}
 	
+	private String decorateContent(String content) {
+		// Add double line breaks in the beginning and ending as otherwise plain text content 
+		// with multiple paragraphs received from email may not be formatted correctly with 
+		// our markdown renderer. 
+		return String.format("<div class='%s'>\n\n", COMMENT_MARKER) + content + "\n\n</div>";
+	}
+	
 	private void addComment(MailSendSetting sendSetting, Issue issue, Message message, InternetAddress author, 
 			Collection<String> receiverEmailAddresses, @Nullable User user, 
 			@Nullable SenderAuthorization authorization) throws IOException, MessagingException {
@@ -690,10 +675,12 @@ public class DefaultMailManager implements MailManager, Serializable {
 			user = createUser(author, issue.getProject(), authorization.getAuthorizedRole());
 		logger.trace("Creating issue comment on behalf of user '" + user.getName() + "'");
 		comment.setUser(user);
-		String content = stripQuotation(sendSetting, readText(issue.getProject(), issue.getUUID(), message));
+		String content = stripQuotationAndSignature(sendSetting, getText(issue.getProject(), issue.getUUID(), message));
 		if (content != null) {
-			comment.setContent(String.format("<div class='%s'>", COMMENT_MARKER) + content + "</div>");
-			issueCommentManager.save(comment, receiverEmailAddresses);
+			// Add double line breaks in the beginning and ending as otherwise plain text content 
+			// received from email may not be formatted correctly with our markdown renderer. 
+			comment.setContent(decorateContent(content));
+			issueCommentManager.create(comment, receiverEmailAddresses);
 		}
 	}
 	
@@ -706,9 +693,9 @@ public class DefaultMailManager implements MailManager, Serializable {
 			user = createUser(author, pullRequest.getProject(), authorization.getAuthorizedRole());
 		logger.trace("Creating pull request comment on behalf of user '" + user.getName() + "'");
 		comment.setUser(user);
-		String content = stripQuotation(sendSetting, readText(pullRequest.getProject(), pullRequest.getUUID(), message, null));
+		String content = stripQuotationAndSignature(sendSetting, getText(pullRequest.getProject(), pullRequest.getUUID(), message, null));
 		if (content != null) {
-			comment.setContent("<div class='no-color'>" + content + "</div>");
+			comment.setContent(decorateContent(content));
 			pullRequestCommentManager.save(comment, receiverEmailAddresses);
 		}
 	}
@@ -736,9 +723,11 @@ public class DefaultMailManager implements MailManager, Serializable {
 		if (messageId != null)
 			issue.setThreadingReference(messageId);
 
-		String description = readText(project, issue.getUUID(), message);
+		String description = getText(project, issue.getUUID(), message);
 		if (StringUtils.isNotBlank(description)) 
-			issue.setDescription("<div class='no-color'>" + description + "</div>");
+			description = stripSignature(description);
+		if (StringUtils.isNotBlank(description))
+			issue.setDescription(decorateContent(description));
 
 		if (user == null)
 			user = createUser(submitter, project, authorization.getAuthorizedRole());
@@ -1040,11 +1029,11 @@ public class DefaultMailManager implements MailManager, Serializable {
 		}
 	}
 	
-	private String readText(Project project, String attachmentGroup, Message message) 
+	private String getText(Project project, String attachmentGroup, Message message) 
 			throws IOException, MessagingException {
 		Attachments attachments = new Attachments();
 		fillAttachments(project, attachmentGroup, message, attachments);
-		String text = readText(project, attachmentGroup, message, attachments);
+		String text = getText(project, attachmentGroup, message, attachments);
 
 		attachments.identifiable.keySet().removeAll(attachments.referenced);
 		attachments.nonIdentifiable.addAll(attachments.identifiable.values());
@@ -1058,11 +1047,11 @@ public class DefaultMailManager implements MailManager, Serializable {
 		return text;
 	}
 	
-	private String readText(Project project, String attachmentGroup, Part part, Attachments attachments) 
+	private String getText(Project project, String attachmentGroup, Part part, Attachments attachments) 
 			throws IOException, MessagingException {
 		if (part.getDisposition() == null) {
 		    if (part.isMimeType("text/plain")) {
-		        return part.getContent().toString();
+		        return HtmlEscape.escapeHtml5(part.getContent().toString());
 		    } else if (part.isMimeType("text/html")) {
 		        Document doc = Jsoup.parse(part.getContent().toString());
 		        for (Element element: doc.getElementsByTag("img")) {
@@ -1084,10 +1073,10 @@ public class DefaultMailManager implements MailManager, Serializable {
 				    if (multipartAlt)
 				        // alternatives appear in an order of increasing 
 				        // faithfulness to the original content. Customize as req'd.
-				        return readText(project, attachmentGroup, multipart.getBodyPart(count - 1), attachments);
+				        return getText(project, attachmentGroup, multipart.getBodyPart(count - 1), attachments);
 				    String result = "";
 				    for (int i=0; i<count; i++)  
-				        result += readText(project, attachmentGroup, multipart.getBodyPart(i), attachments);
+				        result += getText(project, attachmentGroup, multipart.getBodyPart(i), attachments);
 				    return result;
 			    } else {
 			    	return "";

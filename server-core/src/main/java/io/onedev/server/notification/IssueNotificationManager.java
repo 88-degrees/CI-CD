@@ -10,21 +10,14 @@ import java.util.stream.Collectors;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
+import io.onedev.server.entitymanager.*;
+import io.onedev.server.event.project.issue.*;
 import org.apache.commons.lang3.StringUtils;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
-import io.onedev.server.entitymanager.IssueAuthorizationManager;
-import io.onedev.server.entitymanager.IssueWatchManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.entityreference.ReferencedFromAware;
 import io.onedev.server.event.Listen;
-import io.onedev.server.event.project.issue.IssueChanged;
-import io.onedev.server.event.project.issue.IssueCommented;
-import io.onedev.server.event.project.issue.IssueEvent;
-import io.onedev.server.event.project.issue.IssueOpened;
 import io.onedev.server.infomanager.VisitInfoManager;
 import io.onedev.server.mail.MailManager;
 import io.onedev.server.markdown.MarkdownManager;
@@ -57,21 +50,30 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 	
 	private final VisitInfoManager userInfoManager;
 	
+	private final IssueMentionManager mentionManager;
+	
 	@Inject
-	public IssueNotificationManager(MarkdownManager markdownManager, MailManager mailManager,
-			IssueWatchManager watchManager, VisitInfoManager userInfoManager, UserManager userManager, 
-			SettingManager settingManager, IssueAuthorizationManager authorizationManager) {
+	public IssueNotificationManager(MarkdownManager markdownManager, MailManager mailManager, 
+									IssueWatchManager watchManager, VisitInfoManager userInfoManager, 
+									UserManager userManager, SettingManager settingManager, 
+									IssueAuthorizationManager authorizationManager, 
+									IssueMentionManager mentionManager) {
 		super(markdownManager, settingManager);
+		
 		this.mailManager = mailManager;
 		this.watchManager = watchManager;
 		this.userInfoManager = userInfoManager;
 		this.userManager = userManager;
 		this.authorizationManager = authorizationManager;
+		this.mentionManager = mentionManager;
 	}
 	
 	@Transactional
 	@Listen
 	public void on(IssueEvent event) {
+		if (event.isMinor())
+			return;
+		
 		Issue issue = event.getIssue();
 		User user = event.getUser();
 
@@ -199,8 +201,8 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 		}
 		
 		Collection<String> notifiedEmailAddresses;
-		if (event instanceof IssueCommented)
-			notifiedEmailAddresses = ((IssueCommented) event).getNotifiedEmailAddresses();
+		if (event instanceof IssueCommentCreated)
+			notifiedEmailAddresses = ((IssueCommentCreated) event).getNotifiedEmailAddresses();
 		else
 			notifiedEmailAddresses = new ArrayList<>();
 		
@@ -209,6 +211,7 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 			for (String userName: new MentionParser().parseMentions(markdown.getRendered())) {
 				User mentionedUser = userManager.findByName(userName);
 				if (mentionedUser != null) {
+					mentionManager.mention(issue, mentionedUser);
 					watchManager.watch(issue, mentionedUser, true);
 					authorizationManager.authorize(issue, mentionedUser);
 					if (!isNotified(notifiedEmailAddresses, mentionedUser)) {
@@ -229,36 +232,33 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 			}
 		}
 
-		if (!(event instanceof IssueChanged) 
-				|| !(((IssueChanged) event).getChange().getData() instanceof ReferencedFromAware)) {
-			Collection<String> bccEmailAddresses = new HashSet<>();
-			
-			for (IssueWatch watch: issue.getWatches()) {
-				Date visitDate = userInfoManager.getIssueVisitDate(watch.getUser(), issue);
-				if (watch.isWatching()
-						&& (visitDate == null || visitDate.before(event.getDate()))
-						&& !notifiedUsers.contains(watch.getUser())
-						&& !isNotified(notifiedEmailAddresses, watch.getUser())
-						&& SecurityUtils.canAccess(watch.getUser().asSubject(), issue)) {
-					EmailAddress emailAddress = watch.getUser().getPrimaryEmailAddress();
-					if (emailAddress != null && emailAddress.isVerified())
-						bccEmailAddresses.add(emailAddress.getValue());
-				}
+		Collection<String> bccEmailAddresses = new HashSet<>();
+		
+		for (IssueWatch watch: issue.getWatches()) {
+			Date visitDate = userInfoManager.getIssueVisitDate(watch.getUser(), issue);
+			if (watch.isWatching()
+					&& (visitDate == null || visitDate.before(event.getDate()))
+					&& !notifiedUsers.contains(watch.getUser())
+					&& !isNotified(notifiedEmailAddresses, watch.getUser())
+					&& SecurityUtils.canAccess(watch.getUser().asSubject(), issue)) {
+				EmailAddress emailAddress = watch.getUser().getPrimaryEmailAddress();
+				if (emailAddress != null && emailAddress.isVerified())
+					bccEmailAddresses.add(emailAddress.getValue());
 			}
-	
-			if (!bccEmailAddresses.isEmpty()) {
-				String subject = String.format("[Issue %s] (%s) %s", 
-						issue.getFQN(), (event instanceof IssueOpened)?"Opened":"Updated", issue.getTitle()); 
-	
-				Unsubscribable unsubscribable = new Unsubscribable(mailManager.getUnsubscribeAddress(issue));
-				String htmlBody = getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, unsubscribable);
-				String textBody = getTextBody(event, summary, event.getTextBody(), url, replyable, unsubscribable);
-	
-				String threadingReferences = issue.getEffectiveThreadingReference();
-				mailManager.sendMailAsync(Sets.newHashSet(), Sets.newHashSet(), 
-						bccEmailAddresses, subject, htmlBody, textBody, 
-						replyAddress, threadingReferences);
-			}
+		}
+
+		if (!bccEmailAddresses.isEmpty()) {
+			String subject = String.format("[Issue %s] (%s) %s", 
+					issue.getFQN(), (event instanceof IssueOpened)?"Opened":"Updated", issue.getTitle()); 
+
+			Unsubscribable unsubscribable = new Unsubscribable(mailManager.getUnsubscribeAddress(issue));
+			String htmlBody = getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, unsubscribable);
+			String textBody = getTextBody(event, summary, event.getTextBody(), url, replyable, unsubscribable);
+
+			String threadingReferences = issue.getEffectiveThreadingReference();
+			mailManager.sendMailAsync(Sets.newHashSet(), Sets.newHashSet(), 
+					bccEmailAddresses, subject, htmlBody, textBody, 
+					replyAddress, threadingReferences);
 		}
 	}
 	

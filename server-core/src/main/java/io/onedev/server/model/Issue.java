@@ -1,56 +1,8 @@
 package io.onedev.server.model;
 
-import static io.onedev.server.model.AbstractEntity.PROP_NUMBER;
-import static io.onedev.server.model.Issue.PROP_COMMENT_COUNT;
-import static io.onedev.server.model.Issue.PROP_NO_SPACE_TITLE;
-import static io.onedev.server.model.Issue.PROP_STATE;
-import static io.onedev.server.model.Issue.PROP_SUBMIT_DATE;
-import static io.onedev.server.model.Issue.PROP_TITLE;
-import static io.onedev.server.model.Issue.PROP_UUID;
-import static io.onedev.server.model.Issue.PROP_VOTE_COUNT;
-import static io.onedev.server.model.IssueSchedule.NAME_MILESTONE;
-
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.Stack;
-import java.util.UUID;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Embedded;
-import javax.persistence.Entity;
-import javax.persistence.FetchType;
-import javax.persistence.Index;
-import javax.persistence.JoinColumn;
-import javax.persistence.ManyToOne;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.UniqueConstraint;
-
-import org.apache.commons.lang3.StringUtils;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.hibernate.annotations.Cache;
-import org.hibernate.annotations.CacheConcurrencyStrategy;
-import org.hibernate.annotations.DynamicUpdate;
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.server.OneDev;
 import io.onedev.server.attachment.AttachmentStorageSupport;
@@ -63,11 +15,12 @@ import io.onedev.server.infomanager.CommitInfoManager;
 import io.onedev.server.infomanager.PullRequestInfoManager;
 import io.onedev.server.infomanager.VisitInfoManager;
 import io.onedev.server.model.support.EntityWatch;
-import io.onedev.server.model.support.LastUpdate;
+import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.model.support.ProjectBelonging;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
+import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.search.entity.SortField;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.ComponentContext;
@@ -79,6 +32,22 @@ import io.onedev.server.web.editable.PropertyDescriptor;
 import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.util.IssueAware;
 import io.onedev.server.web.util.WicketUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.hibernate.annotations.Cache;
+import org.hibernate.annotations.CacheConcurrencyStrategy;
+import org.hibernate.annotations.DynamicUpdate;
+
+import javax.annotation.Nullable;
+import javax.persistence.*;
+import java.io.Serializable;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static io.onedev.server.model.AbstractEntity.PROP_NUMBER;
+import static io.onedev.server.model.Issue.*;
+import static io.onedev.server.model.IssueSchedule.NAME_MILESTONE;
 
 @Entity
 @Table(
@@ -88,7 +57,7 @@ import io.onedev.server.web.util.WicketUtils;
 				@Index(columnList=PROP_TITLE), @Index(columnList=PROP_NO_SPACE_TITLE),  
 				@Index(columnList=PROP_NUMBER), @Index(columnList=PROP_SUBMIT_DATE), 
 				@Index(columnList="o_submitter_id"), @Index(columnList=PROP_VOTE_COUNT), 
-				@Index(columnList=PROP_COMMENT_COUNT), @Index(columnList=LastUpdate.COLUMN_DATE), 
+				@Index(columnList=PROP_COMMENT_COUNT), @Index(columnList= LastActivity.COLUMN_DATE), 
 				@Index(columnList="o_numberScope_id")}, 
 		uniqueConstraints={@UniqueConstraint(columnNames={"o_numberScope_id", PROP_NUMBER})})
 //use dynamic update in order not to overwrite other edits while background threads change update date
@@ -100,7 +69,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	public static final int MAX_TITLE_LEN = 255;
 	
-	public static final int MAX_DESCRIPTION_LEN = 14000;
+	public static final int MAX_DESCRIPTION_LEN = 100000;
 
 	public static final String NAME_PROJECT = "Project";
 	
@@ -142,9 +111,9 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	public static final String PROP_COMMENT_COUNT = "commentCount";
 	
-	public static final String NAME_UPDATE_DATE = "Update Date";
+	public static final String NAME_LAST_ACTIVITY_DATE = "Last Activity Date";
 	
-	public static final String PROP_LAST_UPDATE = "lastUpdate";
+	public static final String PROP_LAST_ACTIVITY = "lastActivity";
 	
 	public static final String PROP_FIELDS = "fields";
 	
@@ -164,12 +133,12 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	public static final Set<String> ALL_FIELDS = Sets.newHashSet(
 			NAME_PROJECT, NAME_NUMBER, NAME_STATE, NAME_TITLE, NAME_SUBMITTER, 
-			NAME_DESCRIPTION, NAME_COMMENT, NAME_SUBMIT_DATE, NAME_UPDATE_DATE, 
+			NAME_DESCRIPTION, NAME_COMMENT, NAME_SUBMIT_DATE, NAME_LAST_ACTIVITY_DATE, 
 			NAME_VOTE_COUNT, NAME_COMMENT_COUNT, NAME_MILESTONE);
 	
 	public static final List<String> QUERY_FIELDS = Lists.newArrayList(
 			NAME_PROJECT, NAME_NUMBER, NAME_STATE, NAME_TITLE, NAME_DESCRIPTION, 
-			NAME_COMMENT, NAME_SUBMIT_DATE, NAME_UPDATE_DATE, NAME_VOTE_COUNT, 
+			NAME_COMMENT, NAME_SUBMIT_DATE, NAME_LAST_ACTIVITY_DATE, NAME_VOTE_COUNT, 
 			NAME_COMMENT_COUNT, NAME_MILESTONE);
 
 	public static final Map<String, SortField<Issue>> ORDER_FIELDS = new LinkedHashMap<>();
@@ -223,11 +192,11 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 			}
 			
 		}));
-		ORDER_FIELDS.put(NAME_UPDATE_DATE, new SortField<Issue>(PROP_LAST_UPDATE + "." + LastUpdate.PROP_DATE, new Comparator<Issue>() {
+		ORDER_FIELDS.put(NAME_LAST_ACTIVITY_DATE, new SortField<Issue>(PROP_LAST_ACTIVITY + "." + LastActivity.PROP_DATE, new Comparator<Issue>() {
 
 			@Override
 			public int compare(Issue o1, Issue o2) {
-				return o1.getLastUpdate().getDate().compareTo(o2.getLastUpdate().getDate());
+				return o1.getLastActivity().getDate().compareTo(o2.getLastActivity().getDate());
 			}
 			
 		}));	
@@ -252,6 +221,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	private String title;
 	
 	@Column(length=MAX_DESCRIPTION_LEN)
+	@Api(description = "May be null")
 	private String description;
 	
 	@ManyToOne(fetch=FetchType.LAZY)
@@ -284,7 +254,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	private String threadingReference;
 	
 	@Embedded
-	private LastUpdate lastUpdate;
+	private LastActivity lastActivity;
 	
 	// used for title search in markdown editor
 	@Column(nullable=false)
@@ -307,6 +277,9 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
 	private Collection<IssueWatch> watches = new ArrayList<>();
+
+	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
+	private Collection<IssueMention> mentions = new ArrayList<>();
 	
 	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
 	@Cache(usage=CacheConcurrencyStrategy.READ_WRITE)
@@ -425,12 +398,12 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		this.number = number;
 	}
 
-	public LastUpdate getLastUpdate() {
-		return lastUpdate;
+	public LastActivity getLastActivity() {
+		return lastActivity;
 	}
 
-	public void setLastUpdate(LastUpdate lastUpdate) {
-		this.lastUpdate = lastUpdate;
+	public void setLastActivity(LastActivity lastActivity) {
+		this.lastActivity = lastActivity;
 	}
 
 	public User getSubmitter() {
@@ -504,6 +477,14 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		} else {
 			return super.getWatch(user, false);
 		}
+	}
+
+	public Collection<IssueMention> getMentions() {
+		return mentions;
+	}
+
+	public void setMentions(Collection<IssueMention> mentions) {
+		this.mentions = mentions;
 	}
 
 	public Collection<IssueAuthorization> getAuthorizations() {

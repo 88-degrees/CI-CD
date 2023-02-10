@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory;
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.commons.loader.AppLoaderMocker;
 import io.onedev.commons.utils.FileUtils;
-import io.onedev.server.git.config.GitConfig;
+import io.onedev.server.git.location.GitLocation;
 
 public abstract class AbstractGitTest extends AppLoaderMocker {
 
@@ -39,7 +39,7 @@ public abstract class AbstractGitTest extends AppLoaderMocker {
 		gitDir = FileUtils.createTempDir();
 		
 		try {
-			git = Git.init().setBare(false).setDirectory(gitDir).call();
+			git = Git.init().setInitialBranch("main").setBare(false).setDirectory(gitDir).call();
 		} catch (IllegalStateException | GitAPIException e) {
 			throw new RuntimeException(e);
 		}
@@ -47,7 +47,7 @@ public abstract class AbstractGitTest extends AppLoaderMocker {
 		git.getRepository().getConfig().setEnum(ConfigConstants.CONFIG_DIFF_SECTION, null, 
 				ConfigConstants.CONFIG_KEY_ALGORITHM, SupportedAlgorithm.HISTOGRAM);
 		
-		Mockito.when(AppLoader.getInstance(GitConfig.class)).thenReturn(new GitConfig() {
+		Mockito.when(AppLoader.getInstance(GitLocation.class)).thenReturn(new GitLocation() {
 
 			private static final long serialVersionUID = 1L;
 

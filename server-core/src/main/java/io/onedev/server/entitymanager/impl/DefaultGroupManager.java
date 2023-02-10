@@ -23,8 +23,8 @@ import io.onedev.server.event.entity.EntityRemoved;
 import io.onedev.server.event.system.SystemStarted;
 import io.onedev.server.model.Group;
 import io.onedev.server.model.Project;
-import io.onedev.server.model.support.BranchProtection;
-import io.onedev.server.model.support.TagProtection;
+import io.onedev.server.model.support.code.BranchProtection;
+import io.onedev.server.model.support.code.TagProtection;
 import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.annotation.Sessional;
 import io.onedev.server.persistence.annotation.Transactional;
@@ -135,7 +135,7 @@ public class DefaultGroupManager extends BaseEntityManager<Group> implements Gro
 				usedInProject.add(protection.onDeleteGroup(group.getName()));
 			for (TagProtection protection: project.getTagProtections()) 
 				usedInProject.add(protection.onDeleteGroup(group.getName()));
-			usedInProject.prefix("project '" + project.getPath() + "': setting");
+			usedInProject.prefix("project '" + project.getPath() + "': settings");
 			usage.add(usedInProject);
 		}
 

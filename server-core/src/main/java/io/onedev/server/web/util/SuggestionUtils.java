@@ -136,17 +136,55 @@ public class SuggestionUtils {
 			@Override
 			public List<InputSuggestion> suggest(Project project, String matchWith) {
 				if (SecurityUtils.canReadCode(project)) {
-					List<String> tagNames = project.getTagRefs()
+					List<String> tags = project.getTagRefs()
 							.stream()
-							.map(it->GitUtils.ref2tag(it.getName()))
 							.sorted()
+							.map(it->GitUtils.ref2tag(it.getName()))
 							.collect(Collectors.toList());
-					return SuggestionUtils.suggest(tagNames, matchWith);
+					Collections.reverse(tags);
+					return SuggestionUtils.suggest(tags, matchWith);
 				} else {
 					return new ArrayList<>();
 				}
 			}
 			
+		}, ":");
+	}
+
+	public static List<InputSuggestion> suggestRevisions(@Nullable Project project, String matchWith) {
+		return suggest(project, matchWith, new ProjectScopedSuggester() {
+
+			@Override
+			public List<InputSuggestion> suggest(Project project, String matchWith) {
+				if (SecurityUtils.canReadCode(project)) {
+					List<String> branches = project.getBranchRefs()
+							.stream()
+							.sorted()
+							.map(it->GitUtils.ref2branch(it.getName()))
+							.collect(Collectors.toList());
+					Collections.reverse(branches);
+					if (project.getDefaultBranch() != null) {
+						branches.remove(project.getDefaultBranch());
+						branches.add(0, project.getDefaultBranch());
+					}
+					
+					List<String> tags = project.getTagRefs()
+							.stream()
+							.sorted()
+							.map(it->GitUtils.ref2tag(it.getName()))
+							.collect(Collectors.toList());
+					Collections.reverse(tags);
+					
+					List<String> revisions = new ArrayList<>();
+					revisions.addAll(branches);
+					revisions.addAll(tags);
+					
+					return SuggestionUtils.suggest(revisions, matchWith);
+				} else {
+					return new ArrayList<>();
+				}
+			}
+
 		}, ":");
 	}
 	

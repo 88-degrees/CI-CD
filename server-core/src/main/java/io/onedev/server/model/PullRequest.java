@@ -54,10 +54,10 @@ import io.onedev.server.entityreference.Referenceable;
 import io.onedev.server.git.GitUtils;
 import io.onedev.server.git.service.GitService;
 import io.onedev.server.infomanager.VisitInfoManager;
-import io.onedev.server.model.support.BranchProtection;
+import io.onedev.server.model.support.code.BranchProtection;
 import io.onedev.server.model.support.EntityWatch;
 import io.onedev.server.model.support.LabelSupport;
-import io.onedev.server.model.support.LastUpdate;
+import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.model.support.ProjectBelonging;
 import io.onedev.server.model.support.pullrequest.MergePreview;
 import io.onedev.server.model.support.pullrequest.MergeStrategy;
@@ -76,7 +76,7 @@ import io.onedev.server.web.util.WicketUtils;
 				@Index(columnList=PROP_TITLE), @Index(columnList=PROP_UUID), 
 				@Index(columnList=PROP_NO_SPACE_TITLE), @Index(columnList=PROP_NUMBER), 
 				@Index(columnList="o_targetProject_id"), @Index(columnList=PROP_SUBMIT_DATE), 
-				@Index(columnList=LastUpdate.COLUMN_DATE), @Index(columnList="o_sourceProject_id"), 
+				@Index(columnList= LastActivity.COLUMN_DATE), @Index(columnList="o_sourceProject_id"), 
 				@Index(columnList="o_submitter_id"), @Index(columnList=MergePreview.COLUMN_HEAD_COMMIT_HASH), 
 				@Index(columnList=PROP_STATUS), @Index(columnList="o_numberScope_id")},
 		uniqueConstraints={@UniqueConstraint(columnNames={"o_numberScope_id", PROP_NUMBER})})
@@ -89,7 +89,7 @@ public class PullRequest extends ProjectBelonging
 	
 	public static final int MAX_TITLE_LEN = 255;
 	
-	public static final int MAX_DESCRIPTION_LEN = 12000;
+	public static final int MAX_DESCRIPTION_LEN = 100000;
 	
 	public static final String NAME_STATUS = "Status";
 	
@@ -137,9 +137,9 @@ public class PullRequest extends ProjectBelonging
 	
 	public static final String PROP_SUBMIT_DATE = "submitDate";
 	
-	public static final String NAME_UPDATE_DATE = "Update Date";
+	public static final String NAME_LAST_ACTIVITY_DATE = "Last Activity Date";
 	
-	public static final String PROP_LAST_UPDATE = "lastUpdate";
+	public static final String PROP_LAST_ACTIVITY = "lastActivity";
 	
 	public static final String NAME_CLOSE_DATE = "Close Date";
 	
@@ -170,12 +170,12 @@ public class PullRequest extends ProjectBelonging
 	public static final List<String> QUERY_FIELDS = Lists.newArrayList(
 			NAME_NUMBER, NAME_STATUS, NAME_TITLE, NAME_TARGET_PROJECT, NAME_TARGET_BRANCH, 
 			NAME_SOURCE_PROJECT, NAME_SOURCE_BRANCH, NAME_LABEL, NAME_DESCRIPTION, 
-			NAME_COMMENT, NAME_SUBMIT_DATE, NAME_UPDATE_DATE, NAME_CLOSE_DATE, 
+			NAME_COMMENT, NAME_SUBMIT_DATE, NAME_LAST_ACTIVITY_DATE, NAME_CLOSE_DATE, 
 			NAME_MERGE_STRATEGY, NAME_COMMENT_COUNT);
 
 	public static final Map<String, String> ORDER_FIELDS = CollectionUtils.newLinkedHashMap(
 			NAME_SUBMIT_DATE, PROP_SUBMIT_DATE,
-			NAME_UPDATE_DATE, PROP_LAST_UPDATE + "." + LastUpdate.PROP_DATE,
+			NAME_LAST_ACTIVITY_DATE, PROP_LAST_ACTIVITY + "." + LastActivity.PROP_DATE,
 			NAME_NUMBER, PROP_NUMBER,
 			NAME_STATUS, PROP_STATUS,
 			NAME_TARGET_PROJECT, PROP_TARGET_PROJECT,
@@ -213,6 +213,7 @@ public class PullRequest extends ProjectBelonging
 	
 	@Column(length=MAX_DESCRIPTION_LEN)
 	@OptimisticLock(excluded=true)
+	@Api(description = "May be null")
 	private String description;
 	
 	@ManyToOne(fetch=FetchType.LAZY)
@@ -232,6 +233,7 @@ public class PullRequest extends ProjectBelonging
 	private String targetBranch;
 
 	@ManyToOne(fetch=FetchType.LAZY)
+	@Api(description = "Null if source project is deleted")
 	private Project sourceProject;
 	
 	@Column(nullable=false)
@@ -266,7 +268,7 @@ public class PullRequest extends ProjectBelonging
 	private int commentCount;
 	
 	@Embedded
-	private LastUpdate lastUpdate;
+	private LastActivity lastActivity;
 
 	@Column(name="CODE_COMMENTS_UPDT")
 	private Date codeCommentsUpdateDate;
@@ -306,6 +308,9 @@ public class PullRequest extends ProjectBelonging
 	
 	@OneToMany(mappedBy="request", cascade=CascadeType.REMOVE)
 	private Collection<PullRequestWatch> watches = new ArrayList<>();
+
+	@OneToMany(mappedBy="request", cascade=CascadeType.REMOVE)
+	private Collection<PullRequestMention> mentions = new ArrayList<>();
 	
 	@OneToMany(mappedBy="compareContext.pullRequest")
 	private Collection<CodeComment> codeComments = new ArrayList<>();
@@ -484,6 +489,14 @@ public class PullRequest extends ProjectBelonging
 		this.changes = changes;
 	}
 
+	public Collection<PullRequestMention> getMentions() {
+		return mentions;
+	}
+
+	public void setMentions(Collection<PullRequestMention> mentions) {
+		this.mentions = mentions;
+	}
+
 	@Override
 	public Collection<PullRequestWatch> getWatches() {
 		return watches;
@@ -539,7 +552,7 @@ public class PullRequest extends ProjectBelonging
 	
 	/**
 	 * Get last merge preview of this pull request. Note that this method may return an 
-	 * outdated merge preview. Refer to {@link this#getIntegrationPreview()}
+	 * outdated merge preview. Refer to {@link this#getLastMergePreview()}
 	 * if you'd like to get an update-to-date merge preview
 	 *  
 	 * @return
@@ -712,12 +725,12 @@ public class PullRequest extends ProjectBelonging
 		this.commentCount = commentCount;
 	}
 
-	public LastUpdate getLastUpdate() {
-		return lastUpdate;
+	public LastActivity getLastActivity() {
+		return lastActivity;
 	}
 
-	public void setLastUpdate(LastUpdate lastUpdate) {
-		this.lastUpdate = lastUpdate;
+	public void setLastActivity(LastActivity lastActivity) {
+		this.lastActivity = lastActivity;
 	}
 
 	@Nullable

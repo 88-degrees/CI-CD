@@ -3,9 +3,12 @@ package io.onedev.server.job;
 import java.io.File;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import javax.annotation.Nullable;
 
+import io.onedev.server.cluster.ClusterRunnable;
+import io.onedev.server.model.support.administration.jobexecutor.JobExecutor;
 import org.eclipse.jgit.lib.ObjectId;
 
 import io.onedev.commons.utils.TaskLogger;
@@ -22,7 +25,7 @@ public interface JobManager {
 	
 	void schedule(Project project);
 	
-	void unschedule(Project project);
+	void unschedule(Long projectId);
 	
 	@Nullable
 	Build submit(Project project, ObjectId commitId, String jobName, 
@@ -34,6 +37,10 @@ public interface JobManager {
 	void cancel(Build build);
 	
 	void resume(Build build);
+
+	void runJob(UUID serverUUID, ClusterRunnable runnable);
+
+	void runJobLocal(JobContext jobContext, JobRunnable runnable);
 	
 	WebShell openShell(Long buildId, Terminal terminal);
 	
@@ -52,6 +59,6 @@ public interface JobManager {
 	void copyDependencies(JobContext jobContext, File targetDir);
 	
 	Map<String, byte[]> runServerStep(JobContext jobContext, List<Integer> stepPosition, File inputDir, 
-			Map<String, String> placeholderValues, TaskLogger logger);
+			Map<String, String> placeholderValues, boolean callByAgent, TaskLogger logger);
 	
 }

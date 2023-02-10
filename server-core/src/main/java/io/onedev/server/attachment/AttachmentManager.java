@@ -1,17 +1,15 @@
 package io.onedev.server.attachment;
 
+import io.onedev.server.util.artifact.FileInfo;
+
 import java.io.File;
 import java.io.InputStream;
 import java.util.List;
-
-import io.onedev.server.util.FileInfo;
 
 public interface AttachmentManager {
 
 	File getAttachmentGroupDirLocal(Long projectId, String attachmentGroup);
 	
-    void moveAttachmentGroupTargetLocal(Long targetProjectId, Long sourceProjectId, String attachmentGroup);
-    
 	String saveAttachment(Long projectId, String attachmentGroup, String suggestedAttachmentName, 
 			InputStream attachmentStream);
 	

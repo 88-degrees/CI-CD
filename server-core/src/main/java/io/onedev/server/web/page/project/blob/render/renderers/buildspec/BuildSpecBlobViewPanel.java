@@ -15,6 +15,7 @@ import javax.annotation.Nullable;
 import javax.validation.ConstraintViolation;
 import javax.validation.Validator;
 
+import io.onedev.server.model.support.build.JobProperty;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
@@ -43,7 +44,6 @@ import io.onedev.server.OneDev;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.buildspec.Import;
 import io.onedev.server.buildspec.NamedElement;
-import io.onedev.server.buildspec.Property;
 import io.onedev.server.buildspec.Service;
 import io.onedev.server.buildspec.job.Job;
 import io.onedev.server.buildspec.step.StepTemplate;
@@ -98,7 +98,7 @@ public class BuildSpecBlobViewPanel extends BlobViewPanel {
 					
 					private void setupPropertiesViewer(@Nullable AjaxRequestTarget target) {
 						Component propertiesViewer;
-						List<Property> properties = new ArrayList<>(buildSpec.getPropertyMap().values()); 
+						List<JobProperty> properties = new ArrayList<>(buildSpec.getPropertyMap().values()); 
 						
 						if (!properties.isEmpty()) {
 							propertiesViewer = new Fragment("content", "propertiesFrag", BuildSpecBlobViewPanel.this) {
@@ -107,11 +107,11 @@ public class BuildSpecBlobViewPanel extends BlobViewPanel {
 								protected void onInitialize() {
 									super.onInitialize();
 									
-									add(new ListView<Property>("properties", properties) {
+									add(new ListView<JobProperty>("properties", properties) {
 
 										@Override
-										protected void populateItem(ListItem<Property> item) {
-											Property property = item.getModelObject();
+										protected void populateItem(ListItem<JobProperty> item) {
+											JobProperty property = item.getModelObject();
 											item.add(new Label("name", property.getName()));
 											
 											Import aImport = null;
@@ -128,7 +128,7 @@ public class BuildSpecBlobViewPanel extends BlobViewPanel {
 											
 											if (aImport != null) {
 												ProjectBlobPage.State state = new ProjectBlobPage.State();
-												state.blobIdent = new BlobIdent(aImport.getTag(), BuildSpec.BLOB_PATH, 
+												state.blobIdent = new BlobIdent(aImport.getRevision(), BuildSpec.BLOB_PATH, 
 														FileMode.REGULAR_FILE.getBits());
 												state.position = BuildSpecRenderer.getPosition("properties");
 												Project project = aImport.getProject();
@@ -687,7 +687,7 @@ public class BuildSpecBlobViewPanel extends BlobViewPanel {
 			
 			if (aImport != null) {
 				ProjectBlobPage.State state = new ProjectBlobPage.State();
-				state.blobIdent = new BlobIdent(aImport.getTag(), BuildSpec.BLOB_PATH, 
+				state.blobIdent = new BlobIdent(aImport.getRevision(), BuildSpec.BLOB_PATH, 
 						FileMode.REGULAR_FILE.getBits());
 				String urlSegment = BuildSpecRenderer.getUrlSegment(elementClass);
 				state.position = BuildSpecRenderer.getPosition(urlSegment+"s/" + elementName);
@@ -705,7 +705,7 @@ public class BuildSpecBlobViewPanel extends BlobViewPanel {
 				};
 				link.setEnabled(SecurityUtils.canReadCode(project));
 				add(link);
-				link.add(new Label("label", project.getPath() + ":" + aImport.getTag()));
+				link.add(new Label("label", project.getPath() + ":" + aImport.getRevision()));
 			} else {
 				WebMarkupContainer link = new WebMarkupContainer("link");
 				link.add(new WebMarkupContainer("label"));

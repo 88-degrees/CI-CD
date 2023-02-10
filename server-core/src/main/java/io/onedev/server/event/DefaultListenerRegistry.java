@@ -1,34 +1,26 @@
 package io.onedev.server.event;
 
-import java.io.ObjectStreamException;
-import java.io.Serializable;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.commons.loader.ManagedSerializedForm;
 import io.onedev.commons.utils.LockUtils;
+import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.cluster.ClusterRunnable;
 import io.onedev.server.cluster.ClusterTask;
 import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.event.project.ProjectCreated;
+import io.onedev.server.event.project.ProjectDeleted;
 import io.onedev.server.event.project.ProjectEvent;
-import io.onedev.server.model.Project;
 import io.onedev.server.persistence.SessionManager;
 import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.annotation.Transactional;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.io.ObjectStreamException;
+import java.io.Serializable;
+import java.lang.reflect.Method;
+import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Singleton
 public class DefaultListenerRegistry implements ListenerRegistry, Serializable {
@@ -39,15 +31,18 @@ public class DefaultListenerRegistry implements ListenerRegistry, Serializable {
 	
 	private final SessionManager sessionManager;
 	
+	private final ClusterManager clusterManager;
+	
 	private volatile Map<Object, Collection<Method>> listenerMethods;
 	
 	private final Map<Class<?>, List<Listener>> listeners = new ConcurrentHashMap<>();
 	
 	@Inject
-	public DefaultListenerRegistry(ProjectManager projectManager, 
-			TransactionManager transactionManager, SessionManager sessionManager) {
+	public DefaultListenerRegistry(ProjectManager projectManager, ClusterManager clusterManager,
+								   TransactionManager transactionManager, SessionManager sessionManager) {
 		this.projectManager = projectManager;
 		this.transactionManager = transactionManager;
+		this.clusterManager = clusterManager;
 		this.sessionManager = sessionManager;
 	}
 
@@ -112,12 +107,8 @@ public class DefaultListenerRegistry implements ListenerRegistry, Serializable {
 	public void post(Object event) {
 		if (event instanceof ProjectEvent) {
 			ProjectEvent projectEvent = (ProjectEvent) event;
-			Project project = projectEvent.getProject();
-			if (!(event instanceof ProjectCreated)) 
-				project.getUpdate().setDate(projectEvent.getDate());
-			
-			Long projectId = project.getId();
-			
+			Long projectId = projectEvent.getProject().getId();
+
 			transactionManager.runAfterCommit(new ClusterRunnable() {
 
 				private static final long serialVersionUID = 1L;
@@ -142,11 +133,11 @@ public class DefaultListenerRegistry implements ListenerRegistry, Serializable {
 											public void run() {
 												invokeListeners(event);
 											}
-											
+
 										});
 										return null;
 									}
-									
+
 								});
 							} else {
 								sessionManager.run(new Runnable() {
@@ -155,16 +146,49 @@ public class DefaultListenerRegistry implements ListenerRegistry, Serializable {
 									public void run() {
 										invokeListeners(event);
 									}
-									
+
 								});
 							}
 							return null;
 						}
-						
+
 					});
 				}
-				
+
 			});
+		} else if (event instanceof ProjectDeleted) {
+			ProjectDeleted projectDeleted = (ProjectDeleted) event;
+			Long projectId = projectDeleted.getProjectId();
+			UUID projectStorageServerUUID = projectManager.getStorageServerUUID(projectId, false);
+			if (projectStorageServerUUID != null) {
+				transactionManager.runAfterCommit(new ClusterRunnable() {
+
+					private static final long serialVersionUID = 1L;
+
+					@Override
+					public void run() {
+						clusterManager.submitToServer(projectStorageServerUUID, new ClusterTask<Void>() {
+
+							private static final long serialVersionUID = 1L;
+
+							@Override
+							public Void call() throws Exception {
+								sessionManager.run(new Runnable() {
+
+									@Override
+									public void run() {
+										invokeListeners(event);
+									}
+
+								});
+								return null;
+							}
+
+						});
+					}
+
+				});
+			}
 		} else {
 			invokeListeners(event);
 		}
