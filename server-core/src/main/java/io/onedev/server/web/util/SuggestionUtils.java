@@ -1,63 +1,43 @@
 package io.onedev.server.web.util;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
-import org.apache.commons.lang3.StringUtils;
-
 import com.google.common.base.Preconditions;
-
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.commons.utils.LinearRange;
 import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.AgentAttributeManager;
+import io.onedev.server.entitymanager.AgentManager;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.buildspec.job.JobVariable;
 import io.onedev.server.buildspec.param.spec.ParamSpec;
-import io.onedev.server.entitymanager.AgentAttributeManager;
-import io.onedev.server.entitymanager.AgentManager;
-import io.onedev.server.entitymanager.BuildManager;
-import io.onedev.server.entitymanager.BuildMetricManager;
-import io.onedev.server.entitymanager.GroupManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.LabelManager;
-import io.onedev.server.entitymanager.LinkSpecManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.PullRequestManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.entitymanager.*;
 import io.onedev.server.git.GitUtils;
-import io.onedev.server.infomanager.CommitInfoManager;
-import io.onedev.server.model.AbstractEntity;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.LinkSpec;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
+import io.onedev.server.xodus.CommitInfoManager;
+import io.onedev.server.model.*;
 import io.onedev.server.model.support.administration.GroovyScript;
+import io.onedev.server.model.support.build.JobProperty;
 import io.onedev.server.model.support.build.JobSecret;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.security.permission.AccessProject;
+import io.onedev.server.security.permission.BasePermission;
+import io.onedev.server.util.ScriptContribution;
 import io.onedev.server.util.facade.ProjectCache;
-import io.onedev.server.util.facade.UserFacade;
 import io.onedev.server.util.facade.UserCache;
+import io.onedev.server.util.facade.UserFacade;
 import io.onedev.server.util.interpolative.VariableInterpolator;
 import io.onedev.server.util.match.PatternApplied;
 import io.onedev.server.util.match.WildcardUtils;
-import io.onedev.server.util.script.ScriptContribution;
 import io.onedev.server.web.asset.emoji.Emojis;
 import io.onedev.server.web.behavior.inputassist.InputAssistBehavior;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
+
+import javax.annotation.Nullable;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static java.util.Collections.sort;
 
 public class SuggestionUtils {
 	
@@ -73,9 +53,9 @@ public class SuggestionUtils {
 		
 		return sortAndTruncate(suggestions, matchWith);
 	}
-	
+
 	public static List<InputSuggestion> suggestLabels(String matchWith) {
-		var labelNames = OneDev.getInstance(LabelManager.class).query().stream()
+		var labelNames = OneDev.getInstance(LabelSpecManager.class).query().stream()
 				.map(it->it.getName())
 				.sorted()
 				.collect(Collectors.toList());
@@ -118,7 +98,7 @@ public class SuggestionUtils {
 				if (SecurityUtils.canReadCode(project)) {
 					List<String> branchNames = project.getBranchRefs()
 							.stream()
-							.map(it->GitUtils.ref2branch(it.getName()))
+							.map(it-> GitUtils.ref2branch(it.getName()))
 							.sorted()
 							.collect(Collectors.toList());
 					return SuggestionUtils.suggest(branchNames, matchWith);
@@ -139,7 +119,7 @@ public class SuggestionUtils {
 					List<String> tags = project.getTagRefs()
 							.stream()
 							.sorted()
-							.map(it->GitUtils.ref2tag(it.getName()))
+							.map(it-> GitUtils.ref2tag(it.getName()))
 							.collect(Collectors.toList());
 					Collections.reverse(tags);
 					return SuggestionUtils.suggest(tags, matchWith);
@@ -160,7 +140,7 @@ public class SuggestionUtils {
 					List<String> branches = project.getBranchRefs()
 							.stream()
 							.sorted()
-							.map(it->GitUtils.ref2branch(it.getName()))
+							.map(it-> GitUtils.ref2branch(it.getName()))
 							.collect(Collectors.toList());
 					Collections.reverse(branches);
 					if (project.getDefaultBranch() != null) {
@@ -171,7 +151,7 @@ public class SuggestionUtils {
 					List<String> tags = project.getTagRefs()
 							.stream()
 							.sorted()
-							.map(it->GitUtils.ref2tag(it.getName()))
+							.map(it-> GitUtils.ref2tag(it.getName()))
 							.collect(Collectors.toList());
 					Collections.reverse(tags);
 					
@@ -205,9 +185,13 @@ public class SuggestionUtils {
 	private static ProjectManager getProjectManager() {
 		return OneDev.getInstance(ProjectManager.class);
 	}
-	
+
 	public static List<InputSuggestion> suggestProjectPaths(String matchWith) {
-		Collection<Project> projects = getProjectManager().getPermittedProjects(new AccessProject());
+		return suggestProjectPaths(matchWith, new AccessProject());
+	}
+	
+	public static List<InputSuggestion> suggestProjectPaths(String matchWith, BasePermission permission) {
+		Collection<Project> projects = getProjectManager().getPermittedProjects(permission);
 		ProjectCache cache = getProjectManager().cloneCache();
 		
 		List<String> projectPaths = projects.stream()
@@ -250,15 +234,21 @@ public class SuggestionUtils {
 		}
 		if (paramSpecs != null) {
 			for (ParamSpec paramSpec: paramSpecs) 
-				variables.put(VariableInterpolator.PREFIX_PARAM + paramSpec.getName(), paramSpec.getDescription());
+				variables.put(VariableInterpolator.PREFIX_PARAM + paramSpec.getName(), null);
 		}
 		for (String propertyName: buildSpec.getPropertyMap().keySet())
 			variables.put(VariableInterpolator.PREFIX_PROPERTY + propertyName, null);
+		for (JobProperty property: project.getHierarchyJobProperties()) {
+			if (!buildSpec.getPropertyMap().containsKey(property.getName()))
+				variables.put(VariableInterpolator.PREFIX_PROPERTY + property.getName(), null);
+		}
 		for (JobSecret secret: project.getHierarchyJobSecrets())
 			variables.put(VariableInterpolator.PREFIX_SECRET + secret.getName(), null);
 
 		if (withDynamicVariables) {
-			for (String attributeName: OneDev.getInstance(AgentAttributeManager.class).getAttributeNames()) 
+			var attributeNames = new ArrayList<>(OneDev.getInstance(AgentAttributeManager.class).getAttributeNames());
+			sort(attributeNames);
+			for (String attributeName: attributeNames) 
 				variables.put(VariableInterpolator.PREFIX_ATTRIBUTE + attributeName, "Use value of specified agent attribute");
 			
 			String filePath;
@@ -338,6 +328,18 @@ public class SuggestionUtils {
 		return suggest(linkNames, matchWith);
 	}
 	
+	public static List<InputSuggestion> suggestNumber(String matchWith, String suggestDescription) {
+		if (matchWith.startsWith("#"))
+			matchWith = matchWith.substring(1);
+		if (NumberUtils.isDigits(matchWith)) {
+			var suggestions = new ArrayList<InputSuggestion>();
+			suggestions.add(new InputSuggestion(matchWith, suggestDescription, null));
+			return suggestions;
+		} else {
+			return null;
+		}
+	}
+	
 	public static List<InputSuggestion> suggestIssues(@Nullable Project project, String matchWith, int count) {
 		return suggest(project, matchWith, new ProjectScopedSuggester() {
 			
@@ -403,6 +405,15 @@ public class SuggestionUtils {
 				.sorted()
 				.collect(Collectors.toList());
 		return suggest(groupNames, matchWith);
+	}
+
+	public static List<InputSuggestion> suggestRoles(String matchWith) {
+		List<String> roleNames = OneDev.getInstance(RoleManager.class).query()
+				.stream()
+				.map(it->it.getName())
+				.sorted()
+				.collect(Collectors.toList());
+		return suggest(roleNames, matchWith);
 	}
 	
 	public static List<InputSuggestion> suggestBlobs(Project project, String matchWith) {

@@ -12,13 +12,14 @@ import javax.inject.Singleton;
 
 import io.onedev.server.entitymanager.*;
 import io.onedev.server.event.project.issue.*;
+import io.onedev.server.util.ProjectScope;
 import org.apache.commons.lang3.StringUtils;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import io.onedev.server.event.Listen;
-import io.onedev.server.infomanager.VisitInfoManager;
+import io.onedev.server.xodus.VisitInfoManager;
 import io.onedev.server.mail.MailManager;
 import io.onedev.server.markdown.MarkdownManager;
 import io.onedev.server.markdown.MentionParser;
@@ -52,12 +53,14 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 	
 	private final IssueMentionManager mentionManager;
 	
+	private final IssueQueryPersonalizationManager queryPersonalizationManager;
+	
 	@Inject
 	public IssueNotificationManager(MarkdownManager markdownManager, MailManager mailManager, 
 									IssueWatchManager watchManager, VisitInfoManager userInfoManager, 
 									UserManager userManager, SettingManager settingManager, 
-									IssueAuthorizationManager authorizationManager, 
-									IssueMentionManager mentionManager) {
+									IssueAuthorizationManager authorizationManager, IssueMentionManager mentionManager, 
+									IssueQueryPersonalizationManager queryPersonalizationManager) {
 		super(markdownManager, settingManager);
 		
 		this.mailManager = mailManager;
@@ -66,6 +69,7 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 		this.userManager = userManager;
 		this.authorizationManager = authorizationManager;
 		this.mentionManager = mentionManager;
+		this.queryPersonalizationManager = queryPersonalizationManager;
 	}
 	
 	@Transactional
@@ -79,11 +83,15 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 
 		String url = event.getUrl();
 
+		String senderName;
 		String summary; 
-		if (user != null)
+		if (user != null) {
+			senderName = user.getDisplayName();
 			summary = user.getDisplayName() + " " + event.getActivity();
-		else
+		} else {
+			senderName = null;
 			summary = StringUtils.capitalize(event.getActivity());
+		}
 
 		for (Map.Entry<User, Boolean> entry: new QueryWatchBuilder<Issue>() {
 
@@ -94,7 +102,7 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 
 			@Override
 			protected Collection<? extends QueryPersonalization<?>> getQueryPersonalizations() {
-				return issue.getProject().getIssueQueryPersonalizations();
+				return queryPersonalizationManager.query(new ProjectScope(issue.getProject(), true, true));
 			}
 
 			@Override
@@ -162,9 +170,9 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 					if (emailAddress != null && emailAddress.isVerified()) {
 						mailManager.sendMailAsync(Sets.newHashSet(emailAddress.getValue()), 
 								Lists.newArrayList(), Lists.newArrayList(), subject, 
-								getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, null), 
-								getTextBody(event, summary, event.getTextBody(), url, replyable, null), 
-								replyAddress, threadingReferences);
+								getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, null), 
+								getEmailBody(false, event, summary, event.getTextBody(), url, replyable, null), 
+								replyAddress, senderName, threadingReferences);
 					}
 				}
 			}
@@ -186,9 +194,9 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 					if (emailAddress != null && emailAddress.isVerified()) {
 						mailManager.sendMailAsync(Sets.newHashSet(emailAddress.getValue()), 
 								Lists.newArrayList(), Lists.newArrayList(), subject, 
-								getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, null), 
-								getTextBody(event, summary, event.getTextBody(), url, replyable, null), 
-								replyAddress, threadingReferences);
+								getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, null), 
+								getEmailBody(false, event, summary, event.getTextBody(), url, replyable, null), 
+								replyAddress, senderName, threadingReferences);
 					}					
 				}
 			}
@@ -222,9 +230,9 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 						if (emailAddress != null && emailAddress.isVerified()) {
 							mailManager.sendMailAsync(Sets.newHashSet(emailAddress.getValue()), 
 									Sets.newHashSet(), Sets.newHashSet(), subject, 
-									getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, null), 
-									getTextBody(event, summary, event.getTextBody(), url, replyable, null),
-									replyAddress, threadingReferences);
+									getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, null), 
+									getEmailBody(false, event, summary, event.getTextBody(), url, replyable, null),
+									replyAddress, senderName, threadingReferences);
 						}
 						notifiedUsers.add(mentionedUser);
 					}
@@ -252,13 +260,13 @@ public class IssueNotificationManager extends AbstractNotificationManager {
 					issue.getFQN(), (event instanceof IssueOpened)?"Opened":"Updated", issue.getTitle()); 
 
 			Unsubscribable unsubscribable = new Unsubscribable(mailManager.getUnsubscribeAddress(issue));
-			String htmlBody = getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, unsubscribable);
-			String textBody = getTextBody(event, summary, event.getTextBody(), url, replyable, unsubscribable);
+			String htmlBody = getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, unsubscribable);
+			String textBody = getEmailBody(false, event, summary, event.getTextBody(), url, replyable, unsubscribable);
 
 			String threadingReferences = issue.getEffectiveThreadingReference();
 			mailManager.sendMailAsync(Sets.newHashSet(), Sets.newHashSet(), 
 					bccEmailAddresses, subject, htmlBody, textBody, 
-					replyAddress, threadingReferences);
+					replyAddress, senderName, threadingReferences);
 		}
 	}
 	

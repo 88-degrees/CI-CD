@@ -6,10 +6,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 
 import javax.inject.Inject;
 
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.security.permission.*;
 import org.apache.shiro.authz.AuthorizationInfo;
 import org.apache.shiro.authz.Permission;
 import org.apache.shiro.realm.AuthorizingRealm;
@@ -29,10 +30,6 @@ import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
 import io.onedev.server.model.UserAuthorization;
 import io.onedev.server.persistence.SessionManager;
-import io.onedev.server.security.permission.ConfidentialIssuePermission;
-import io.onedev.server.security.permission.ProjectPermission;
-import io.onedev.server.security.permission.SystemAdministration;
-import io.onedev.server.security.permission.UserAdministration;
 
 public abstract class AbstractAuthorizingRealm extends AuthorizingRealm {
 
@@ -47,8 +44,7 @@ public abstract class AbstractAuthorizingRealm extends AuthorizingRealm {
     protected final SettingManager settingManager;
     
     @SuppressWarnings("serial")
-	private static final MetaDataKey<Map<Long, AuthorizationInfo>> AUTHORIZATION_INFOS = 
-			new MetaDataKey<Map<Long, AuthorizationInfo>>() {};    
+	private static final MetaDataKey<Map<Long, AuthorizationInfo>> AUTHORIZATION_INFOS = new MetaDataKey<>() {};    
     
 	@Inject
     public AbstractAuthorizingRealm(UserManager userManager, GroupManager groupManager, 
@@ -61,64 +57,53 @@ public abstract class AbstractAuthorizingRealm extends AuthorizingRealm {
     }
 
 	private AuthorizationInfo newAuthorizationInfo(Long userId) {
-		Collection<Permission> permissions = 
-				sessionManager.call(new Callable<Collection<Permission>>() {
-
-			@Override
-			public Collection<Permission> call() throws Exception {
-				Collection<Permission> permissions = new ArrayList<>();
-				
-		        if (userId != 0L) { 
-		        	Permission systemAdministration = new SystemAdministration();
-		        	
-		            User user = userManager.load(userId);
-		        	if (user.isRoot() || user.isSystem()) 
-		        		return Lists.newArrayList(systemAdministration);
-		        	
-		        	List<Group> groups = new ArrayList<>(user.getGroups());
-		           	Group defaultLoginGroup = settingManager.getSecuritySetting().getDefaultLoginGroup();
-	           		if (defaultLoginGroup != null) 
-	           			groups.add(defaultLoginGroup);
-		        	
-		           	for (Group group: groups) {
-		           		if (group.implies(systemAdministration))
-		           			return Lists.newArrayList(systemAdministration);
-		           		permissions.add(group);
-		           	}
-		           	
-		        	permissions.add(new UserAdministration(user));
-		        	
-		        	for (UserAuthorization authorization: user.getProjectAuthorizations()) 
-    					permissions.add(new ProjectPermission(authorization.getProject(), authorization.getRole()));
-		        	for (IssueAuthorization authorization: user.getIssueAuthorizations()) {
-    					permissions.add(new ProjectPermission(
-    							authorization.getIssue().getProject(), 
-    							new ConfidentialIssuePermission(authorization.getIssue())));
-		        	}
-		        } 
-		        if (userId != 0L || settingManager.getSecuritySetting().isEnableAnonymousAccess()) {
-		        	permissions.add(new Permission() {
-
-						@Override
-						public boolean implies(Permission p) {
-							if (p instanceof ProjectPermission) {
-					        	ProjectPermission projectPermission = (ProjectPermission) p;
-					        	Project project = projectPermission.getProject();
-					        	Permission privilege = projectPermission.getPrivilege();
-					        	do {
-					        		if (project.getDefaultRole() != null && project.getDefaultRole().implies(privilege))
-					        			return true;
-					        		project = project.getParent();
-					        	} while (project != null);
-							}
-							return false;
-						}
-		        		
-		        	});
-		        }
-				return permissions;
-			}
+		Collection<Permission> permissions = sessionManager.call(() -> {
+			Collection<Permission> innerPermissions = new ArrayList<>();
 			
+			if (userId != 0L) {
+				Permission systemAdministration = new SystemAdministration();
+				
+				User user = userManager.load(userId);
+				if (user.isRoot() || user.isSystem()) 
+					return Lists.newArrayList(systemAdministration);
+				
+				List<Group> groups = new ArrayList<>(user.getGroups());
+				Group defaultLoginGroup = settingManager.getSecuritySetting().getDefaultLoginGroup();
+				if (defaultLoginGroup != null) 
+					groups.add(defaultLoginGroup);
+
+				for (Group group : groups) {
+					if (group.implies(systemAdministration))
+						return Lists.newArrayList(systemAdministration);
+					innerPermissions.add(group);
+				}
+				   
+				innerPermissions.add(new UserAdministration(user));
+				
+				for (UserAuthorization authorization: user.getProjectAuthorizations()) 
+					innerPermissions.add(new ProjectPermission(authorization.getProject(), authorization.getRole()));
+				for (IssueAuthorization authorization: user.getIssueAuthorizations()) {
+					innerPermissions.add(new ProjectPermission(
+							authorization.getIssue().getProject(), 
+							new ConfidentialIssuePermission(authorization.getIssue())));
+				}
+			} 
+			if (userId != 0L || settingManager.getSecuritySetting().isEnableAnonymousAccess()) {
+				innerPermissions.add(p -> {
+					if (p instanceof ProjectPermission) {
+						ProjectPermission projectPermission = (ProjectPermission) p;
+						Project project = projectPermission.getProject();
+						Permission privilege = projectPermission.getPrivilege();
+						do {
+							if (project.getDefaultRole() != null && project.getDefaultRole().implies(privilege))
+								return true;
+							project = project.getParent();
+						} while (project != null);
+					}
+					return false;
+				});
+			}
+			return innerPermissions;
 		});
 		
 		return new AuthorizationInfo() {
@@ -137,7 +122,14 @@ public abstract class AbstractAuthorizingRealm extends AuthorizingRealm {
 			
 			@Override
 			public Collection<Permission> getObjectPermissions() {
-				return permissions;
+				return Lists.newArrayList(permission -> {
+					if (permission instanceof BasePermission) {
+						BasePermission basePermission = (BasePermission) permission;	
+						if (!basePermission.isApplicable(SecurityUtils.getUser()))							
+							return false;
+					} 
+					return permissions.stream().anyMatch(it -> it.implies(permission));
+				});
 			}
 			
 		};		

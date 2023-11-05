@@ -2,13 +2,14 @@ package io.onedev.server.git;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.hash.Hashing;
 import com.google.common.hash.HashingInputStream;
 import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.server.OneDev;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.entitymanager.GitLfsLockManager;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.model.GitLfsLock;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
@@ -20,8 +21,6 @@ import io.onedev.server.util.facade.ProjectFacade;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.compress.utils.IOUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.tika.mime.MimeTypes;
-import org.glassfish.jersey.client.ClientProperties;
 import org.hibernate.criterion.Restrictions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,8 +32,6 @@ import javax.servlet.*;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.client.*;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.StreamingOutput;
 import java.io.IOException;
@@ -45,9 +42,15 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
+import static com.google.common.hash.Hashing.sha256;
 import static io.onedev.commons.bootstrap.Bootstrap.BUFFER_SIZE;
+import static io.onedev.k8shelper.KubernetesHelper.BEARER;
 import static io.onedev.server.util.CollectionUtils.newHashMap;
 import static javax.servlet.http.HttpServletResponse.*;
+import static javax.ws.rs.core.HttpHeaders.AUTHORIZATION;
+import static javax.ws.rs.core.MediaType.APPLICATION_OCTET_STREAM;
+import static org.apache.tika.mime.MimeTypes.OCTET_STREAM;
+import static org.glassfish.jersey.client.ClientProperties.REQUEST_ENTITY_PROCESSING;
 
 @Singleton
 public class GitLfsFilter implements Filter {
@@ -92,7 +95,7 @@ public class GitLfsFilter implements Filter {
 	}
 	
 	private long getMaxLFSFileSize() {
-		return 1L * settingManager.getPerformanceSetting().getMaxGitLFSFileSize()*1024*1024;
+		return (long) settingManager.getPerformanceSetting().getMaxGitLFSFileSize() * 1024 * 1024;
 	}
 	
 	private boolean canReadCode(HttpServletRequest request, Project project) {
@@ -149,14 +152,9 @@ public class GitLfsFilter implements Filter {
 				}
 
 				if (lfsObject != null) {
-					httpResponse.setContentType(MimeTypes.OCTET_STREAM);
-					UUID storageServerUUID = null;
-					if (!clusterAccess) {
-						storageServerUUID = projectManager.getStorageServerUUID(lfsObject.getProjectId(), true);
-						if (storageServerUUID.equals(clusterManager.getLocalServerUUID()))
-							storageServerUUID = null;
-					}
-					if (storageServerUUID == null) {
+					httpResponse.setContentType(OCTET_STREAM);
+					String activeServer = projectManager.getActiveServer(lfsObject.getProjectId(), true);
+					if (activeServer.equals(clusterManager.getLocalServerAddress())) {
 						try (
 								InputStream is = lfsObject.getInputStream();
 								OutputStream os = httpResponse.getOutputStream()) {
@@ -165,14 +163,13 @@ public class GitLfsFilter implements Filter {
 					} else {
 						Client client = ClientBuilder.newClient();
 						try {
-							String serverUrl = clusterManager.getServerUrl(storageServerUUID);
+							String serverUrl = clusterManager.getServerUrl(activeServer);
 							WebTarget target = client.target(serverUrl)
 									.path("~api/cluster/lfs")
 									.queryParam("projectId", lfsObject.getProjectId())
 									.queryParam("objectId", lfsObject.getObjectId());
 							Invocation.Builder builder =  target.request();
-							builder.header(HttpHeaders.AUTHORIZATION, 
-									KubernetesHelper.BEARER + " " + clusterManager.getCredentialValue());
+							builder.header(AUTHORIZATION, BEARER + " " + clusterManager.getCredential());
 							try (Response lfsResponse = builder.get()){
 								KubernetesHelper.checkStatus(lfsResponse);
 								try (
@@ -204,52 +201,41 @@ public class GitLfsFilter implements Filter {
 				}
 
 				if (lfsObject != null) {
-					UUID storageServerUUID = null;
-					if (!clusterAccess) {
-						storageServerUUID = projectManager.getStorageServerUUID(lfsObject.getProjectId(), true);
-						if (storageServerUUID.equals(clusterManager.getLocalServerUUID())) 
-							storageServerUUID = null;
-					}
-					
+					String activeServer = projectManager.getActiveServer(lfsObject.getProjectId(), true);
 					var hash = new AtomicReference<String>(null);
 					try {
-						if (storageServerUUID == null) {
+						if (activeServer.equals(clusterManager.getLocalServerAddress())) {
 							try (
 									HashingInputStream is = new HashingInputStream(
-											Hashing.sha256(), httpRequest.getInputStream());
+											sha256(), httpRequest.getInputStream());
 									OutputStream os = lfsObject.getOutputStream()) {
 								IOUtils.copy(is, os, BUFFER_SIZE);
 								hash.set(Hex.encodeHexString(is.hash().asBytes()));
 							}
 						} else {
 							Client client = ClientBuilder.newClient();
-							client.property(ClientProperties.REQUEST_ENTITY_PROCESSING, "CHUNKED");
+							client.property(REQUEST_ENTITY_PROCESSING, "CHUNKED");
 							try {
-								String serverUrl = clusterManager.getServerUrl(storageServerUUID);
+								String serverUrl = clusterManager.getServerUrl(activeServer);
 								WebTarget target = client.target(serverUrl)
 										.path("~api/cluster/lfs")
 										.queryParam("projectId", lfsObject.getProjectId())
 										.queryParam("objectId", lfsObject.getObjectId());
 								Invocation.Builder builder = target.request();
-								builder.header(HttpHeaders.AUTHORIZATION,
-										KubernetesHelper.BEARER + " " + clusterManager.getCredentialValue());
+								builder.header(AUTHORIZATION,
+										BEARER + " " + clusterManager.getCredential());
 
-								StreamingOutput os = new StreamingOutput() {
-
-									@Override
-									public void write(OutputStream output) throws IOException {
-										try (HashingInputStream is = new HashingInputStream(
-												Hashing.sha256(), httpRequest.getInputStream())) {
-											IOUtils.copy(is, output, BUFFER_SIZE);
-											hash.set(Hex.encodeHexString(is.hash().asBytes()));
-										} finally {
-											output.close();
-										}
+								StreamingOutput os = output -> {
+									try (HashingInputStream is = new HashingInputStream(
+											sha256(), httpRequest.getInputStream())) {
+										IOUtils.copy(is, output, BUFFER_SIZE);
+										hash.set(Hex.encodeHexString(is.hash().asBytes()));
+									} finally {
+										output.close();
 									}
-
 								};
 
-								try (Response lfsResponse = builder.post(Entity.entity(os, MediaType.APPLICATION_OCTET_STREAM))) {
+								try (Response lfsResponse = builder.post(Entity.entity(os, APPLICATION_OCTET_STREAM))) {
 									KubernetesHelper.checkStatus(lfsResponse);
 								}
 							} finally {
@@ -285,14 +271,7 @@ public class GitLfsFilter implements Filter {
 								return true;
 							}
 							
-						}, new BooleanSupplier() {
-							
-							@Override
-							public boolean getAsBoolean() {
-								return true;
-							}
-							
-						}, clusterManager.getCredentialValue());
+						}, () -> true, clusterManager.getCredential());
 					} else {
 						httpResponse.setStatus(SC_NOT_IMPLEMENTED);
 					}
@@ -308,25 +287,15 @@ public class GitLfsFilter implements Filter {
 						httpResponse.setContentType(CONTENT_TYPE);
 						if (pathInfo.endsWith("/batch")) {
 							String accessToken;
-							if (SecurityUtils.getUser() != null)
-								accessToken = SecurityUtils.getUser().getAccessToken();
+							var user = SecurityUtils.getUser();
+							if (user != null)
+								accessToken = OneDev.getInstance(UserManager.class).createTemporalAccessToken(user.getId(), 300);
 							else 
 								accessToken = null;
-							processBatch(httpRequest, httpResponse, project.getFacade(), new BooleanSupplier() {
-
-								@Override
-								public boolean getAsBoolean() {
-									return canReadCode(httpRequest, project);
-								}
-								
-							}, new BooleanSupplier() {
-								
-								@Override
-								public boolean getAsBoolean() {
-									return SecurityUtils.canWriteCode(project);
-								}
-								
-							}, accessToken);
+							processBatch(httpRequest, httpResponse, project.getFacade(), 
+									() -> canReadCode(httpRequest, project), 
+									() -> SecurityUtils.canWriteCode(project), 
+									accessToken);
 						} else if (pathInfo.endsWith("/locks")) {
 							if (httpRequest.getMethod().equals("POST")) {
 								if (SecurityUtils.canWriteCode(project)) {
@@ -340,7 +309,7 @@ public class GitLfsFilter implements Filter {
 										lock = new GitLfsLock();
 										lock.setPath(path);
 										lock.setOwner(SecurityUtils.getUser());
-										lockManager.save(lock);
+										lockManager.create(lock);
 										httpResponse.setStatus(SC_CREATED);
 									} else {
 										httpResponse.setStatus(SC_CONFLICT);
@@ -590,7 +559,7 @@ public class GitLfsFilter implements Filter {
 		if (accessToken != null) {
 			actionResponse.put(
 					"header", newHashMap(
-							"Authorization", KubernetesHelper.BEARER + " " + accessToken));
+							"Authorization", BEARER + " " + accessToken));
 		}
 		return actionResponse;
 	}

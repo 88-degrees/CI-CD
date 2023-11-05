@@ -1,7 +1,10 @@
 package io.onedev.server.web.page.project.setting.code.branchprotection;
 
-import java.util.List;
-
+import io.onedev.server.model.support.code.BranchProtection;
+import io.onedev.server.util.CollectionUtils;
+import io.onedev.server.web.behavior.sortable.SortBehavior;
+import io.onedev.server.web.behavior.sortable.SortPosition;
+import io.onedev.server.web.page.project.setting.ProjectSettingPage;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
@@ -13,12 +16,7 @@ import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.model.AbstractReadOnlyModel;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.model.support.code.BranchProtection;
-import io.onedev.server.web.behavior.sortable.SortBehavior;
-import io.onedev.server.web.behavior.sortable.SortPosition;
-import io.onedev.server.web.page.project.setting.ProjectSettingPage;
+import java.util.List;
 
 @SuppressWarnings("serial")
 public class BranchProtectionsPage extends ProjectSettingPage {
@@ -51,14 +49,14 @@ public class BranchProtectionsPage extends ProjectSettingPage {
 					@Override
 					protected void onDelete(AjaxRequestTarget target) {
 						getProject().getBranchProtections().remove(item.getIndex());
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						getProjectManager().update(getProject());
 						target.add(container);
 					}
 
 					@Override
 					protected void onSave(AjaxRequestTarget target, BranchProtection protection) {
 						getProject().getBranchProtections().set(item.getIndex(), protection);
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						getProjectManager().update(getProject());
 					}
 					
 				});
@@ -71,9 +69,8 @@ public class BranchProtectionsPage extends ProjectSettingPage {
 			@Override
 			protected void onSort(AjaxRequestTarget target, SortPosition from, SortPosition to) {
 				List<BranchProtection> protections = getProject().getBranchProtections();
-				BranchProtection protection = protections.get(from.getItemIndex());
-				protections.set(from.getItemIndex(), protections.set(to.getItemIndex(), protection));
-				OneDev.getInstance(ProjectManager.class).save(getProject());
+				CollectionUtils.move(protections, from.getItemIndex(), to.getItemIndex());
+				getProjectManager().update(getProject());
 				
 				target.add(container);
 			}
@@ -96,7 +93,7 @@ public class BranchProtectionsPage extends ProjectSettingPage {
 					@Override
 					protected void onSave(AjaxRequestTarget target, BranchProtection protection) {
 						getProject().getBranchProtections().add(protection);
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						getProjectManager().update(getProject());
 						container.replace(newAddNewFrag());
 						target.add(container);
 					}
@@ -117,7 +114,7 @@ public class BranchProtectionsPage extends ProjectSettingPage {
 		fragment.setOutputMarkupId(true);
 		return fragment;
 	}
-
+	
 	@Override
 	protected Component newProjectTitle(String componentId) {
 		return new Label(componentId, "Branch Protection");

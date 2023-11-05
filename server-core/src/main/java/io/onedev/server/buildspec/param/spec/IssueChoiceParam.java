@@ -3,8 +3,8 @@ package io.onedev.server.buildspec.param.spec;
 import java.util.List;
 import java.util.Map;
 
-import io.onedev.server.model.support.inputspec.IssueChoiceInput;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.buildspecmodel.inputspec.IssueChoiceInput;
+import io.onedev.server.annotation.Editable;
 
 @Editable(order=1100, name=ParamSpec.ISSUE)
 public class IssueChoiceParam extends ParamSpec {

@@ -6,7 +6,7 @@ import org.eclipse.jgit.lib.ObjectId;
 
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.PullRequestChangeManager;
-import io.onedev.server.entitymanager.UrlManager;
+import io.onedev.server.web.UrlManager;
 import io.onedev.server.model.PullRequestChange;
 import io.onedev.server.model.support.pullrequest.MergePreview;
 import io.onedev.server.model.support.pullrequest.changedata.PullRequestDiscardData;
@@ -53,7 +53,7 @@ public class PullRequestChanged extends PullRequestEvent implements CommitAware 
 	public ProjectScopedCommit getCommit() {
 		ObjectId commitId;
 		if (getChange().getData() instanceof PullRequestMergeData) {
-			MergePreview preview = getRequest().getMergePreview();
+			MergePreview preview = getRequest().checkMergePreview();
 			if (preview != null)
 				commitId = ObjectId.fromString(preview.getMergeCommitHash());
 			else
@@ -71,4 +71,9 @@ public class PullRequestChanged extends PullRequestEvent implements CommitAware 
 		return OneDev.getInstance(UrlManager.class).urlFor(getChange());
 	}
 
+	@Override
+	public boolean isMinor() {
+		return getChange().isMinor();
+	}
+	
 }

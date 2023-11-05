@@ -7,16 +7,18 @@ query
     ;
 
 criteria
-    : operator=(Confidential|SubmittedByMe|MentionedMe|FixedInCurrentCommit|FixedInCurrentBuild|FixedInCurrentPullRequest|CurrentIssue) #OperatorCriteria
-    | operator=(SubmittedBy|Mentioned|FixedInCommit|FixedInBuild|FixedInPullRequest|HasAny) WS+ criteriaValue=Quoted #OperatorValueCriteria
+    : operator=(Confidential|SubmittedByMe|WatchedByMe|CommentedByMe|MentionedMe|FixedInCurrentCommit|FixedInCurrentBuild|FixedInCurrentPullRequest|CurrentIssue) #OperatorCriteria
+    | operator=(SubmittedBy|WatchedBy|CommentedBy|Mentioned|FixedInCommit|FixedInBuild|FixedInPullRequest|HasAny) WS+ criteriaValue=Quoted #OperatorValueCriteria
     | FixedBetween WS+ revisionCriteria WS+ And WS+ revisionCriteria #FixedBetweenCriteria
     | criteriaField=Quoted WS+ operator=(IsMe|IsEmpty|IsCurrent|IsPrevious) #FieldOperatorCriteria
     | criteriaField=Quoted WS+ operator=(Is|IsGreaterThan|IsLessThan|IsUntil|IsSince|IsAfter|IsBefore|Contains) WS+ criteriaValue=Quoted #FieldOperatorValueCriteria
+    | Hash? number=Number #NumberCriteria
     | criteria WS+ And WS+ criteria #AndCriteria
     | criteria WS+ Or WS+ criteria #OrCriteria
     | Not WS* LParens WS* criteria WS* RParens #NotCriteria
     | scope=(Any|All) WS+ linkSpec=Quoted WS+ Matching WS* LParens WS* criteria WS* RParens #LinkMatchCriteria
     | LParens WS* criteria WS* RParens #ParensCriteria
+    | Fuzzy #FuzzyCriteria
     ;
 
 revisionCriteria
@@ -34,6 +36,18 @@ OrderBy
 SubmittedBy
 	: 'submitted' WS+ 'by'
 	;
+
+WatchedBy
+    : 'watched' WS+ 'by'
+    ;
+
+CommentedBy
+    : 'commented' WS+ 'by'
+    ;
+
+Mentioned
+    : 'mentioned'
+    ;
 
 FixedInCommit
 	: 'fixed' WS+ 'in' WS+ 'commit'
@@ -74,11 +88,23 @@ FixedBetween
 SubmittedByMe
 	: 'submitted' WS+ 'by' WS+ 'me'
 	;
-	
+
+WatchedByMe
+    : 'watched' WS+ 'by' WS+ 'me'
+    ;
+
+CommentedByMe
+    : 'commented' WS+ 'by' WS+ 'me'
+    ;
+
+MentionedMe
+    : 'mentioned' WS+ 'me'
+    ;
+
 Confidential
 	: 'confidential'
 	;
-	
+
 CurrentIssue
 	: 'current' WS+ 'issue'
 	;
@@ -95,14 +121,6 @@ Contains
 	: 'contains'
 	;
 
-Mentioned
-    : 'mentioned'
-    ;
-
-MentionedMe
-    : 'mentioned' WS+ 'me'
-    ;
-
 IsGreaterThan
 	: 'is' WS+ 'greater' WS+ 'than'
 	;
@@ -112,13 +130,13 @@ IsLessThan
 	;
 
 IsAfter
-	: 'is' WS+ 'after' 
+	: 'is' WS+ 'after'
 	;
 
 IsBefore
 	: 'is' WS+ 'before'
 	;
-	
+
 IsSince
 	: 'is' WS+ 'since'
 	;
@@ -166,7 +184,7 @@ Any
 All
 	: 'all'
 	;
-	
+
 HasAny
 	: 'has' WS+ 'any'
 	;
@@ -191,12 +209,24 @@ RParens
 	: ')'
 	;
 
+Hash
+    : '#'
+    ;
+
 Quoted
     : '"' ('\\'.|~[\\"])+? '"'
     ;
 
+Number
+    : [0-9]+
+    ;
+
 WS
     : ' '
+    ;
+
+Fuzzy
+    : '~' ('\\'.|~[~])+? '~'
     ;
 
 Identifier

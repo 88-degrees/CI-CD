@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 
+import io.onedev.server.util.ComponentContext;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.form.AjaxFormComponentUpdatingBehavior;
 import org.apache.wicket.model.IModel;
@@ -20,7 +21,7 @@ import io.onedev.server.util.ReflectionUtils;
 import io.onedev.server.web.component.groupchoice.GroupMultiChoice;
 import io.onedev.server.web.editable.PropertyDescriptor;
 import io.onedev.server.web.editable.PropertyEditor;
-import io.onedev.server.web.editable.annotation.GroupChoice;
+import io.onedev.server.annotation.GroupChoice;
 
 @SuppressWarnings("serial")
 public class GroupMultiChoiceEditor extends PropertyEditor<Collection<String>> {
@@ -38,14 +39,20 @@ public class GroupMultiChoiceEditor extends PropertyEditor<Collection<String>> {
 
 		List<Group> choices = new ArrayList<>();
 		
-		GroupChoice groupChoice = descriptor.getPropertyGetter().getAnnotation(GroupChoice.class);
-		Preconditions.checkNotNull(groupChoice);
-		if (groupChoice.value().length() != 0) {
-			choices.addAll((List<Group>)ReflectionUtils
-					.invokeStaticMethod(descriptor.getBeanClass(), groupChoice.value()));
-		} else {
-			choices.addAll(OneDev.getInstance(GroupManager.class).query());
-			choices.sort(Comparator.comparing(Group::getName));
+		ComponentContext componentContext = new ComponentContext(this);
+		ComponentContext.push(componentContext);
+		try {
+			GroupChoice groupChoice = descriptor.getPropertyGetter().getAnnotation(GroupChoice.class);
+			Preconditions.checkNotNull(groupChoice);
+			if (groupChoice.value().length() != 0) {
+				choices.addAll((List<Group>) ReflectionUtils
+						.invokeStaticMethod(descriptor.getBeanClass(), groupChoice.value()));
+			} else {
+				choices.addAll(OneDev.getInstance(GroupManager.class).query());
+				choices.sort(Comparator.comparing(Group::getName));
+			}
+		} finally {
+			ComponentContext.pop();			
 		}
 	
     	List<Group> selections = new ArrayList<>();

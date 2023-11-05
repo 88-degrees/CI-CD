@@ -1,7 +1,12 @@
 package io.onedev.server.web.page.project.setting.code.tagprotection;
 
-import java.util.List;
-
+import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.model.support.code.TagProtection;
+import io.onedev.server.util.CollectionUtils;
+import io.onedev.server.web.behavior.sortable.SortBehavior;
+import io.onedev.server.web.behavior.sortable.SortPosition;
+import io.onedev.server.web.page.project.setting.ProjectSettingPage;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
@@ -13,12 +18,7 @@ import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.model.AbstractReadOnlyModel;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.model.support.code.TagProtection;
-import io.onedev.server.web.behavior.sortable.SortBehavior;
-import io.onedev.server.web.behavior.sortable.SortPosition;
-import io.onedev.server.web.page.project.setting.ProjectSettingPage;
+import java.util.List;
 
 @SuppressWarnings("serial")
 public class TagProtectionsPage extends ProjectSettingPage {
@@ -51,14 +51,14 @@ public class TagProtectionsPage extends ProjectSettingPage {
 					@Override
 					protected void onDelete(AjaxRequestTarget target) {
 						getProject().getTagProtections().remove(item.getIndex());
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						OneDev.getInstance(ProjectManager.class).update(getProject());
 						target.add(container);
 					}
 
 					@Override
 					protected void onSave(AjaxRequestTarget target, TagProtection protection) {
 						getProject().getTagProtections().set(item.getIndex(), protection);
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						OneDev.getInstance(ProjectManager.class).update(getProject());
 					}
 					
 				});
@@ -71,9 +71,8 @@ public class TagProtectionsPage extends ProjectSettingPage {
 			@Override
 			protected void onSort(AjaxRequestTarget target, SortPosition from, SortPosition to) {
 				List<TagProtection> protections = getProject().getTagProtections();
-				TagProtection protection = protections.get(from.getItemIndex());
-				protections.set(from.getItemIndex(), protections.set(to.getItemIndex(), protection));
-				OneDev.getInstance(ProjectManager.class).save(getProject());
+				CollectionUtils.move(protections, from.getItemIndex(), to.getItemIndex());
+				OneDev.getInstance(ProjectManager.class).update(getProject());
 				
 				target.add(container);
 			}
@@ -96,7 +95,7 @@ public class TagProtectionsPage extends ProjectSettingPage {
 					@Override
 					protected void onSave(AjaxRequestTarget target, TagProtection protection) {
 						getProject().getTagProtections().add(protection);
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						OneDev.getInstance(ProjectManager.class).update(getProject());
 						container.replace(newAddNewFrag());
 						target.add(container);
 					}

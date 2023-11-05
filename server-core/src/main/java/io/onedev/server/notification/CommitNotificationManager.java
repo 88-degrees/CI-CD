@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory;
 import com.google.common.collect.Lists;
 
 import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UrlManager;
+import io.onedev.server.web.UrlManager;
 import io.onedev.server.event.Listen;
 import io.onedev.server.event.project.RefUpdated;
 import io.onedev.server.git.GitUtils;
@@ -126,9 +126,9 @@ public class CommitNotificationManager extends AbstractNotificationManager {
 				String threadingReferences = "<commit-" + commit.name() + "@onedev>";
 				
 				mailManager.sendMailAsync(Lists.newArrayList(), Lists.newArrayList(), notifyEmails, subject, 
-						getHtmlBody(event, summary, event.getHtmlBody(), url, false, null), 
-						getTextBody(event, summary, event.getTextBody(), url, false, null), 
-						null, threadingReferences);
+						getEmailBody(true, event, summary, event.getHtmlBody(), url, false, null), 
+						getEmailBody(false, event, summary, event.getTextBody(), url, false, null), 
+						null, commit.getAuthorIdent().getName(), threadingReferences);
 			}
 		}
 	}

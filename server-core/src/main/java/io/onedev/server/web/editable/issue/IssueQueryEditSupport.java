@@ -19,7 +19,7 @@ import io.onedev.server.web.editable.PropertyContext;
 import io.onedev.server.web.editable.PropertyDescriptor;
 import io.onedev.server.web.editable.PropertyEditor;
 import io.onedev.server.web.editable.PropertyViewer;
-import io.onedev.server.web.editable.annotation.IssueQuery;
+import io.onedev.server.annotation.IssueQuery;
 import io.onedev.server.web.editable.string.StringPropertyEditor;
 
 @SuppressWarnings("serial")
@@ -65,12 +65,14 @@ public class IssueQueryEditSupport implements EditSupport {
         			IssueQuery issueQuery = Preconditions.checkNotNull(
         					getDescriptor().getPropertyGetter().getAnnotation(IssueQuery.class));
         			IssueQueryParseOption option = new IssueQueryParseOption()
+							.withProjectCriteria(issueQuery.withProjectCriteria())
 							.withCurrentProjectCriteria(issueQuery.withCurrentProjectCriteria())
         					.withCurrentBuildCriteria(issueQuery.withCurrentBuildCriteria())
         					.withCurrentCommitCriteria(issueQuery.withCurrentCommitCriteria())
         					.withCurrentIssueCriteria(issueQuery.withCurrentIssueCriteria())
         					.withCurrentPullRequestCriteria(issueQuery.withCurrentPullRequestCriteria())
         					.withCurrentUserCriteria(issueQuery.withCurrentUserCriteria())
+							.withStateCriteria(issueQuery.withStateCriteria())
         					.withOrder(issueQuery.withOrder());
 		        	return new StringPropertyEditor(componentId, descriptor, model).setInputAssist(
 		        		new IssueQueryBehavior(new AbstractReadOnlyModel<Project>() {

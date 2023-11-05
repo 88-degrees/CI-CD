@@ -1,6 +1,7 @@
 package io.onedev.server.rest;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import javax.inject.Inject;
@@ -17,6 +18,8 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
+import io.onedev.server.entitymanager.LinkSpecManager;
+import io.onedev.server.model.LinkSpec;
 import org.apache.shiro.authz.UnauthorizedException;
 import org.hibernate.criterion.MatchMode;
 import org.hibernate.criterion.Restrictions;
@@ -39,9 +42,12 @@ public class RoleResource {
 
 	private final RoleManager roleManager;
 	
+	private final LinkSpecManager linkSpecManager;
+	
 	@Inject
-	public RoleResource(RoleManager roleManager) {
+	public RoleResource(RoleManager roleManager, LinkSpecManager linkSpecManager) {
 		this.roleManager = roleManager;
+		this.linkSpecManager = linkSpecManager;
 	}
 
 	@Api(order=100)
@@ -71,18 +77,39 @@ public class RoleResource {
     	return roleManager.query(criteria, offset, count);
     }
 	
-	@Api(order=300, description="Update role of specified id in request body, or create new if id property not provided")
+	@Api(order=300, description="Create new role")
     @POST
-    public Long createOrUpdate(@NotNull Role role) {
+    public Long create(@NotNull Role role) {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	if (role.getOldVersion() != null)
-    		roleManager.save(role, new ArrayList<>(), ((RoleFacade) role.getOldVersion()).getName());
-    	else
-    		roleManager.save(role, new ArrayList<>(), null);
+		
+		Collection<LinkSpec> authorizedLinks = new ArrayList<>();
+		for (String linkName: role.getEditableIssueLinks())
+			authorizedLinks.add(linkSpecManager.find(linkName));
+		
+		roleManager.create(role, authorizedLinks);
     		
     	return role.getId();
     }
+
+	@Api(order=350, description="Update role of specified id")
+	@Path("/{roleId}")
+	@POST
+	public Response update(@PathParam("roleId") Long roleId, @NotNull Role role) {
+		if (!SecurityUtils.isAdministrator())
+			throw new UnauthorizedException();
+
+		Collection<LinkSpec> authorizedLinks = new ArrayList<>();
+		for (String linkName: role.getEditableIssueLinks())
+			authorizedLinks.add(linkSpecManager.find(linkName));
+
+		if (role.getOldVersion() != null)
+			roleManager.update(role, authorizedLinks, ((RoleFacade) role.getOldVersion()).getName());
+		else
+			roleManager.update(role, authorizedLinks, null);
+
+		return Response.ok().build();
+	}
 	
 	@Api(order=400)
 	@Path("/{roleId}")

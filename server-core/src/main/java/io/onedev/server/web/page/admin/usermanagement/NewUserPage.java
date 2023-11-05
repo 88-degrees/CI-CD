@@ -63,6 +63,7 @@ public class NewUserPage extends AdministrationPage {
 					User user = new User();
 					user.setName(newUserBean.getName());
 					user.setFullName(newUserBean.getFullName());
+					user.setGuest(newUserBean.isGuest());
 					user.setPassword(AppLoader.getInstance(PasswordService.class).encryptPassword(newUserBean.getPassword()));
 					
 					EmailAddress emailAddress = new EmailAddress();
@@ -74,8 +75,8 @@ public class NewUserPage extends AdministrationPage {
 
 						@Override
 						public void run() {
-							getUserManager().save(user);
-							getEmailAddressManager().save(emailAddress);
+							getUserManager().create(user);
+							getEmailAddressManager().create(emailAddress);
 						}
 						
 					});

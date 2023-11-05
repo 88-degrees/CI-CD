@@ -1,14 +1,41 @@
 package io.onedev.server.web.component.codecomment;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.Iterator;
-import java.util.List;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
+import com.google.common.collect.Sets;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.CodeCommentManager;
+import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.LastActivity;
+import io.onedev.server.search.entity.EntitySort;
+import io.onedev.server.search.entity.codecomment.CodeCommentQuery;
+import io.onedev.server.search.entity.codecomment.UnresolvedCriteria;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.DateUtils;
+import io.onedev.server.util.Provider;
+import io.onedev.server.util.UrlUtils;
+import io.onedev.server.web.UrlManager;
+import io.onedev.server.web.WebConstants;
+import io.onedev.server.web.behavior.ChangeObserver;
+import io.onedev.server.web.behavior.CodeCommentQueryBehavior;
+import io.onedev.server.web.component.beaneditmodal.BeanEditModalPanel;
+import io.onedev.server.web.component.datatable.DefaultDataTable;
+import io.onedev.server.web.component.datatable.selectioncolumn.SelectionColumn;
+import io.onedev.server.web.component.floating.FloatingPanel;
+import io.onedev.server.web.component.link.DropdownLink;
+import io.onedev.server.web.component.menu.MenuItem;
+import io.onedev.server.web.component.menu.MenuLink;
+import io.onedev.server.web.component.modal.confirm.ConfirmModalPanel;
+import io.onedev.server.web.component.orderedit.OrderEditPanel;
+import io.onedev.server.web.component.savedquery.SavedQueriesClosed;
+import io.onedev.server.web.component.savedquery.SavedQueriesOpened;
+import io.onedev.server.web.component.svg.SpriteImage;
+import io.onedev.server.web.component.user.ident.Mode;
+import io.onedev.server.web.component.user.ident.UserIdentPanel;
+import io.onedev.server.web.page.project.pullrequests.detail.codecomments.PullRequestCodeCommentsPage;
+import io.onedev.server.web.util.LoadableDetachableDataProvider;
+import io.onedev.server.web.util.PagingHistorySupport;
+import io.onedev.server.web.util.QuerySaveSupport;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
@@ -31,9 +58,7 @@ import org.apache.wicket.markup.html.WebMarkupContainer;
 import org.apache.wicket.markup.html.basic.Label;
 import org.apache.wicket.markup.html.form.Form;
 import org.apache.wicket.markup.html.form.TextField;
-import org.apache.wicket.markup.html.link.AbstractLink;
 import org.apache.wicket.markup.html.link.ExternalLink;
-import org.apache.wicket.markup.html.link.Link;
 import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.markup.html.panel.Panel;
 import org.apache.wicket.markup.repeater.Item;
@@ -43,51 +68,9 @@ import org.apache.wicket.model.LoadableDetachableModel;
 import org.apache.wicket.model.Model;
 import org.apache.wicket.request.cycle.RequestCycle;
 
-import com.google.common.collect.Sets;
-
-import io.onedev.commons.codeassist.parser.TerminalExpect;
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.CodeCommentManager;
-import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
-import io.onedev.server.entitymanager.UrlManager;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.CodeCommentStatusChange;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestAssignment;
-import io.onedev.server.model.PullRequestReview;
-import io.onedev.server.model.User;
-import io.onedev.server.model.support.LastActivity;
-import io.onedev.server.search.entity.EntitySort;
-import io.onedev.server.search.entity.codecomment.CodeCommentQuery;
-import io.onedev.server.search.entitytext.CodeCommentTextManager;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.DateUtils;
-import io.onedev.server.util.Provider;
-import io.onedev.server.util.UrlUtils;
-import io.onedev.server.web.WebConstants;
-import io.onedev.server.web.WebSession;
-import io.onedev.server.web.behavior.CodeCommentQueryBehavior;
-import io.onedev.server.web.component.beaneditmodal.BeanEditModalPanel;
-import io.onedev.server.web.component.datatable.DefaultDataTable;
-import io.onedev.server.web.component.datatable.selectioncolumn.SelectionColumn;
-import io.onedev.server.web.component.floating.FloatingPanel;
-import io.onedev.server.web.component.link.ActionablePageLink;
-import io.onedev.server.web.component.link.DropdownLink;
-import io.onedev.server.web.component.menu.MenuItem;
-import io.onedev.server.web.component.menu.MenuLink;
-import io.onedev.server.web.component.modal.confirm.ConfirmModalPanel;
-import io.onedev.server.web.component.orderedit.OrderEditPanel;
-import io.onedev.server.web.component.savedquery.SavedQueriesClosed;
-import io.onedev.server.web.component.savedquery.SavedQueriesOpened;
-import io.onedev.server.web.component.svg.SpriteImage;
-import io.onedev.server.web.component.user.ident.Mode;
-import io.onedev.server.web.component.user.ident.UserIdentPanel;
-import io.onedev.server.web.page.project.codecomments.InvalidCodeCommentPage;
-import io.onedev.server.web.util.LoadableDetachableDataProvider;
-import io.onedev.server.web.util.PagingHistorySupport;
-import io.onedev.server.web.util.QuerySaveSupport;
+import javax.annotation.Nullable;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @SuppressWarnings("serial")
 public abstract class CodeCommentListPanel extends Panel {
@@ -96,27 +79,20 @@ public abstract class CodeCommentListPanel extends Panel {
 	
 	private final IModel<String> queryStringModel;
 	
-	private final IModel<Object> queryModel = new LoadableDetachableModel<Object>() {
+	private final IModel<CodeCommentQuery> queryModel = new LoadableDetachableModel<>() {
 
 		@Override
-		protected Object load() {
+		protected CodeCommentQuery load() {
 			String queryString = queryStringModel.getObject();
 			try {
 				return CodeCommentQuery.parse(getProject(), queryString, true);
-			} catch (ExplicitException e) {
-				getFeedbackMessages().clear();
-				error(e.getMessage());
-				return null;
 			} catch (Exception e) {
-				if (getPullRequest() != null) {
-					getFeedbackMessages().clear();
-					error("Malformed code comment query");
-					return null;
-				} else {
-					getFeedbackMessages().clear();
-					info("Performing fuzzy query");
-					return queryString;
-				}
+				getFeedbackMessages().clear();
+				if (e instanceof ExplicitException)
+					error(e.getMessage());
+				else 
+					error("Malformed query");
+				return null;
 			}
 		}
 		
@@ -143,10 +119,6 @@ public abstract class CodeCommentListPanel extends Panel {
 
 	private CodeCommentManager getCodeCommentManager() {
 		return OneDev.getInstance(CodeCommentManager.class);
-	}
-	
-	private CodeCommentTextManager getCodeCommentTextManager() {
-		return OneDev.getInstance(CodeCommentTextManager.class);
 	}
 	
 	private void doQuery(AjaxRequestTarget target) {
@@ -242,7 +214,7 @@ public abstract class CodeCommentListPanel extends Panel {
 						
 						String note = bean.getNote();
 						
-						OneDev.getInstance(CodeCommentStatusChangeManager.class).save(changes, note);
+						OneDev.getInstance(CodeCommentStatusChangeManager.class).create(changes, note);
 						selectionColumn.getSelections().clear();
 						dataProvider.detach();
 						target.add(body);
@@ -375,7 +347,7 @@ public abstract class CodeCommentListPanel extends Panel {
 											Collection<CodeComment> comments = new ArrayList<>();
 											for (IModel<CodeComment> each: selectionColumn.getSelections())
 												comments.add(each.getObject());
-											OneDev.getInstance(CodeCommentManager.class).delete(comments);
+											OneDev.getInstance(CodeCommentManager.class).delete(comments, getProject());
 											selectionColumn.getSelections().clear();
 											target.add(body);
 										}
@@ -528,7 +500,7 @@ public abstract class CodeCommentListPanel extends Panel {
 											Collection<CodeComment> comments = new ArrayList<>();
 											for (Iterator<CodeComment> it = (Iterator<CodeComment>) dataProvider.iterator(0, commentsTable.getItemCount()); it.hasNext();) 
 												comments.add(it.next());
-											OneDev.getInstance(CodeCommentManager.class).delete(comments);
+											OneDev.getInstance(CodeCommentManager.class).delete(comments, getProject());
 											dataProvider.detach();
 											selectionColumn.getSelections().clear();
 											target.add(body);
@@ -593,22 +565,22 @@ public abstract class CodeCommentListPanel extends Panel {
 
 					@Override
 					public List<EntitySort> getObject() {
-						Object query = queryModel.getObject();
+						var query = queryModel.getObject();
 						CodeCommentListPanel.this.getFeedbackMessages().clear();
-						if (query instanceof CodeCommentQuery) 
-							return ((CodeCommentQuery)query).getSorts();
+						if (query != null) 
+							return query.getSorts();
 						else
 							return new ArrayList<>();
 					}
 
 					@Override
 					public void setObject(List<EntitySort> object) {
-						Object query = queryModel.getObject();
+						var query = queryModel.getObject();
 						CodeCommentListPanel.this.getFeedbackMessages().clear();
-						if (!(query instanceof CodeCommentQuery))
+						if (query == null)
 							query = new CodeCommentQuery();
-						((CodeCommentQuery)query).getSorts().clear();
-						((CodeCommentQuery)query).getSorts().addAll(object);
+						query.getSorts().clear();
+						query.getSorts().addAll(object);
 						queryModel.setObject(query);
 						queryStringModel.setObject(query.toString());
 						AjaxRequestTarget target = RequestCycle.get().find(AjaxRequestTarget.class); 
@@ -621,6 +593,20 @@ public abstract class CodeCommentListPanel extends Panel {
 			
 		});	
 		
+		add(new AjaxLink<Void>("unresolved") {
+
+			@Override
+			public void onClick(AjaxRequestTarget target) {
+				CodeCommentListPanel.this.getFeedbackMessages().clear();
+				var criteria = new UnresolvedCriteria();
+				queryModel.setObject(new CodeCommentQuery(criteria));
+				queryStringModel.setObject(criteria.toString());
+				target.add(queryInput);
+				doQuery(target);					
+			}
+			
+		}.setVisible(getPage() instanceof PullRequestCodeCommentsPage));
+		
 		queryInput = new TextField<String>("input", queryStringModel);
 		queryInput.add(new CodeCommentQueryBehavior(new AbstractReadOnlyModel<Project>() {
 
@@ -629,7 +615,7 @@ public abstract class CodeCommentListPanel extends Panel {
 				return getProject();
 			}
 			
-		}, true, true) {
+		}, true, true, true) {
 			
 			@Override
 			protected void onInput(AjaxRequestTarget target, String inputContent) {
@@ -637,14 +623,6 @@ public abstract class CodeCommentListPanel extends Panel {
 				querySubmitted = StringUtils.trimToEmpty(queryStringModel.getObject())
 						.equals(StringUtils.trimToEmpty(inputContent));
 				target.add(saveQueryLink);
-			}
-			
-			@Override
-			protected List<String> getHints(TerminalExpect terminalExpect) {
-				List<String> hints = super.getHints(terminalExpect);
-				if (getPullRequest() == null)
-					hints.add("Free input for fuzzy query on path/comment");
-				return hints;
 			}
 			
 		});
@@ -680,13 +658,10 @@ public abstract class CodeCommentListPanel extends Panel {
 
 			@Override
 			public Iterator<? extends CodeComment> iterator(long first, long count) {
-				Object query = queryModel.getObject();
-				if (query instanceof CodeCommentQuery) {
-					return getCodeCommentManager().query(getProject(), getPullRequest(), 
-							(CodeCommentQuery)query, (int)first, (int)count).iterator();
-				} else if (query instanceof String) {
-					return getCodeCommentTextManager()
-							.query(getProject(), (String)query, (int)first, (int)count).iterator();
+				var query = queryModel.getObject();
+				if (query != null) {
+					return getCodeCommentManager().query(getProject(), getPullRequest(),
+							query, (int)first, (int)count).iterator();
 				} else {
 					return new ArrayList<CodeComment>().iterator();
 				}
@@ -695,13 +670,9 @@ public abstract class CodeCommentListPanel extends Panel {
 			@Override
 			public long calcSize() {
 				try {
-					Object query = queryModel.getObject();
-					if (query instanceof CodeCommentQuery) {
-						return getCodeCommentManager().count(getProject(), getPullRequest(), 
-								((CodeCommentQuery)query).getCriteria());
-					} else if (query instanceof String) {
-						return getCodeCommentTextManager().count(getProject(), (String)query);
-					}
+					var query = queryModel.getObject();
+					if (query != null) 
+						return getCodeCommentManager().count(getProject(), getPullRequest(), query.getCriteria());
 				} catch (ExplicitException e) {
 					error(e.getMessage());
 				}
@@ -757,35 +728,38 @@ public abstract class CodeCommentListPanel extends Panel {
 			public void populateItem(Item<ICellPopulator<CodeComment>> cellItem, String componentId, IModel<CodeComment> rowModel) {
 				CodeComment comment = rowModel.getObject();
 				Fragment fragment = new Fragment(componentId, "contentFrag", CodeCommentListPanel.this);
-				String statusLabel;
-				if (comment.isResolved()) {
-					statusLabel = String.format(
-							"<span title='Resolved'><svg class='icon text-success mr-1'><use xlink:href='%s'/></svg></span>",
-							SpriteImage.getVersionedHref("tick-circle-o"));
-				} else {
-					statusLabel = String.format(
-							"<span title='Unresolved'><svg class='icon text-warning mr-1'><use xlink:href='%s'/></svg></span>",
-							SpriteImage.getVersionedHref("dot"));
-				}
-				fragment.add(new Label("status", statusLabel).setEscapeModelStrings(false));
-				
-				WebMarkupContainer link;
-				if (!comment.isValid()) {
-					link = new ActionablePageLink("description", InvalidCodeCommentPage.class, 
-							InvalidCodeCommentPage.paramsOf(comment)) {
-
-						@Override
-						protected void doBeforeNav(AjaxRequestTarget target) {
-							String redirectUrlAfterDelete = RequestCycle.get().urlFor(
-									getPage().getClass(), getPage().getPageParameters()).toString();
-							WebSession.get().setRedirectUrlAfterDelete(CodeComment.class, redirectUrlAfterDelete);
+				var commentId = comment.getId();
+				fragment.add(new Label("status", new LoadableDetachableModel<String>() {
+					@Override
+					protected String load() {
+						if (rowModel.getObject().isResolved()) {
+							return String.format(
+									"<span title='Resolved'><svg class='icon text-success mr-1'><use xlink:href='%s'/></svg></span>",
+									SpriteImage.getVersionedHref("tick-circle-o"));
+						} else {
+							return String.format(
+									"<span title='Unresolved'><svg class='icon text-warning mr-1'><use xlink:href='%s'/></svg></span>",
+									SpriteImage.getVersionedHref("dot"));
 						}
-						
-					};
-				} else {
-					String url = OneDev.getInstance(UrlManager.class).urlFor(comment);
-					link = new ExternalLink("description", UrlUtils.makeRelative(url));
-				}
+					}
+				}) {
+					@Override
+					protected void onInitialize() {
+						super.onInitialize();
+						add(new ChangeObserver() {
+							@Override
+							public Collection<String> findObservables() {
+								return Sets.newHashSet(CodeComment.getChangeObservable(commentId));
+							}
+
+						});
+						setOutputMarkupId(true);
+						setEscapeModelStrings(false);
+					}
+				});
+				
+				String url = OneDev.getInstance(UrlManager.class).urlFor(comment);
+				var link = new ExternalLink("description", UrlUtils.makeRelative(url));
 				link.add(new Label("label", StringUtils.abbreviate(comment.getContent(), MAX_DESCRIPTION_LEN)));
 				fragment.add(link);
 				
@@ -813,8 +787,23 @@ public abstract class CodeCommentListPanel extends Panel {
 			protected Item<CodeComment> newRowItem(String id, int index, IModel<CodeComment> model) {
 				Item<CodeComment> item = super.newRowItem(id, index, model);
 				CodeComment comment = model.getObject();
-				item.add(AttributeAppender.append("class", 
-						comment.isVisitedAfter(comment.getLastActivity().getDate())?"comment":"comment new"));
+				item.add(AttributeAppender.append("class", new LoadableDetachableModel<String>() {
+					@Override
+					protected String load() {
+						var comment = item.getModelObject();
+						return comment.isVisitedAfter(comment.getLastActivity().getDate()) ? "comment" : "comment new";
+					}
+				}));
+				
+				var commentId = comment.getId();
+				item.add(new ChangeObserver() {
+					@Override
+					public Collection<String> findObservables() {
+						return Sets.newHashSet(CodeComment.getChangeObservable(commentId));
+					}
+
+				});
+				item.setOutputMarkupId(true);
 				return item;
 			}
 		});

@@ -3,8 +3,8 @@ package io.onedev.server.buildspec.param.spec;
 import java.util.List;
 import java.util.Map;
 
-import io.onedev.server.model.support.inputspec.PullRequestChoiceInput;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.buildspecmodel.inputspec.PullRequestChoiceInput;
+import io.onedev.server.annotation.Editable;
 
 @Editable(order=1000, name=ParamSpec.PULL_REQUEST)
 public class PullRequestChoiceParam extends ParamSpec {

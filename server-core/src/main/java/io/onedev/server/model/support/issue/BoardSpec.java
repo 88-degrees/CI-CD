@@ -14,6 +14,9 @@ import javax.annotation.Nullable;
 import javax.validation.constraints.Size;
 
 import javax.validation.constraints.NotEmpty;
+
+import io.onedev.server.annotation.IssueQuery;
+import io.onedev.server.model.IssueSchedule;
 import org.unbescape.html.HtmlEscape;
 
 import com.google.common.collect.Lists;
@@ -24,11 +27,11 @@ import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.Issue;
 import io.onedev.server.model.LinkSpec;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
-import io.onedev.server.model.support.issue.field.spec.ChoiceField;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.model.support.issue.field.spec.choicefield.ChoiceField;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 import io.onedev.server.model.support.issue.field.spec.GroupChoiceField;
-import io.onedev.server.model.support.issue.field.spec.UserChoiceField;
+import io.onedev.server.model.support.issue.field.spec.userchoicefield.UserChoiceField;
 import io.onedev.server.search.entity.issue.IssueQueryUpdater;
 import io.onedev.server.util.EditContext;
 import io.onedev.server.util.usage.Usage;
@@ -38,8 +41,8 @@ import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValu
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValuesResolution;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedStateResolution;
 import io.onedev.server.web.component.stringchoice.StringChoiceProvider;
-import io.onedev.server.web.editable.annotation.ChoiceProvider;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.annotation.ChoiceProvider;
+import io.onedev.server.annotation.Editable;
 
 @Editable
 public class BoardSpec implements Serializable {
@@ -58,7 +61,7 @@ public class BoardSpec implements Serializable {
 	
 	private List<String> columns = new ArrayList<>();
 	
-	private List<String> displayFields = Lists.newArrayList(Issue.NAME_STATE);
+	private List<String> displayFields = Lists.newArrayList(Issue.NAME_STATE, IssueSchedule.NAME_MILESTONE);
 	
 	private List<String> displayLinks = new ArrayList<>();
 	
@@ -76,7 +79,7 @@ public class BoardSpec implements Serializable {
 
 	@Editable(order=200, placeholder="Not specified", description="Optionally specify a base query to "
 			+ "filter/order issues of the board")
-	@io.onedev.server.web.editable.annotation.IssueQuery(withCurrentUserCriteria = true, withCurrentProjectCriteria = true)
+	@IssueQuery(withCurrentUserCriteria = true, withCurrentProjectCriteria = true)
 	@Nullable
 	public String getBaseQuery() {
 		return baseQuery;
@@ -88,7 +91,7 @@ public class BoardSpec implements Serializable {
 
 	@Editable(order=250, placeholder="Not specified", description="Optionally specify a base query to filter/order issues in backlog. "
 			+ "Backlog issues are those not associating with current milestone")
-	@io.onedev.server.web.editable.annotation.IssueQuery(withCurrentUserCriteria = true, withCurrentProjectCriteria = true)
+	@IssueQuery(withCurrentUserCriteria = true, withCurrentProjectCriteria = true)
 	@Nullable
 	public String getBacklogBaseQuery() {
 		return backlogBaseQuery;
@@ -197,6 +200,7 @@ public class BoardSpec implements Serializable {
 		for (FieldSpec fieldSpec: getIssueSetting().getFieldSpecs()) {
 			choices.add(fieldSpec.getName());
 		}
+		choices.add(IssueSchedule.NAME_MILESTONE);
 		return choices;
 	}
 	
@@ -265,7 +269,7 @@ public class BoardSpec implements Serializable {
 				undefinedFields.add(getIdentifyField());
 		}
 		for (String displayField: getDisplayFields()) {
-			if (!Issue.NAME_STATE.equals(displayField)) { 
+			if (!Issue.NAME_STATE.equals(displayField) && !IssueSchedule.NAME_MILESTONE.equals(displayField)) { 
 				FieldSpec fieldSpec = getIssueSetting().getFieldSpec(displayField);
 				if (fieldSpec == null)
 					undefinedFields.add(displayField);
@@ -341,7 +345,7 @@ public class BoardSpec implements Serializable {
 		FieldSpec fieldSpec = issueSetting.getFieldSpec(getIdentifyField());
 		if (fieldSpec instanceof UserChoiceField) {
 			for (int i=0; i<getColumns().size(); i++) {
-				if (getColumns().get(i).equals(oldName))
+				if (oldName.equals(getColumns().get(i)))
 					getColumns().set(i, newName);
 			}
 		}
@@ -351,7 +355,7 @@ public class BoardSpec implements Serializable {
 		FieldSpec fieldSpec = issueSetting.getFieldSpec(getIdentifyField());
 		if (fieldSpec instanceof UserChoiceField) {
 			for (Iterator<String> it = getColumns().iterator(); it.hasNext();) {
-				if (it.next().equals(userName))
+				if (userName.equals(it.next()))
 					it.remove();
 			}
 		}

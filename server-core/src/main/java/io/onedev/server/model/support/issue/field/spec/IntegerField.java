@@ -5,9 +5,9 @@ import java.util.Map;
 
 import javax.validation.Valid;
 
-import io.onedev.server.model.support.inputspec.integerinput.IntegerInput;
-import io.onedev.server.model.support.inputspec.integerinput.defaultvalueprovider.DefaultValueProvider;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.buildspecmodel.inputspec.integerinput.IntegerInput;
+import io.onedev.server.buildspecmodel.inputspec.integerinput.defaultvalueprovider.DefaultValueProvider;
+import io.onedev.server.annotation.Editable;
 
 @Editable(order=400, name=FieldSpec.INTEGER)
 public class IntegerField extends FieldSpec {

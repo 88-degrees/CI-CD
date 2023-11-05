@@ -21,10 +21,7 @@ import org.apache.wicket.markup.html.basic.Label;
 import org.apache.wicket.markup.html.form.TextField;
 import org.apache.wicket.markup.html.panel.Panel;
 import org.apache.wicket.markup.repeater.RepeatingView;
-import org.apache.wicket.model.IModel;
-import org.apache.wicket.model.LoadableDetachableModel;
-import org.apache.wicket.model.Model;
-import org.apache.wicket.model.PropertyModel;
+import org.apache.wicket.model.*;
 import org.eclipse.jgit.errors.AmbiguousObjectException;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.RevisionSyntaxException;
@@ -52,6 +49,10 @@ import io.onedev.server.web.component.svg.SpriteImage;
 import io.onedev.server.web.component.tabbable.AjaxActionTab;
 import io.onedev.server.web.component.tabbable.Tab;
 import io.onedev.server.web.component.tabbable.Tabbable;
+
+import static io.onedev.server.git.GitUtils.branch2ref;
+import static io.onedev.server.git.GitUtils.tag2ref;
+import static org.eclipse.jgit.lib.Constants.R_REFS;
 
 @SuppressWarnings("serial")
 public abstract class RevisionSelector extends Panel {
@@ -143,6 +144,19 @@ public abstract class RevisionSelector extends Panel {
 	@Override
 	protected void onInitialize() {
 		super.onInitialize();
+
+		add(new Label("title", new AbstractReadOnlyModel<>() {
+			@Override
+			public Object getObject() {
+				return getTitle();
+			}
+		}) {
+			@Override
+			protected void onConfigure() {
+				super.onConfigure();
+				setVisible(getTitle() != null);
+			}
+		});
 		
 		revField = new TextField<String>("revision", Model.of(""));
 		revField.add(AttributeModifier.replace("placeholder", new LoadableDetachableModel<String>() {
@@ -363,13 +377,16 @@ public abstract class RevisionSelector extends Panel {
 			label += " from " + HtmlEscape.escapeHtml5(revision);
 			link.add(new Label("label", label).setEscapeModelStrings(false));
 			icon = "plus";
-		} else if (ref.equals(revision)) {
-			link.add(new Label("label", ref));
-			icon = "tick";
 		} else {
-			link.add(new Label("label", ref));
-			icon = null;
-		}
+			if (branchesActive && revision != null && branch2ref(ref).equals(branch2ref(revision))
+					|| !branchesActive && revision != null && tag2ref(ref).equals(tag2ref(revision))) {
+				link.add(new Label("label", ref));
+				icon = "tick";
+			} else {
+				link.add(new Label("label", ref));
+				icon = null;
+			}
+		} 
 		if (icon != null)
 			link.add(new SpriteImage("icon", icon));
 		else
@@ -432,6 +449,14 @@ public abstract class RevisionSelector extends Panel {
 	}
 	
 	private void selectRevision(AjaxRequestTarget target, String revision) {
+		if (!revision.startsWith(R_REFS)) {
+			var project = projectModel.getObject();
+			if (branchesActive && project.getTagRef(revision) != null)
+				revision = branch2ref(revision);
+			if (!branchesActive && project.getBranchRef(revision) != null)
+				revision = tag2ref(revision);
+		}
+		
 		try {
 			if (projectModel.getObject().getRevCommit(revision, false) != null) {
 				onSelect(target, revision);
@@ -460,6 +485,11 @@ public abstract class RevisionSelector extends Panel {
 		response.render(OnDomReadyHeaderItem.forScript(script));
 	}
 
+	@Nullable
+	protected String getTitle() {
+		return null;	
+	}
+	
 	protected abstract void onSelect(AjaxRequestTarget target, String revision);
 
 	@Override

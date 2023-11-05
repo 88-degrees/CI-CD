@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+import io.onedev.server.web.page.base.BasePage;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
 import org.apache.wicket.markup.head.IHeaderResponse;
@@ -27,7 +28,9 @@ import io.onedev.server.model.Build.Status;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.web.asset.emoji.Emojis;
 import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
-import io.onedev.server.web.behavior.WebSocketObserver;
+import io.onedev.server.web.behavior.ChangeObserver;
+
+import static io.onedev.server.model.Build.getDetailChangeObservable;
 
 @SuppressWarnings("serial")
 public class BuildLogPanel extends GenericPanel<Build> {
@@ -46,7 +49,7 @@ public class BuildLogPanel extends GenericPanel<Build> {
 	protected void onInitialize() {
 		super.onInitialize();
 
-		add(new WebSocketObserver() {
+		add(new ChangeObserver() {
 			
 			private void appendRecentLogEntries(IPartialPageRequestHandler handler) {
 				List<JobLogEntryEx> logEntries = getLogManager().readLogEntries(getBuild(), nextOffset, 0);
@@ -61,29 +64,29 @@ public class BuildLogPanel extends GenericPanel<Build> {
 			}
 			
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
+			public void onObservableChanged(IPartialPageRequestHandler handler, Collection<String> changedObservables) {
 				appendRecentLogEntries(handler);
 			}
 			
 			@Override
-			public Collection<String> getObservables() {
-				return Sets.newHashSet(Build.getLogWebSocketObservable(getBuild().getId()));
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(Build.getLogChangeObservable(getBuild().getId()));
 			}
 			
 		});
 		
-		add(new WebSocketObserver() {
+		add(new ChangeObserver() {
 			
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
+			public void onObservableChanged(IPartialPageRequestHandler handler, Collection<String> changedObservables) {
 				handler.appendJavaScript(String.format(
 						"onedev.server.buildLog.buildUpdated('%s', %b)",
 						getMarkupId(), getBuild().isPaused()));
 			}
 			
 			@Override
-			public Collection<String> getObservables() {
-				return Sets.newHashSet(Build.getWebSocketObservable(getBuild().getId()));
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(getDetailChangeObservable(getBuild().getId()));
 			}
 			
 		});
@@ -94,6 +97,8 @@ public class BuildLogPanel extends GenericPanel<Build> {
 				@Override
 				protected void respond(AjaxRequestTarget target) {
 					OneDev.getInstance(JobManager.class).resume(getBuild());
+					BasePage page = (BasePage) getPage();
+					page.notifyObservableChange(target, getDetailChangeObservable(getBuild().getId()));
 				}
 				
 			};

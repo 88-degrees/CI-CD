@@ -1,20 +1,20 @@
 package io.onedev.server.persistence;
 
+import com.hazelcast.cp.IAtomicLong;
+import io.onedev.server.cluster.ClusterManager;
+import io.onedev.server.data.DataManager;
+import io.onedev.server.model.AbstractEntity;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.Callable;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import com.hazelcast.cp.IAtomicLong;
-
-import io.onedev.server.cluster.ClusterManager;
-import io.onedev.server.model.AbstractEntity;
+import static io.onedev.server.persistence.PersistenceUtils.callWithTransaction;
 
 @Singleton
 public class DefaultIdManager implements IdManager {
@@ -28,8 +28,8 @@ public class DefaultIdManager implements IdManager {
 	private final Map<Class<?>, IAtomicLong> nextIds = new HashMap<>();
 	
 	@Inject
-	public DefaultIdManager(DataManager dataManager, ClusterManager clusterManager, 
-			SessionFactoryManager sessionFactoryManager) {
+	public DefaultIdManager(DataManager dataManager, ClusterManager clusterManager,
+                            SessionFactoryManager sessionFactoryManager) {
 		this.dataManager = dataManager;
 		this.sessionFactoryManager = sessionFactoryManager;
 		this.clusterManager = clusterManager;
@@ -54,27 +54,19 @@ public class DefaultIdManager implements IdManager {
 	
 	@Override
 	public void init() {
-		dataManager.callWithConnection(new ConnectionCallable<Void>() {
-
-			@Override
-			public Void call(Connection conn) {
+		try (var conn = dataManager.openConnection()) {
+			callWithTransaction(conn, () -> {
 				for (var persistenceClass: sessionFactoryManager.getMetadata().getEntityBindings()) {
 					Class<?> entityClass = persistenceClass.getMappedClass();
 					var nextId = clusterManager.getHazelcastInstance().getCPSubsystem().getAtomicLong(entityClass.getName());
-					clusterManager.init(nextId, new Callable<Long>() {
-
-						@Override
-						public Long call() throws Exception {
-							return getMaxId(conn, entityClass) + 1;
-						}
-						
-					});
+					clusterManager.init(nextId, () -> getMaxId(conn, entityClass) + 1);
 					nextIds.put(entityClass, nextId);
 				}
 				return null;
-			}
-			
-		});
+			});
+		} catch (SQLException e) {
+			throw new RuntimeException(e);
+		};
 	}
 
 	@Override

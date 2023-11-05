@@ -7,7 +7,7 @@
 	<parent>
 		<groupId>io.onedev</groupId>
 		<artifactId>server</artifactId>
-		<version>8.0.0</version>
+		<version>9.2.5</version>
 	</parent>
 	<build>
 		<plugins>
@@ -111,10 +111,6 @@
 		<dependency>
 			<groupId>org.apache.lucene</groupId>
 			<artifactId>lucene-analyzers-common</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.apache.lucene</groupId>
-			<artifactId>lucene-analyzers-smartcn</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.lucene</groupId>
@@ -301,10 +297,6 @@
 			<artifactId>hibernate-jcache</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>com.hazelcast</groupId>
-			<artifactId>hazelcast-hibernate53</artifactId>
-		</dependency>
-		<dependency>
 			<groupId>org.hibernate</groupId>
 			<artifactId>hibernate-entitymanager</artifactId>
 		</dependency>
@@ -329,6 +321,10 @@
 			<artifactId>javase</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>org.dhatim</groupId>
+			<artifactId>fastexcel</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>org.json</groupId>
 			<artifactId>json</artifactId>
 		</dependency>
@@ -341,8 +337,17 @@
 			<artifactId>objenesis</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>org.connectbot</groupId>
+			<artifactId>sshlib</artifactId>
+			<version>2.2.21</version>
+		</dependency>
+		<dependency>
 			<groupId>com.hazelcast</groupId>
 			<artifactId>hazelcast</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.hazelcast</groupId>
+			<artifactId>hazelcast-hibernate53</artifactId>
 		</dependency>
 	</dependencies>
 	<properties>

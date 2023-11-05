@@ -7,10 +7,11 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
+import io.onedev.server.util.ExceptionUtils;
+import org.apache.commons.lang3.SerializationException;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
@@ -29,6 +30,7 @@ import org.apache.wicket.markup.html.link.BookmarkablePageLink;
 import org.apache.wicket.markup.html.list.ListItem;
 import org.apache.wicket.markup.html.list.ListView;
 import org.apache.wicket.markup.html.list.PageableListView;
+import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.model.AbstractReadOnlyModel;
 import org.apache.wicket.model.IModel;
 import org.apache.wicket.model.LoadableDetachableModel;
@@ -64,6 +66,8 @@ import io.onedev.server.web.page.project.blob.render.BlobRenderer;
 import io.onedev.server.web.page.project.builds.detail.report.BuildReportPage;
 import io.onedev.server.web.util.SuggestionUtils;
 
+import static java.util.stream.Collectors.*;
+
 @SuppressWarnings("serial")
 public class ProblemReportPage extends BuildReportPage {
 
@@ -89,10 +93,17 @@ public class ProblemReportPage extends BuildReportPage {
 
 		@Override
 		protected ProblemReport load() {
-			Long projectId = getProject().getId();
-			Long buildNumber = getBuild().getNumber();
-			
-			return OneDev.getInstance(ProjectManager.class).runOnProjectServer(projectId, new GetProblemReport(projectId, buildNumber, getReportName()));
+			try {
+				Long projectId = getProject().getId();
+				Long buildNumber = getBuild().getNumber();
+
+				return OneDev.getInstance(ProjectManager.class).runOnActiveServer(projectId, new GetProblemReport(projectId, buildNumber, getReportName()));
+			} catch (Exception e) {
+				if (ExceptionUtils.find(e, SerializationException.class) != null)
+					return null;
+				else
+					throw ExceptionUtils.unchecked(e);
+			}
 		}
 		
 	};
@@ -107,194 +118,213 @@ public class ProblemReportPage extends BuildReportPage {
 	protected void onInitialize() {
 		super.onInitialize();
 		
-		filePaths = getReport().getProblemFiles().stream()
-				.map(it->it.getBlobPath())
-				.collect(Collectors.toList());	
-		
-		form = new Form<Void>("form");
-		
-		TextField<String> input = new TextField<String>("input", new PropertyModel<String>(this, "file"));
-		input.add(new PatternSetAssistBehavior() {
-			
-			@Override
-			protected List<InputSuggestion> suggest(String matchWith) {
-				return SuggestionUtils.suggestByPattern(filePaths, matchWith);
-			}
-			
-			@Override
-			protected List<String> getHints(TerminalExpect terminalExpect) {
-				return Lists.newArrayList(
-						"Path containing spaces or starting with dash needs to be quoted",
-						"Use '*' or '?' for wildcard match. Prefix with '-' to exclude"
-						);
-			}
-			
-		});
-		form.add(input);
-		
-		input.add(new AjaxFormComponentUpdatingBehavior("clear") {
-			
-			@Override
-			protected void onUpdate(AjaxRequestTarget target) {
-				pushState(target);
-				parseFilePatterns();
-				target.add(feedback);
-				target.add(filesContainer);
-			}
-			
-		});
-		
-		form.add(feedback = new FencedFeedbackPanel("feedback", form));
-		feedback.setOutputMarkupPlaceholderTag(true);
+		if (getReport() != null) {
+			var fragment = new Fragment("report", "validFrag", this);
+			filePaths = getReport().getProblemFiles().stream()
+					.map(it->it.getBlobPath())
+					.collect(toList());
 
-		form.add(new AjaxButton("submit") {
+			form = new Form<Void>("form");
 
-			@Override
-			protected void updateAjaxAttributes(AjaxRequestAttributes attributes) {
-				super.updateAjaxAttributes(attributes);
-				attributes.getAjaxCallListeners().add(new ConfirmLeaveListener(this));
-			}
-			
-			@Override
-			protected void onSubmit(AjaxRequestTarget target, Form<?> form) {
-				super.onSubmit(target, form);
-				pushState(target);
-				parseFilePatterns();
-				target.add(feedback);
-				target.add(filesContainer);
-			}
-			
-		});
-		form.setOutputMarkupId(true);
-		add(form);		
+			TextField<String> input = new TextField<String>("input", new PropertyModel<String>(this, "file"));
+			input.add(new PatternSetAssistBehavior() {
 
-		parseFilePatterns();
-		
-		filesContainer = new WebMarkupContainer("filesContainer");
-		filesContainer.setOutputMarkupId(true);
-		add(filesContainer);
-		
-		PageableListView<ProblemFile> filesView;
-		filesContainer.add(filesView = new PageableListView<ProblemFile>("files", 
-				new LoadableDetachableModel<List<ProblemFile>>() {
-
-			@Override
-			protected List<ProblemFile> load() {
-				if (filePatterns != null) {
-					if (filePatterns.isPresent()) {
-						Matcher matcher = new PathMatcher();
-						return getReport().getProblemFiles().stream()
-								.filter(it->filePatterns.get().matches(matcher, it.getBlobPath()))
-								.collect(Collectors.toList());
-					} else {
-						return getReport().getProblemFiles();
-					}
-				} else {
-					return new ArrayList<>();
+				@Override
+				protected List<InputSuggestion> suggest(String matchWith) {
+					return SuggestionUtils.suggestByPattern(filePaths, matchWith);
 				}
-			}
-			
-		}, WebConstants.PAGE_SIZE) {
 
-			@Override
-			protected void populateItem(ListItem<ProblemFile> item) {
-				ProblemFile file = item.getModelObject();
-				String filePath = file.getBlobPath();
-				
-				AjaxLink<Void> toggleLink = new AjaxLink<Void>("toggle") {
+				@Override
+				protected List<String> getHints(TerminalExpect terminalExpect) {
+					return Lists.newArrayList(
+							"Path containing spaces or starting with dash needs to be quoted",
+							"Use '*' or '?' for wildcard match. Prefix with '-' to exclude"
+					);
+				}
 
-					@Override
-					public void onClick(AjaxRequestTarget target) {
-						if (expandedFiles.contains(filePath))
-							expandedFiles.remove(filePath);
-						else
-							expandedFiles.add(filePath);
-						target.add(item);
-					}
-					
-				};
-				toggleLink.add(new Label("label", filePath));
-				toggleLink.add(AttributeAppender.append("class", new AbstractReadOnlyModel<String>() {
+			});
+			form.add(input);
 
-					@Override
-					public String getObject() {
-						return expandedFiles.contains(filePath)? "expanded": "collapsed";
-					}
-					
-				}));
-				
-				item.add(toggleLink);
-				
-				ProjectBlobPage.State state = new ProjectBlobPage.State();
-				state.blobIdent = new BlobIdent(getBuild().getCommitHash(), filePath, 
-						FileMode.REGULAR_FILE.getBits());
-				state.problemReport = getReportName();
-				PageParameters params = ProjectBlobPage.paramsOf(getProject(), state);
-				item.add(new BookmarkablePageLink<Void>("view", ProjectBlobPage.class, params));
+			input.add(new AjaxFormComponentUpdatingBehavior("clear") {
 
-				item.add(new Label("numOfProblems", file.getProblems().size() + " problems"));
-				
-				item.add(new Label("tooManyProblems", 
-						"Too many problems, displaying first " + MAX_PROBLEMS_TO_DISPLAY) {
+				@Override
+				protected void onUpdate(AjaxRequestTarget target) {
+					pushState(target);
+					parseFilePatterns();
+					target.add(feedback);
+					target.add(filesContainer);
+				}
 
-					@Override
-					protected void onConfigure() {
-						super.onConfigure();
-						setVisible(expandedFiles.contains(filePath) 
-								&& item.getModelObject().getProblems().size() > MAX_PROBLEMS_TO_DISPLAY);
-					}
-					
-				});
-				
-				item.add(new ListView<CodeProblem>("problems", new LoadableDetachableModel<List<CodeProblem>>() {
+			});
 
-					@Override
-					protected List<CodeProblem> load() {
-						List<CodeProblem> problems = item.getModelObject().getProblems();
-						if (problems.size() > MAX_PROBLEMS_TO_DISPLAY)
-							return problems.subList(0, MAX_PROBLEMS_TO_DISPLAY);
-						else
-							return problems;
-					}
-					
-				}) {
+			form.add(feedback = new FencedFeedbackPanel("feedback", form));
+			feedback.setOutputMarkupPlaceholderTag(true);
 
-					@Override
-					protected void populateItem(ListItem<CodeProblem> item) {
-						CodeProblem problem = item.getModelObject();
-						item.add(newSeverityIcon("icon", problem.getSeverity()));
-						item.add(new Label("message", problem.getMessage()).setEscapeModelStrings(false));
-						
-						ProjectBlobPage.State state = new ProjectBlobPage.State();
-						state.blobIdent = new BlobIdent(getBuild().getCommitHash(), 
-								filePath, FileMode.REGULAR_FILE.getBits());
-						state.problemReport = getReportName();
-						state.position = BlobRenderer.getSourcePosition(problem.getRange());
-						PageParameters params = ProjectBlobPage.paramsOf(getProject(), state);
-						BookmarkablePageLink<Void> rangeLink = new BookmarkablePageLink<Void>("range", 
-								ProjectBlobPage.class, params);
-						rangeLink.add(new Label("label", describe(problem.getRange())));
-						item.add(rangeLink);
-					}
+			form.add(new AjaxButton("submit") {
 
-					@Override
-					protected void onConfigure() {
-						super.onConfigure();
-						setVisible(expandedFiles.contains(filePath));
-					}
-					
-				});
-				item.setOutputMarkupId(true);
-			}
-			
-		});
-		if (!filesView.getModelObject().isEmpty())
-			expandedFiles.add(filesView.getModelObject().iterator().next().getBlobPath());
-		
-		filesContainer.add(new OnePagingNavigator("pagingNavigator", filesView, null));
-		filesContainer.add(new NoRecordsPlaceholder("noRecords", filesView));
+				@Override
+				protected void updateAjaxAttributes(AjaxRequestAttributes attributes) {
+					super.updateAjaxAttributes(attributes);
+					attributes.getAjaxCallListeners().add(new ConfirmLeaveListener(this));
+				}
+
+				@Override
+				protected void onSubmit(AjaxRequestTarget target, Form<?> form) {
+					super.onSubmit(target, form);
+					pushState(target);
+					parseFilePatterns();
+					target.add(feedback);
+					target.add(filesContainer);
+				}
+
+			});
+			form.setOutputMarkupId(true);
+			fragment.add(form);
+
+			parseFilePatterns();
+
+			filesContainer = new WebMarkupContainer("filesContainer");
+			filesContainer.setOutputMarkupId(true);
+			fragment.add(filesContainer);
+
+			PageableListView<ProblemFile> filesView;
+			filesContainer.add(filesView = new PageableListView<ProblemFile>("files",
+					new LoadableDetachableModel<>() {
+
+						@Override
+						protected List<ProblemFile> load() {
+							if (filePatterns != null) {
+								if (filePatterns.isPresent()) {
+									Matcher matcher = new PathMatcher();
+									var problemFiles = getReport().getProblemFiles().stream()
+											.filter(it -> filePatterns.get().matches(matcher, it.getBlobPath().toLowerCase()))
+											.collect(toList());
+									problemFiles.sort(getReport().newProblemFileComparator());
+									return problemFiles;									
+								} else {
+									var problemFiles = new ArrayList<>(getReport().getProblemFiles());
+									problemFiles.sort(getReport().newProblemFileComparator());
+									return problemFiles;
+								}
+							} else {
+								return new ArrayList<>();
+							}
+						}
+
+					}, WebConstants.PAGE_SIZE) {
+
+				@Override
+				protected void populateItem(ListItem<ProblemFile> item) {
+					ProblemFile file = item.getModelObject();
+					String filePath = file.getBlobPath();
+
+					AjaxLink<Void> toggleLink = new AjaxLink<Void>("toggle") {
+
+						@Override
+						public void onClick(AjaxRequestTarget target) {
+							if (expandedFiles.contains(filePath))
+								expandedFiles.remove(filePath);
+							else
+								expandedFiles.add(filePath);
+							target.add(item);
+						}
+
+					};
+					toggleLink.add(new Label("label", filePath));
+					toggleLink.add(AttributeAppender.append("class", new AbstractReadOnlyModel<String>() {
+
+						@Override
+						public String getObject() {
+							return expandedFiles.contains(filePath) ? "expanded" : "collapsed";
+						}
+
+					}));
+
+					item.add(toggleLink);
+
+					ProjectBlobPage.State state = new ProjectBlobPage.State();
+					state.blobIdent = new BlobIdent(getBuild().getCommitHash(), filePath,
+							FileMode.REGULAR_FILE.getBits());
+					state.problemReport = getReportName();
+					PageParameters params = ProjectBlobPage.paramsOf(getProject(), state);
+					item.add(new BookmarkablePageLink<Void>("view", ProjectBlobPage.class, params));
+
+					item.add(new Label("numOfProblems", file.getProblems().size() + " problems"));
+
+					item.add(new Label("tooManyProblems",
+							"Too many problems, displaying first " + MAX_PROBLEMS_TO_DISPLAY) {
+
+						@Override
+						protected void onConfigure() {
+							super.onConfigure();
+							setVisible(expandedFiles.contains(filePath)
+									&& item.getModelObject().getProblems().size() > MAX_PROBLEMS_TO_DISPLAY);
+						}
+
+					});
+
+					item.add(new ListView<>("problems", new LoadableDetachableModel<List<CodeProblem>>() {
+
+						@Override
+						protected List<CodeProblem> load() {
+							List<CodeProblem> problems = new ArrayList<>(item.getModelObject().getProblems());
+							problems.sort((o1, o2) -> {
+								if (o1.getSeverity() != o2.getSeverity())
+									return o1.getSeverity().ordinal() - o2.getSeverity().ordinal();
+								else if (o1.getRange().getFromRow() != o2.getRange().getFromRow())
+									return o1.getRange().getFromRow() - o2.getRange().getFromRow();
+								else 
+									return o1.getRange().getFromColumn() - o2.getRange().getFromColumn();
+							});
+							if (problems.size() > MAX_PROBLEMS_TO_DISPLAY)
+								return problems.subList(0, MAX_PROBLEMS_TO_DISPLAY);
+							else
+								return problems;
+						}
+
+					}) {
+
+						@Override
+						protected void populateItem(ListItem<CodeProblem> item) {
+							CodeProblem problem = item.getModelObject();
+							item.add(newSeverityIcon("icon", problem.getSeverity()));
+							item.add(new Label("message", problem.getMessage()).setEscapeModelStrings(false));
+
+							ProjectBlobPage.State state = new ProjectBlobPage.State();
+							state.blobIdent = new BlobIdent(getBuild().getCommitHash(),
+									filePath, FileMode.REGULAR_FILE.getBits());
+							state.problemReport = getReportName();
+							state.position = BlobRenderer.getSourcePosition(problem.getRange());
+							PageParameters params = ProjectBlobPage.paramsOf(getProject(), state);
+							BookmarkablePageLink<Void> rangeLink = new BookmarkablePageLink<Void>("range",
+									ProjectBlobPage.class, params);
+							rangeLink.add(new Label("label", describe(problem.getRange())));
+							item.add(rangeLink);
+						}
+
+						@Override
+						protected void onConfigure() {
+							super.onConfigure();
+							setVisible(expandedFiles.contains(filePath));
+						}
+
+					});
+					item.setOutputMarkupId(true);
+				}
+
+			});
+			if (!filesView.getModelObject().isEmpty())
+				expandedFiles.add(filesView.getModelObject().iterator().next().getBlobPath());
+
+			filesContainer.add(new OnePagingNavigator("pagingNavigator", filesView, null));
+			filesContainer.add(new NoRecordsPlaceholder("noRecords", filesView));			
+			add(fragment);
+		} else {
+			add(new Fragment("report", "invalidFrag", this));
+		}
 	}
 	
+	@Nullable
 	private ProblemReport getReport() {
 		return reportModel.getObject();
 	}
@@ -322,7 +352,7 @@ public class ProblemReportPage extends BuildReportPage {
 	private void parseFilePatterns() {
 		if (file != null) {
 			try {
-				filePatterns = Optional.of(PatternSet.parse(file));
+				filePatterns = Optional.of(PatternSet.parse(file.toLowerCase()));
 			} catch (Exception e) {
 				file = null;
 				form.error("Malformed filter");
@@ -394,7 +424,7 @@ public class ProblemReportPage extends BuildReportPage {
 
 				@Override
 				public ProblemReport call() throws Exception {
-					File reportDir = new File(Build.getDir(projectId, buildNumber), ProblemReport.CATEGORY + "/" + reportName);				
+					File reportDir = new File(Build.getStorageDir(projectId, buildNumber), ProblemReport.CATEGORY + "/" + reportName);				
 					return ProblemReport.readFrom(reportDir);
 				}
 				

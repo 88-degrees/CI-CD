@@ -17,6 +17,7 @@ import javax.annotation.Nullable;
 
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.model.Project;
 import io.onedev.server.model.support.build.JobProperty;
 import io.onedev.server.buildspec.job.JobVariable;
 import io.onedev.server.buildspec.param.ParamCombination;
@@ -74,7 +75,7 @@ public class VariableInterpolator {
 								List<String> paramValues = new ArrayList<>();
 								for (String value: entry.getValue().getValues()) {
 									if (paramType.equals(ParamSpec.SECRET)) 
-										value = build.getJobSecretAuthorizationContext().getSecretValue(value);
+										value = build.getJobAuthorizationContext().getSecretValue(value);
 									paramValues.add(value);
 								}
 								return StringUtils.join(paramValues, ",");
@@ -92,17 +93,22 @@ public class VariableInterpolator {
 						propertyName = t.substring("properties:".length());
 						
 					JobProperty property = build.getSpec().getPropertyMap().get(propertyName);
-					if (property != null)
+					if (property != null) {
 						return property.getValue();
-					else
+					} else {
+						for (var projectProperty: build.getProject().getHierarchyJobProperties()) {
+							if (projectProperty.getName().equals(propertyName))
+								return projectProperty.getValue();
+						}
 						throw new ExplicitException("Undefined property: " + propertyName);
+					}
 				} else if (t.startsWith(PREFIX_SECRET) || t.startsWith("secrets:")) {
 					String secretName;
 					if (t.startsWith(PREFIX_SECRET))
 						secretName = t.substring(PREFIX_SECRET.length());
 					else
 						secretName = t.substring("secrets:".length());
-					return build.getJobSecretAuthorizationContext().getSecretValue(secretName);
+					return build.getJobAuthorizationContext().getSecretValue(secretName);
 				} else if (t.startsWith(PREFIX_SCRIPT) || t.startsWith("scripts:")) {
 					String scriptName;
 					if (t.startsWith(PREFIX_SCRIPT))
@@ -173,7 +179,7 @@ public class VariableInterpolator {
 	public <T> T interpolateProperties(T object) {
 		return beanPropertyTransformer.transformProperties(
 				object, 
-				io.onedev.server.web.editable.annotation.Interpolative.class);
+				io.onedev.server.annotation.Interpolative.class);
 	}	
 		
 }

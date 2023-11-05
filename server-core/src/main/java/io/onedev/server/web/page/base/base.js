@@ -217,6 +217,8 @@ onedev.server = {
 			});
 			Wicket.Event.subscribe('/ajax/call/done', function() {
 				onedev.server.ajaxRequests.count--;
+				if (onedev.server.ajaxRequests.count < 0)
+					onedev.server.ajaxRequests.count = 0;
 			});
 		}
 	},
@@ -386,15 +388,17 @@ onedev.server = {
 				for (var i in messagesToSent)
 					Wicket.WebSocket.send(messagesToSent[i]);
 				messagesToSent = [];
-			}
-			setTimeout(sendMessages, 0);
+			} else {
+				setTimeout(sendMessages, 100);
+			} 
 		}
-		sendMessages();
 		
 		Wicket.Event.subscribe("/websocket/message", function(jqEvent, message) {
 			if (message.indexOf("ObservableChanged:") != -1) { 
-				if (messagesToSent.indexOf(message) == -1)
-					messagesToSent.push(message);				
+				if (messagesToSent.indexOf(message) == -1) {
+					messagesToSent.push(message);
+					sendMessages();
+				}
 			} else if (message == "ErrorMessage") {
 				var $websocketError = $(".websocket-error");
 		        $websocketError.css("left", ($(window).width()-$websocketError.outerWidth()) / 2);
@@ -555,6 +559,8 @@ onedev.server = {
 	},
 	util: {
 		formatWorkingPeriod: function(minutes) {
+			var negative = minutes < 0;
+			minutes = Math.abs(minutes);
 			var weeks = Math.floor(minutes/(60*8*5));
 			minutes = minutes%(60*8*5);
 			var days = Math.floor(minutes/(60*8));
@@ -575,6 +581,8 @@ onedev.server = {
 			formatted = formatted.trim();
 			if (formatted.length == 0)
 				return "0m";
+			else if (negative)
+				return "-" + formatted;
 			else
 				return formatted;
 		},

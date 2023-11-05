@@ -4,32 +4,33 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import edu.emory.mathcs.backport.java.util.Collections;
+import io.onedev.commons.utils.ExplicitException;
 import io.onedev.server.OneDev;
+import io.onedev.server.web.UrlManager;
+import io.onedev.server.annotation.Editable;
 import io.onedev.server.attachment.AttachmentStorageSupport;
-import io.onedev.server.entitymanager.GroupManager;
-import io.onedev.server.entitymanager.PullRequestManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.entitymanager.*;
 import io.onedev.server.entityreference.Referenceable;
-import io.onedev.server.infomanager.CommitInfoManager;
-import io.onedev.server.infomanager.PullRequestInfoManager;
-import io.onedev.server.infomanager.VisitInfoManager;
+import io.onedev.server.xodus.CommitInfoManager;
+import io.onedev.server.xodus.PullRequestInfoManager;
+import io.onedev.server.xodus.VisitInfoManager;
 import io.onedev.server.model.support.EntityWatch;
 import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.model.support.ProjectBelonging;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.search.entity.SortField;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.ComponentContext;
 import io.onedev.server.util.Input;
+import io.onedev.server.util.ProjectScopedCommit;
 import io.onedev.server.util.ProjectScopedNumber;
 import io.onedev.server.util.facade.IssueFacade;
+import io.onedev.server.web.component.milestone.burndown.BurndownIndicators;
 import io.onedev.server.web.editable.BeanDescriptor;
 import io.onedev.server.web.editable.PropertyDescriptor;
-import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.util.IssueAware;
 import io.onedev.server.web.util.WicketUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -48,6 +49,8 @@ import java.util.stream.Collectors;
 import static io.onedev.server.model.AbstractEntity.PROP_NUMBER;
 import static io.onedev.server.model.Issue.*;
 import static io.onedev.server.model.IssueSchedule.NAME_MILESTONE;
+import static java.util.Comparator.comparing;
+import static java.util.Comparator.comparingInt;
 
 @Entity
 @Table(
@@ -117,12 +120,6 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	public static final String PROP_FIELDS = "fields";
 	
-	public static final String PROP_AUTHORIZATIONS = "authorizations";
-		
-	public static final String PROP_SOURCE_LINKS = "sourceLinks";
-	
-	public static final String PROP_TARGET_LINKS = "targetLinks";
-	
 	public static final String PROP_SCHEDULES = "schedules";
 	
 	public static final String PROP_UUID = "uuid";
@@ -131,75 +128,57 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	public static final String PROP_CONFIDENTIAL = "confidential";
 	
+	public static final String PROP_PIN_DATE = "pinDate";
+
+	public static final String NAME_ESTIMATED_TIME = "Estimated Time";
+	
+	public static final String NAME_SPENT_TIME = "Spent Time";
+
+	public static final String PROP_TOTAL_ESTIMATED_TIME = "totalEstimatedTime";
+
+	public static final String PROP_TOTAL_SPENT_TIME = "totalSpentTime";
+	
+	public static final String PROP_OWN_ESTIMATED_TIME = "ownEstimatedTime";
+	
+	public static final String PROP_OWN_SPENT_TIME = "ownSpentTime";
+	
+	public static final String NAME_PROGRESS = "Progress";
+	
+	public static final String PROP_PROGRESS = "progress";
+	
 	public static final Set<String> ALL_FIELDS = Sets.newHashSet(
 			NAME_PROJECT, NAME_NUMBER, NAME_STATE, NAME_TITLE, NAME_SUBMITTER, 
 			NAME_DESCRIPTION, NAME_COMMENT, NAME_SUBMIT_DATE, NAME_LAST_ACTIVITY_DATE, 
-			NAME_VOTE_COUNT, NAME_COMMENT_COUNT, NAME_MILESTONE);
+			NAME_VOTE_COUNT, NAME_COMMENT_COUNT, NAME_MILESTONE,
+			NAME_ESTIMATED_TIME, NAME_SPENT_TIME, NAME_PROGRESS,
+			BurndownIndicators.ISSUE_COUNT, BurndownIndicators.REMAINING_TIME);
 	
 	public static final List<String> QUERY_FIELDS = Lists.newArrayList(
-			NAME_PROJECT, NAME_NUMBER, NAME_STATE, NAME_TITLE, NAME_DESCRIPTION, 
+			NAME_PROJECT, NAME_NUMBER, NAME_STATE, NAME_TITLE, NAME_DESCRIPTION,
+			NAME_ESTIMATED_TIME, NAME_SPENT_TIME, NAME_PROGRESS,
 			NAME_COMMENT, NAME_SUBMIT_DATE, NAME_LAST_ACTIVITY_DATE, NAME_VOTE_COUNT, 
 			NAME_COMMENT_COUNT, NAME_MILESTONE);
 
 	public static final Map<String, SortField<Issue>> ORDER_FIELDS = new LinkedHashMap<>();
 	
 	static {
-		ORDER_FIELDS.put(NAME_VOTE_COUNT, new SortField<Issue>(PROP_VOTE_COUNT, new Comparator<Issue>() {
-
-			@Override
-			public int compare(Issue o1, Issue o2) {
-				return o1.getVoteCount() - o1.getVoteCount();
-			}
-			
-		}));
-		ORDER_FIELDS.put(NAME_COMMENT_COUNT, new SortField<Issue>(PROP_COMMENT_COUNT, new Comparator<Issue>() {
-
-			@Override
-			public int compare(Issue o1, Issue o2) {
-				return o1.getCommentCount() - o2.getCommentCount();
-			}
-			
-		}));
-		ORDER_FIELDS.put(NAME_NUMBER, new SortField<Issue>(PROP_NUMBER, new Comparator<Issue>() {
-
-			@Override
-			public int compare(Issue o1, Issue o2) {
-				return (int)(o1.getNumber() - o2.getNumber());
-			}
-			
-		}));
-		ORDER_FIELDS.put(NAME_STATE, new SortField<Issue>(PROP_STATE_ORDINAL, new Comparator<Issue>() {
-
-			@Override
-			public int compare(Issue o1, Issue o2) {
-				return o1.getStateOrdinal() - o2.getStateOrdinal();
-			}
-			
-		}));
-		ORDER_FIELDS.put(NAME_SUBMIT_DATE, new SortField<Issue>(PROP_SUBMIT_DATE, new Comparator<Issue>() {
-
-			@Override
-			public int compare(Issue o1, Issue o2) {
-				return o1.getSubmitDate().compareTo(o2.getSubmitDate());
-			}
-			
-		}));
-		ORDER_FIELDS.put(NAME_PROJECT, new SortField<Issue>(PROP_PROJECT, new Comparator<Issue>() {
-
-			@Override
-			public int compare(Issue o1, Issue o2) {
-				return o1.getProject().getId().compareTo(o2.getProject().getId());
-			}
-			
-		}));
-		ORDER_FIELDS.put(NAME_LAST_ACTIVITY_DATE, new SortField<Issue>(PROP_LAST_ACTIVITY + "." + LastActivity.PROP_DATE, new Comparator<Issue>() {
+		ORDER_FIELDS.put(NAME_VOTE_COUNT, new SortField<>(PROP_VOTE_COUNT, comparingInt(Issue::getVoteCount)));
+		ORDER_FIELDS.put(NAME_COMMENT_COUNT, new SortField<>(PROP_COMMENT_COUNT, comparingInt(Issue::getCommentCount)));
+		ORDER_FIELDS.put(NAME_NUMBER, new SortField<>(PROP_NUMBER, (o1, o2) -> (int)(o1.getNumber() - o2.getNumber())));
+		ORDER_FIELDS.put(NAME_STATE, new SortField<>(PROP_STATE_ORDINAL, comparingInt(Issue::getStateOrdinal)));
+		ORDER_FIELDS.put(NAME_SUBMIT_DATE, new SortField<>(PROP_SUBMIT_DATE, comparing(Issue::getSubmitDate)));
+		ORDER_FIELDS.put(NAME_PROJECT, new SortField<>(PROP_PROJECT, comparing(o -> o.getProject().getId())));
+		ORDER_FIELDS.put(NAME_LAST_ACTIVITY_DATE, new SortField<>(PROP_LAST_ACTIVITY + "." + LastActivity.PROP_DATE, new Comparator<Issue>() {
 
 			@Override
 			public int compare(Issue o1, Issue o2) {
 				return o1.getLastActivity().getDate().compareTo(o2.getLastActivity().getDate());
 			}
 			
-		}));	
+		}));
+		ORDER_FIELDS.put(NAME_ESTIMATED_TIME, new SortField<>(PROP_TOTAL_ESTIMATED_TIME, comparingInt(Issue::getTotalEstimatedTime)));
+		ORDER_FIELDS.put(NAME_SPENT_TIME, new SortField<>(PROP_TOTAL_SPENT_TIME, comparingInt(Issue::getTotalSpentTime)));
+		ORDER_FIELDS.put(NAME_PROGRESS, new SortField<>(PROP_PROGRESS, comparingInt(Issue::getProgress)));
 	}
 	
 	private static ThreadLocal<Stack<Issue>> stack =  new ThreadLocal<Stack<Issue>>() {
@@ -234,6 +213,9 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
 	private Collection<IssueSchedule> schedules = new ArrayList<>();
+
+	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
+	private Collection<Build> builds = new ArrayList<>();
 	
 	@ManyToOne(fetch=FetchType.LAZY)
 	@JoinColumn(nullable=false)
@@ -245,6 +227,16 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	private int voteCount;
 	
 	private int commentCount;
+	
+	private int totalEstimatedTime;
+	
+	private int totalSpentTime;
+	
+	private int ownEstimatedTime;
+	
+	private int ownSpentTime;
+	
+	private int progress = -1;
 	
 	@Column(nullable=false)
 	private String uuid = UUID.randomUUID().toString();
@@ -263,6 +255,8 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	private boolean confidential;
 	
+	private Date pinDate;
+	
 	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
 	private Collection<IssueField> fields = new ArrayList<>();
 	
@@ -274,6 +268,12 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	
 	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
 	private Collection<IssueVote> votes = new ArrayList<>();
+
+	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
+	private Collection<IssueWork> works = new ArrayList<>();
+
+	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
+	private Collection<Stopwatch> stopwatches = new ArrayList<>();
 	
 	@OneToMany(mappedBy="issue", cascade=CascadeType.REMOVE)
 	private Collection<IssueWatch> watches = new ArrayList<>();
@@ -291,7 +291,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	@OneToMany(mappedBy=IssueLink.PROP_SOURCE, cascade=CascadeType.REMOVE)
 	private Collection<IssueLink> targetLinks = new ArrayList<>();
 	
-	private transient List<FixCommit> commits;
+	private transient List<ProjectScopedCommit> commits;
 	
 	private transient List<PullRequest> pullRequests;
 	
@@ -308,6 +308,8 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	public void setState(String state) {
 		this.state = state;
 		stateOrdinal = getIssueSetting().getStateOrdinal(state);
+		if (stateOrdinal == -1)
+			throw new ExplicitException("Undefined state: " + state);
 	}
 
 	public int getStateOrdinal() {
@@ -341,6 +343,14 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 
 	public void setConfidential(boolean confidential) {
 		this.confidential = confidential;
+	}
+
+	public Date getPinDate() {
+		return pinDate;
+	}
+
+	public void setPinDate(Date pinDate) {
+		this.pinDate = pinDate;
 	}
 
 	public Project getNumberScope() {
@@ -479,6 +489,22 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		}
 	}
 
+	public Collection<IssueWork> getWorks() {
+		return works;
+	}
+
+	public void setWorks(Collection<IssueWork> works) {
+		this.works = works;
+	}
+
+	public Collection<Stopwatch> getStopwatches() {
+		return stopwatches;
+	}
+
+	public void setStopwatches(Collection<Stopwatch> stopwatches) {
+		this.stopwatches = stopwatches;
+	}
+
 	public Collection<IssueMention> getMentions() {
 		return mentions;
 	}
@@ -517,6 +543,51 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		this.commentCount = commentCount;
 	}
 
+	public int getTotalEstimatedTime() {
+		return totalEstimatedTime;
+	}
+
+	public void setTotalEstimatedTime(int totalEstimatedTime) {
+		this.totalEstimatedTime = totalEstimatedTime;
+		calcProgress();
+	}
+	
+	private void calcProgress() {
+		if (totalEstimatedTime != 0)
+			progress = totalSpentTime * 100 / totalEstimatedTime;
+		else
+			progress = -1;
+	}
+
+	public int getTotalSpentTime() {
+		return totalSpentTime;
+	}
+
+	public void setTotalSpentTime(int totalSpentTime) {
+		this.totalSpentTime = totalSpentTime;
+		calcProgress();
+	}
+
+	public int getOwnEstimatedTime() {
+		return ownEstimatedTime;
+	}
+
+	public int getOwnSpentTime() {
+		return ownSpentTime;
+	}
+
+	public void setOwnSpentTime(int ownSpentTime) {
+		this.ownSpentTime = ownSpentTime;
+	}
+
+	public void setOwnEstimatedTime(int ownEstimatedTime) {
+		this.ownEstimatedTime = ownEstimatedTime;
+	}
+
+	public int getProgress() {
+		return progress;
+	}
+
 	public Collection<IssueField> getFields() {
 		return fields;
 	}
@@ -542,7 +613,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	}
 	
 	public Collection<IssueLink> getLinks() {
-		List<IssueLink> links = new ArrayList<>();
+		var links = new ArrayList<IssueLink>();
 		links.addAll(sourceLinks);
 		links.addAll(targetLinks);
 		return links;
@@ -559,7 +630,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	}
 	
 	public Collection<String> getFieldNames() {
-		return getFields().stream().map(it->it.getName()).collect(Collectors.toSet());
+		return getFields().stream().map(IssueField::getName).collect(Collectors.toSet());
 	}
 	
 	public Map<String, Input> getFieldInputs() {
@@ -567,31 +638,20 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 			fieldInputs = new LinkedHashMap<>();
 	
 			Map<String, List<IssueField>> fieldMap = new HashMap<>(); 
-			for (IssueField field: getFields()) {
-				List<IssueField> fieldsOfName = fieldMap.get(field.getName());
-				if (fieldsOfName == null) {
-					fieldsOfName = new ArrayList<>();
-					fieldMap.put(field.getName(), fieldsOfName);
-				}
-				fieldsOfName.add(field);
-			}
+			for (IssueField field: getFields()) 
+				fieldMap.computeIfAbsent(field.getName(), k -> new ArrayList<>()).add(field);
 			for (FieldSpec fieldSpec: getIssueSetting().getFieldSpecs()) {
 				String fieldName = fieldSpec.getName();
 				List<IssueField> fields = fieldMap.get(fieldName);
 				if (fields != null) {
-					Collections.sort(fields, new Comparator<IssueField>() {
-
-						@Override
-						public int compare(IssueField o1, IssueField o2) {
-							long result = o1.getOrdinal() - o2.getOrdinal();
-							if (result > 0)
-								return 1;
-							else if (result < 0)
-								return -1;
-							else
-								return 0;
-						}
-						
+					Collections.sort(fields, (Comparator<IssueField>) (o1, o2) -> {
+						long result = o1.getOrdinal() - o2.getOrdinal();
+						if (result > 0)
+							return 1;
+						else if (result < 0)
+							return -1;
+						else
+							return 0;
 					});
 					String type = fields.iterator().next().getType();
 					List<String> values = new ArrayList<>();
@@ -608,12 +668,23 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		return fieldInputs;
 	}
 	
-	public static String getWebSocketObservable(Long issueId) {
+	public static String getDetailChangeObservable(Long issueId) {
 		return Issue.class.getName() + ":" + issueId;
 	}
 	
-	public static String getListWebSocketObservable(Long projectId) {
+	public static String getListChangeObservable(Long projectId, Long issueId) {
+		return Issue.class.getName() + ":list:" + projectId + ":" + issueId;
+	}
+
+	public static String getListChangeObservable(Long projectId) {
 		return Issue.class.getName() + ":list:" + projectId;
+	}
+	
+	public Collection<String> getChangeObservables(boolean withList) {
+		Collection<String> observables = Sets.newHashSet(getDetailChangeObservable(getId()));
+		if (withList)
+			observables.add(getListChangeObservable(getProject().getId(), getId()));
+		return observables;
 	}
 
 	@Override
@@ -624,7 +695,6 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 	@Nullable
 	public Object getFieldValue(String fieldName) {
 		Input input = getFieldInputs().get(fieldName);
-		
 		if (input != null) 
 			return input.getTypedValue(getIssueSetting().getFieldSpec(fieldName));
 		else
@@ -743,6 +813,10 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		}
 		return participants;
 	}
+	
+	public String getReference(@Nullable Project currentProject) {
+		return Referenceable.asReference(this, currentProject);
+	}
 
 	private boolean isFieldVisible(String fieldName, Set<String> checkedFieldNames) {
 		if (!checkedFieldNames.add(fieldName))
@@ -774,8 +848,8 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 
 			PullRequestInfoManager infoManager = OneDev.getInstance(PullRequestInfoManager.class); 
 			Collection<Long> pullRequestIds = new HashSet<>();
-			for (FixCommit commit: getCommits()) 
-				pullRequestIds.addAll(infoManager.getPullRequestIds(commit.getProject(), commit.getCommit()));		
+			for (ProjectScopedCommit commit: getCommits()) 
+				pullRequestIds.addAll(infoManager.getPullRequestIds(commit.getProject(), commit.getCommitId()));		
 			
 			for (Long requestId: pullRequestIds) {
 				PullRequest request = OneDev.getInstance(PullRequestManager.class).get(requestId);
@@ -794,7 +868,7 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		return pullRequests;
 	}
 	
-	public List<FixCommit> getCommits() {
+	public List<ProjectScopedCommit> getCommits() {
 		if (commits == null) {
 			commits = new ArrayList<>();
 			CommitInfoManager commitInfoManager = OneDev.getInstance(CommitInfoManager.class); 
@@ -803,15 +877,15 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 				for (ObjectId commitId: commitInfoManager.getFixCommits(it.getId(), getId())) {
 					RevCommit commit = it.getRevCommit(commitId, false);
 					if (commit != null)
-						commits.add(new FixCommit(it, commit));
+						commits.add(new ProjectScopedCommit(it, commit.copy()));
 				}
 			});
 			
-			Collections.sort(commits, new Comparator<FixCommit>() {
+			Collections.sort(commits, new Comparator<ProjectScopedCommit>() {
 	
 				@Override
-				public int compare(FixCommit o1, FixCommit o2) {
-					return o2.getCommit().getCommitTime() - o1.getCommit().getCommitTime();
+				public int compare(ProjectScopedCommit o1, ProjectScopedCommit o2) {
+					return o2.getRevCommit().getCommitTime() - o1.getRevCommit().getCommitTime();
 				}
 				
 			});
@@ -833,8 +907,8 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		return new ProjectScopedNumber(getProject(), getNumber());
 	}
 	
-	public String getNumberAndTitle() {
-		return "#" + getNumber() + " - " + getTitle();
+	public String getUrl() {
+		return OneDev.getInstance(UrlManager.class).urlFor(this);
 	}
 	
 	public Collection<Milestone> getMilestones() {
@@ -940,25 +1014,17 @@ public class Issue extends ProjectBelonging implements Referenceable, Attachment
 		stack.get().pop();
 	}
 	
-	public static class FixCommit {
-		
-		private final Project project;
-		
-		private final RevCommit commit;
-		
-		public FixCommit(Project project, RevCommit commit) {
-			this.project = project;
-			this.commit = commit;
+	public boolean isAggregatingTime(@Nullable String timeAggregationLink) {
+		if (timeAggregationLink != null) {
+			for (var link : getTargetLinks()) {
+				if (link.getSpec().getName().equals(timeAggregationLink)) 
+					return true;
+			}
+			for (var link : getSourceLinks()) {
+				if (link.getSpec().getOpposite() != null && link.getSpec().getOpposite().getName().equals(timeAggregationLink)) 
+					return true;
+			}
 		}
-
-		public Project getProject() {
-			return project;
-		}
-
-		public RevCommit getCommit() {
-			return commit;
-		}
-		
+		return false;
 	}
-	
 }

@@ -1,42 +1,27 @@
 package io.onedev.server.rest;
 
-import java.util.List;
-import java.util.Map;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-
-import org.apache.shiro.authz.UnauthorizedException;
-
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.model.support.administration.BackupSetting;
-import io.onedev.server.model.support.administration.GlobalBuildSetting;
-import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.administration.GlobalProjectSetting;
-import io.onedev.server.model.support.administration.GlobalPullRequestSetting;
-import io.onedev.server.model.support.administration.GroovyScript;
-import io.onedev.server.model.support.administration.SecuritySetting;
-import io.onedev.server.model.support.administration.ServiceDeskSetting;
-import io.onedev.server.model.support.administration.SshSetting;
-import io.onedev.server.model.support.administration.SystemSetting;
+import io.onedev.server.model.support.administration.mailservice.MailService;
+import io.onedev.server.model.support.administration.*;
 import io.onedev.server.model.support.administration.authenticator.Authenticator;
+import io.onedev.server.model.support.administration.emailtemplates.EmailTemplates;
 import io.onedev.server.model.support.administration.jobexecutor.JobExecutor;
-import io.onedev.server.model.support.administration.mailsetting.MailSetting;
-import io.onedev.server.model.support.administration.notificationtemplate.NotificationTemplateSetting;
 import io.onedev.server.model.support.administration.sso.SsoConnector;
 import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.rest.exception.InvalidParamException;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.web.page.layout.ContributedAdministrationSetting;
+import org.apache.shiro.authz.UnauthorizedException;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.validation.constraints.NotNull;
+import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import java.util.List;
+import java.util.Map;
 
 @Api(order=100000)
 @Path("/settings")
@@ -116,12 +101,12 @@ public class SettingResource {
     }
 
 	@Api(order=800)
-	@Path("/mail")
+	@Path("/mail-service")
     @GET
-    public MailSetting getMailSetting() {
+    public MailService getMailService() {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	return settingManager.getMailSetting();
+    	return settingManager.getMailService();
     }
 	
 	@Api(order=850)
@@ -136,10 +121,10 @@ public class SettingResource {
 	@Api(order=900)
 	@Path("/notification-template")
     @GET
-    public NotificationTemplateSetting getNotificiationTemplateSetting() {
+    public EmailTemplates getNotificiationTemplateSetting() {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	return settingManager.getNotificationTemplateSetting();
+    	return settingManager.getEmailTemplates();
     }
 	
 	@Api(order=1000)
@@ -272,12 +257,12 @@ public class SettingResource {
     }
 
 	@Api(order=2200)
-	@Path("/mail")
+	@Path("/mail-service")
 	@POST
-    public Response setMailSetting(MailSetting mailSetting) {
+    public Response setMailService(MailService mailService) {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	settingManager.saveMailSetting(mailSetting);
+    	settingManager.saveMailService(mailService);
     	return Response.ok().build();
     }
 	
@@ -294,10 +279,10 @@ public class SettingResource {
 	@Api(order=2220)
 	@Path("/notification-template")
 	@POST
-    public Response setNotificationTemplateSetting(NotificationTemplateSetting notificationTemplateSetting) {
+    public Response setNotificationTemplateSetting(EmailTemplates emailTemplates) {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	settingManager.saveNotificationTemplateSetting(notificationTemplateSetting);
+    	settingManager.saveEmailTemplates(emailTemplates);
     	return Response.ok().build();
     }
 	

@@ -1,35 +1,34 @@
 package io.onedev.server.buildspec.step;
 
+import io.onedev.commons.codeassist.InputSuggestion;
+import io.onedev.k8shelper.RunContainerFacade;
+import io.onedev.k8shelper.StepFacade;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.annotation.SafePath;
+import io.onedev.server.buildspec.BuildSpec;
+import io.onedev.server.buildspec.job.EnvVar;
+import io.onedev.server.buildspec.param.ParamCombination;
+import io.onedev.server.model.Build;
+import io.onedev.server.model.support.administration.jobexecutor.JobExecutor;
+
+import javax.annotation.Nullable;
+import javax.validation.constraints.NotEmpty;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.annotation.Nullable;
-
-import javax.validation.constraints.NotEmpty;
-
-import io.onedev.commons.codeassist.InputSuggestion;
-import io.onedev.k8shelper.RunContainerFacade;
-import io.onedev.k8shelper.StepFacade;
-import io.onedev.server.buildspec.BuildSpec;
-import io.onedev.server.buildspec.job.EnvVar;
-import io.onedev.server.buildspec.param.ParamCombination;
-import io.onedev.server.model.Build;
-import io.onedev.server.util.validation.annotation.SafePath;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-
 @Editable(order=150, name="Run Docker Container", description="Run specified docker container. To access files in "
-		+ "job workspace, either use environment variable <tt>JOB_WORKSPACE</tt>, or specify volume mounts. "
-		+ "<b class='text-warning'>NOTE:</b> If this step runs with a Kubernetes executor, the option "
-		+ "<code>mount container sock</code> of that executor must be enabled")
+		+ "job workspace, either use environment variable <tt>ONEDEV_WORKSPACE</tt>, or specify volume mounts. " +
+		"<b class='text-warning'>Note: </b> this step can only be executed by server docker executor or remote " +
+		"docker executor")
 public class RunContainerStep extends Step {
 
 	private static final long serialVersionUID = 1L;
 
 	private String image;
-	 
+	
 	private String args;
 	
 	private List<EnvVar> envVars = new ArrayList<>();
@@ -41,19 +40,21 @@ public class RunContainerStep extends Step {
 	private boolean useTTY;
 	
 	@Override
-	public StepFacade getFacade(Build build, String jobToken, ParamCombination paramCombination) {
+	public StepFacade getFacade(Build build, JobExecutor jobExecutor, String jobToken, ParamCombination paramCombination) {
 		Map<String, String> envMap = new HashMap<>();
 		for (EnvVar var: getEnvVars())
 			envMap.put(var.getName(), var.getValue());
 		Map<String, String> mountMap = new HashMap<>();
-		for (VolumeMount mount: getVolumeMounts())
-			mountMap.put(mount.getSourcePath(), mount.getTargetPath());
-		return new RunContainerFacade(getImage(), getArgs(), envMap, getWorkingDir(), mountMap, isUseTTY());
+		for (VolumeMount mount: getVolumeMounts()) {
+			var sourcePath = mount.getSourcePath();
+			if (sourcePath == null)
+				sourcePath = ".";
+			mountMap.put(sourcePath, mount.getTargetPath());
+		}
+		return new RunContainerFacade(getImage(), null, getArgs(), envMap, getWorkingDir(), mountMap, isUseTTY());
 	}
 
-	@Editable(order=100, description="Specify container image to run. <b class='text-warning'>NOTE:</b> A shell must "
-			+ "exist in the container if the step is executed by kubernetes executor, as OneDev needs to intercept the "
-			+ "entrypoint to make step containers executing sequentially in the pod")
+	@Editable(order=100, description="Specify container image to run")
 	@Interpolative(variableSuggester="suggestVariables")
 	@NotEmpty
 	public String getImage() {
@@ -64,8 +65,9 @@ public class RunContainerStep extends Step {
 		this.image = image;
 	}
 
-	@Editable(order=200, name="Arguments", description="Specify container arguments separated by space. "
-			+ "Single argument containing space should be quoted")
+	@Editable(order=200, name="Arguments", description="Optionally specify container arguments separated by space. " +
+			"Single argument containing space should be quoted. <b class='text-warning'>Note: </b> do not confuse " +
+			"this with container options which should be specified in executor setting")
 	@Interpolative(variableSuggester="suggestVariables")
 	public String getArgs() {
 		return args;

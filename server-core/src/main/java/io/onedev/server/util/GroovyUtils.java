@@ -1,26 +1,23 @@
 package io.onedev.server.util;
 
-import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.util.HashMap;
-import java.util.Map;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.google.common.collect.MapMaker;
-
 import groovy.lang.Binding;
 import groovy.lang.GroovyClassLoader;
 import groovy.lang.Script;
+import groovy.text.SimpleTemplateEngine;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.exception.ScriptException;
 import io.onedev.server.model.support.administration.GroovyScript;
-import io.onedev.server.util.script.ScriptContribution;
-import io.onedev.server.util.script.identity.ScriptIdentity;
+import org.codehaus.groovy.control.CompilationFailedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.util.HashMap;
+import java.util.Map;
 
 public class GroovyUtils {
 	
@@ -87,7 +84,7 @@ public class GroovyUtils {
         	}
     	}
     	if (script != null) {
-    		if (script.isAuthorized(ScriptIdentity.get())) {
+    		if (script.isAuthorized()) {
     			try {
     				return evalScript(StringUtils.join(script.getContent(), "\n"), variables);
     			} catch (Exception e) {
@@ -117,7 +114,7 @@ public class GroovyUtils {
 			script.setBinding(getBinding(variables));
 			return script.run();
 		} catch (RuntimeException e) {
-			throw new ScriptException(scriptContent, e);
+			throw new RuntimeException("Error evaluating groovy script:\n\n" + scriptContent, e);
 		}
     }
     
@@ -125,4 +122,11 @@ public class GroovyUtils {
     	return evalScript(scriptContent, new HashMap<>());
     }
     
+	public static String evalTemplate(String template, Map<String, Object> bindings) {
+		try {
+			return new SimpleTemplateEngine().createTemplate(template).make(bindings).toString();
+		} catch (CompilationFailedException | ClassNotFoundException | IOException e) {
+			throw new RuntimeException(e);
+		}
+	}	
 }

@@ -528,8 +528,8 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
     name: "clike",
     keywords: words("abstract as async await base break case catch checked class const continue" +
                     " default delegate do else enum event explicit extern finally fixed for" +
-                    " foreach goto if implicit in interface internal is lock namespace new" +
-                    " operator out override params private protected public readonly ref return sealed" +
+                    " foreach goto if implicit in init interface internal is lock namespace new" +
+                    " operator out override params private protected public readonly record ref required return sealed" +
                     " sizeof stackalloc static struct switch this throw try typeof unchecked" +
                     " unsafe using virtual void volatile while add alias ascending descending dynamic from get" +
                     " global group into join let orderby partial remove select set value var yield"),
@@ -538,7 +538,7 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
                  " UInt64 bool byte char decimal double short int long object"  +
                  " sbyte float string ushort uint ulong"),
     blockKeywords: words("catch class do else finally for foreach if struct switch try while"),
-    defKeywords: words("class interface namespace struct var"),
+    defKeywords: words("class interface namespace record struct var"),
     typeFirstDefinitions: true,
     atoms: words("true false null"),
     hooks: {
@@ -649,6 +649,21 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
       }
     },
     modeProps: {closeBrackets: {pairs: '()[]{}""', triples: '"'}}
+  });
+
+  def("text/x-sourcepawn", {
+    name: "clike",
+    keywords: words("break case const continue decl default defined delete do else enum " +
+                    "for forward funcenum functag function if INVALID_FUNCTION methodmap " +
+                    "native new null property operator public return sizeof static stock " +
+                    "struct switch this typedef typeset view_as while"),
+    types: words("any bool char int float void"),
+    blockKeywords: words("case do else for if switch while"),
+    defKeywords: words("enum methodmap struct typedef typeset"),
+    typeFirstDefinitions: true,
+    atoms: words("true false null"),
+    isReservedIdentifier: cIsReservedIdentifier,
+    hooks: {"#": cppHook}
   });
 
   function tokenKotlinString(tripleString){

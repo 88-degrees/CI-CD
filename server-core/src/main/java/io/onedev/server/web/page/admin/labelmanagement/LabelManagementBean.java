@@ -8,10 +8,10 @@ import java.util.List;
 import javax.validation.ConstraintValidatorContext;
 
 import io.onedev.server.model.LabelSpec;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.OmitName;
+import io.onedev.server.validation.Validatable;
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.OmitName;
 
 @Editable
 @ClassValidating
@@ -37,7 +37,7 @@ public class LabelManagementBean implements Serializable, Validatable {
 		for (var label: labels) {
 			if (!labelNames.add(label.getName())) {
 				context.disableDefaultConstraintViolation();
-				context.buildConstraintViolationWithTemplate("Duplicate label: " + label.getName())
+				context.buildConstraintViolationWithTemplate("Duplicated label: " + label.getName())
 						.addPropertyNode("labels").addConstraintViolation();
 				return false;
 			}

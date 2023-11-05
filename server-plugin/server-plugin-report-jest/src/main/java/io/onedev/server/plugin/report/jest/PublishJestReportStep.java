@@ -20,16 +20,16 @@ import io.onedev.server.model.Build;
 import io.onedev.server.plugin.report.unittest.PublishUnitTestReportStep;
 import io.onedev.server.plugin.report.unittest.UnitTestReport;
 import io.onedev.server.plugin.report.unittest.UnitTestReport.TestCase;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-import io.onedev.server.web.editable.annotation.Patterns;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.annotation.Patterns;
 
 @Editable(order=7000, group=StepGroup.PUBLISH_REPORTS, name="Jest Test")
 public class PublishJestReportStep extends PublishUnitTestReportStep {
 
 	private static final long serialVersionUID = 1L;
 
-	@Editable(order=100, description="Specify Jest test result file in json format under <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a>. "
+	@Editable(order=100, description="Specify Jest test result file in json format relative to <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a>. "
 			+ "This file can be generated via Jest option <tt>'--json'</tt> and <tt>'--outputFile'</tt>. Use * or ? for pattern match")
 	@Interpolative(variableSuggester="suggestVariables")
 	@Patterns(path=true)

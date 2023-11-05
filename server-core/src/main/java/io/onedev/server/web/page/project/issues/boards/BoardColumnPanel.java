@@ -1,15 +1,45 @@
 package io.onedev.server.web.page.project.issues.boards;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
-
-import javax.annotation.Nullable;
-
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.OneDev;
+import io.onedev.server.buildspecmodel.inputspec.InputContext;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.ChoiceProvider;
+import io.onedev.server.entitymanager.IssueChangeManager;
+import io.onedev.server.entitymanager.IssueManager;
+import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.administration.GlobalIssueSetting;
+import io.onedev.server.model.support.issue.BoardSpec;
+import io.onedev.server.model.support.issue.StateSpec;
+import io.onedev.server.model.support.issue.TransitionSpec;
+import io.onedev.server.model.support.issue.field.FieldUtils;
+import io.onedev.server.model.support.issue.field.spec.FieldSpec;
+import io.onedev.server.model.support.issue.field.spec.choicefield.ChoiceField;
+import io.onedev.server.model.support.issue.field.spec.userchoicefield.UserChoiceField;
+import io.onedev.server.model.support.issue.transitiontrigger.PressButtonTrigger;
+import io.onedev.server.search.entity.issue.*;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.ComponentContext;
+import io.onedev.server.util.EditContext;
+import io.onedev.server.util.ProjectScope;
+import io.onedev.server.util.criteria.Criteria;
+import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
+import io.onedev.server.web.component.beaneditmodal.BeanEditModalPanel;
+import io.onedev.server.web.component.floating.FloatingPanel;
+import io.onedev.server.web.component.issue.create.CreateIssuePanel;
+import io.onedev.server.web.component.issue.progress.QueriedIssuesProgressPanel;
+import io.onedev.server.web.component.link.DropdownLink;
+import io.onedev.server.web.component.modal.ModalLink;
+import io.onedev.server.web.component.modal.ModalPanel;
+import io.onedev.server.web.component.user.ident.Mode;
+import io.onedev.server.web.component.user.ident.UserIdentPanel;
+import io.onedev.server.web.editable.BeanDescriptor;
+import io.onedev.server.web.page.base.BasePage;
+import io.onedev.server.web.page.project.issues.list.ProjectIssueListPage;
+import io.onedev.server.web.util.ProjectAware;
+import io.onedev.server.web.util.WicketUtils;
 import org.apache.commons.lang3.SerializationUtils;
 import org.apache.shiro.authz.UnauthorizedException;
 import org.apache.wicket.Component;
@@ -29,58 +59,17 @@ import org.apache.wicket.model.LoadableDetachableModel;
 import org.apache.wicket.request.IRequestParameters;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
-import org.hibernate.Hibernate;
 import org.unbescape.html.HtmlEscape;
 
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.IssueChangeManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueSchedule;
-import io.onedev.server.model.Milestone;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.User;
-import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputContext;
-import io.onedev.server.model.support.inputspec.InputSpec;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.ChoiceProvider;
-import io.onedev.server.model.support.issue.BoardSpec;
-import io.onedev.server.model.support.issue.StateSpec;
-import io.onedev.server.model.support.issue.TransitionSpec;
-import io.onedev.server.model.support.issue.field.FieldUtils;
-import io.onedev.server.model.support.issue.field.spec.ChoiceField;
-import io.onedev.server.model.support.issue.field.spec.FieldSpec;
-import io.onedev.server.model.support.issue.field.spec.UserChoiceField;
-import io.onedev.server.model.support.issue.transitiontrigger.PressButtonTrigger;
-import io.onedev.server.search.entity.issue.ChoiceFieldCriteria;
-import io.onedev.server.search.entity.issue.FieldOperatorCriteria;
-import io.onedev.server.search.entity.issue.IssueQuery;
-import io.onedev.server.search.entity.issue.IssueQueryLexer;
-import io.onedev.server.search.entity.issue.MilestoneCriteria;
-import io.onedev.server.search.entity.issue.MilestoneIsEmptyCriteria;
-import io.onedev.server.search.entity.issue.StateCriteria;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.ComponentContext;
-import io.onedev.server.util.EditContext;
-import io.onedev.server.util.ProjectScope;
-import io.onedev.server.util.criteria.Criteria;
-import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
-import io.onedev.server.web.component.beaneditmodal.BeanEditModalPanel;
-import io.onedev.server.web.component.modal.ModalLink;
-import io.onedev.server.web.component.modal.ModalPanel;
-import io.onedev.server.web.component.user.ident.Mode;
-import io.onedev.server.web.component.user.ident.UserIdentPanel;
-import io.onedev.server.web.editable.BeanDescriptor;
-import io.onedev.server.web.page.project.issues.list.ProjectIssueListPage;
-import io.onedev.server.web.util.ProjectAware;
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 @SuppressWarnings("serial")
 abstract class BoardColumnPanel extends Panel implements EditContext {
 
-	private final IModel<IssueQuery> queryModel = new LoadableDetachableModel<IssueQuery>() {
+	private final IModel<IssueQuery> queryModel = new LoadableDetachableModel<>() {
 
 		@Override
 		protected IssueQuery load() {
@@ -97,7 +86,7 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 				if (identifyField.equals(Issue.NAME_STATE)) {
 					criterias.add(new StateCriteria(getColumn(), IssueQueryLexer.Is));
 				} else if (getColumn() != null) {
-					criterias.add(new ChoiceFieldCriteria(identifyField, 
+					criterias.add(new ChoiceFieldCriteria(identifyField,
 							getColumn(), -1, IssueQueryLexer.Is, false));
 				} else {
 					criterias.add(new FieldOperatorCriteria(identifyField, IssueQueryLexer.IsEmpty, false));
@@ -107,7 +96,7 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 				return null;
 			}
 		}
-		
+
 	};
 	
 	private final IModel<Integer> countModel = new LoadableDetachableModel<Integer>() {
@@ -126,6 +115,8 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 	};
 	
 	private AbstractPostAjaxBehavior ajaxBehavior;
+	
+	private Component countLabel;
 	
 	public BoardColumnPanel(String id) {
 		super(id);
@@ -222,6 +213,11 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 						return countModel.getObject();
 					}
 
+					@Override
+					protected void onUpdate(IPartialPageRequestHandler handler) {
+						handler.add(countLabel);
+					}
+
 				});
 				
 				super.onBeforeRender();
@@ -277,6 +273,27 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 			head.add(AttributeAppender.append("style", "border-top-color:" + color + ";"));
 			content.add(AttributeAppender.append("style", "border-color:" + color + ";"));
 		}
+
+		if (getQuery() != null && getProject().isTimeTracking() && WicketUtils.isSubscriptionActive()) {
+			head.add(new DropdownLink("showProgress") {
+				@Override
+				protected Component newContent(String id, FloatingPanel dropdown) {
+					return new QueriedIssuesProgressPanel(id) {
+						@Override
+						protected ProjectScope getProjectScope() {
+							return BoardColumnPanel.this.getProjectScope();
+						}
+
+						@Override
+						protected IssueQuery getQuery() {
+							return BoardColumnPanel.this.getQuery();
+						}
+					};
+				}
+			});
+		} else {
+			head.add(new WebMarkupContainer("showProgress").setVisible(false));
+		}
 		
 		if (getQuery() != null) {
 			PageParameters params = ProjectIssueListPage.paramsOf(getProject(), getQuery().toString(), 0);
@@ -289,10 +306,17 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 
 			@Override
 			protected Component newContent(String id, ModalPanel modal) {
-				return new NewCardPanel(id) {
+				return new CreateIssuePanel(id) {
+					
+					@Override
+					protected void onSave(AjaxRequestTarget target, Issue issue) {
+						getIssueManager().open(issue);
+						notifyIssueChange(target, issue);
+						modal.close();
+					}
 
 					@Override
-					protected void onClose(AjaxRequestTarget target) {
+					protected void onCancel(AjaxRequestTarget target) {
 						modal.close();
 					}
 
@@ -320,25 +344,12 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 			
 		});
 		
-		head.add(new CardCountLabel("count") {
-
-			@Override
-			protected Project getProject() {
-				return BoardColumnPanel.this.getProject();
-			}
-
-			@Override
-			protected int getCount() {
-				return countModel.getObject();
-			}
-
-		});
+		head.add(countLabel = new Label("count", countModel).setOutputMarkupId(true));
 		
 		add(ajaxBehavior = new AbstractPostAjaxBehavior() {
 			
-			private void markAccepted(AjaxRequestTarget target, Issue issue, boolean accepted) {
-				target.appendJavaScript(String.format("onedev.server.issueBoards.markAccepted(%d, %b);", 
-						issue.getId(), accepted));
+			private void markAccepted(AjaxRequestTarget target, boolean accepted) {
+				target.appendJavaScript(String.format("$('.issue-boards').data('accepted', %b);", accepted));
 			}
 
 			@Override
@@ -351,9 +362,9 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 					// move a backlog issue to board 
 					if (!SecurityUtils.canScheduleIssues(issue.getProject())) 
 						throw new UnauthorizedException("Permission denied");
-
-					OneDev.getInstance(IssueChangeManager.class).addSchedule(issue, getMilestone());
-					markAccepted(target, issue, true);
+					getIssueChangeManager().addSchedule(issue, getMilestone());
+					notifyIssueChange(target, issue);
+					markAccepted(target, true);
 				} else if (fieldName.equals(Issue.NAME_STATE)) {
 					AtomicReference<TransitionSpec> transitionRef = new AtomicReference<>(null);
 					for (TransitionSpec transition: getIssueSetting().getTransitionSpecs()) {
@@ -370,8 +381,12 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 					for (String promptField: trigger.getPromptFields()) {
 						FieldSpec fieldSpec = getIssueSetting().getFieldSpec(promptField);
 						if (fieldSpec != null && SecurityUtils.canEditIssueField(getProject(), fieldSpec.getName())) {
-							hasPromptFields = true;
-							break;
+							Class<?> fieldBeanClass = FieldUtils.getFieldBeanClass();
+							Serializable fieldBean = issue.getFieldBean(fieldBeanClass, true);
+							if (FieldUtils.isFieldVisible(new BeanDescriptor(fieldBeanClass), fieldBean, promptField)) {
+								hasPromptFields = true;
+								break;
+							}
 						}
 					}
 					if (hasPromptFields) {
@@ -383,13 +398,13 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 									
 									@Override
 									protected void onSaved(AjaxRequestTarget target) {
-										markAccepted(target, getIssue(), true);
+										markAccepted(target, true);
 										close();
 									}
 									
 									@Override
 									protected void onCancelled(AjaxRequestTarget target) {
-										markAccepted(target, getIssue(), false);
+										markAccepted(target, false);
 										close();
 									}
 									
@@ -408,9 +423,10 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 							
 						};
 					} else {
-						OneDev.getInstance(IssueChangeManager.class).changeState(issue, getColumn(), 
+						getIssueChangeManager().changeState(issue, getColumn(), 
 								new HashMap<>(), transitionRef.get().getRemoveFields(), null);
-						markAccepted(target, issue, true);
+						notifyIssueChange(target, issue);
+						markAccepted(target, true);
 					}
 				} else {
 					FieldSpec fieldSpec = getIssueSetting().getFieldSpec(fieldName);
@@ -459,26 +475,33 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 							}
 
 							@Override
+							protected boolean isDirtyAware() {
+								return false;
+							}
+
+							@Override
 							protected void onSave(AjaxRequestTarget target, Serializable bean) {
 								fieldValues.putAll(FieldUtils.getFieldValues(
 										FieldUtils.newBeanComponentContext(beanDescriptor, bean), 
 										bean, FieldUtils.getEditableFields(getProject(), dependentFields)));
 								close();
 								Issue issue = getIssueManager().load(issueId);
-								OneDev.getInstance(IssueChangeManager.class).changeFields(issue, fieldValues);
-								markAccepted(target, issue, true);
+								getIssueChangeManager().changeFields(issue, fieldValues);
+								notifyIssueChange(target, issue);
+								markAccepted(target, true);
 							}
 
 							@Override
 							protected void onCancel(AjaxRequestTarget target) {
-								markAccepted(target, getIssueManager().load(issueId), false);
+								markAccepted(target, false);
 							}
 							
 						}
 						new DependentFieldsEditor(target, fieldBean, propertyNames, false, "Dependent Fields");
 					} else {
-						OneDev.getInstance(IssueChangeManager.class).changeFields(issue, fieldValues);
-						markAccepted(target, issue, true);
+						getIssueChangeManager().changeFields(issue, fieldValues);
+						notifyIssueChange(target, issue);
+						markAccepted(target, true);
 					}
 				}
 			}
@@ -486,6 +509,10 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 		});
 		
 		setOutputMarkupId(true);
+	}
+	
+	private IssueChangeManager getIssueChangeManager() {
+		return OneDev.getInstance(IssueChangeManager.class);
 	}
 	
 	private IssueManager getIssueManager() {
@@ -514,4 +541,7 @@ abstract class BoardColumnPanel extends Panel implements EditContext {
 	@Nullable
 	protected abstract IssueQuery getBoardQuery();
 
+	private void notifyIssueChange(AjaxRequestTarget target, Issue issue) {
+		((BasePage)getPage()).notifyObservablesChange(target, issue.getChangeObservables(true));
+	}
 }

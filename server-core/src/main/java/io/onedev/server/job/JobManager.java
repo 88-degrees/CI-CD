@@ -1,36 +1,30 @@
 package io.onedev.server.job;
 
-import java.io.File;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-import javax.annotation.Nullable;
-
-import io.onedev.server.cluster.ClusterRunnable;
-import io.onedev.server.model.support.administration.jobexecutor.JobExecutor;
-import org.eclipse.jgit.lib.ObjectId;
-
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.k8shelper.CacheAllocationRequest;
 import io.onedev.k8shelper.CacheInstance;
-import io.onedev.server.buildspec.job.SubmitReason;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Project;
+import io.onedev.server.cluster.ClusterRunnable;
+import io.onedev.server.model.*;
 import io.onedev.server.terminal.Shell;
 import io.onedev.server.terminal.Terminal;
 import io.onedev.server.terminal.WebShell;
+import org.eclipse.jgit.lib.ObjectId;
+
+import javax.annotation.Nullable;
+import java.io.File;
+import java.util.List;
+import java.util.Map;
 
 public interface JobManager {
 	
-	void schedule(Project project);
+	void schedule(Project project, boolean recursive);
 	
 	void unschedule(Long projectId);
 	
-	@Nullable
-	Build submit(Project project, ObjectId commitId, String jobName, 
-			Map<String, List<String>> paramMap, String pipeline, 
-			SubmitReason reason);
+	Build submit(Project project, ObjectId commitId, String jobName,
+				 Map<String, List<String>> paramMap, String pipeline,
+				 String refName, User submitter, @Nullable PullRequest request,
+				 @Nullable Issue issue, String reason);
 	
 	void resubmit(Build build, String reason);
 	
@@ -38,16 +32,16 @@ public interface JobManager {
 	
 	void resume(Build build);
 
-	void runJob(UUID serverUUID, ClusterRunnable runnable);
+	void runJob(String server, ClusterRunnable runnable);
 
-	void runJobLocal(JobContext jobContext, JobRunnable runnable);
+	void runJob(JobContext jobContext, JobRunnable runnable);
 	
 	WebShell openShell(Long buildId, Terminal terminal);
 	
 	JobContext getJobContext(String jobToken, boolean mustExist);
 	
 	@Nullable
-	Shell getShellLocal(String sessionId);
+	Shell getShell(String sessionId);
 	
 	void reportJobWorkspace(JobContext jobContext, String jobWorkspace);
 	

@@ -1,25 +1,6 @@
 package io.onedev.server.rest;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.UUID;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-
-import org.apache.shiro.authz.UnauthorizedException;
-import org.hibernate.criterion.Restrictions;
-
+import io.onedev.server.entitymanager.AgentManager;
 import io.onedev.server.entitymanager.AgentTokenManager;
 import io.onedev.server.model.Agent;
 import io.onedev.server.model.AgentToken;
@@ -28,6 +9,15 @@ import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.rest.exception.InvalidParamException;
 import io.onedev.server.rest.support.RestConstants;
 import io.onedev.server.security.SecurityUtils;
+import org.apache.shiro.authz.UnauthorizedException;
+import org.hibernate.criterion.Restrictions;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import java.util.List;
 
 @Api(order=10100)
 @Path("/agent-tokens")
@@ -38,9 +28,12 @@ public class AgentTokenResource {
 
 	private final AgentTokenManager tokenManager;
 	
+	private final AgentManager agentManager;
+	
 	@Inject
-	public AgentTokenResource(AgentTokenManager tokenManager) {
+	public AgentTokenResource(AgentTokenManager tokenManager, AgentManager agentManager) {
 		this.tokenManager = tokenManager;
+		this.agentManager = agentManager;
 	}
 
 	@Api(order=100)
@@ -53,12 +46,13 @@ public class AgentTokenResource {
     }
 
 	@Api(order=100)
-	@Path("/{tokenId}/agents")
+	@Path("/{tokenId}/agent")
     @GET
-    public Collection<Agent> getAgent(@PathParam("tokenId") Long agentTokenId) {
+    public Agent getAgent(@PathParam("tokenId") Long tokenId) {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	return tokenManager.load(agentTokenId).getAgents();
+		AgentToken token = tokenManager.load(tokenId);
+    	return agentManager.findByToken(token);
     }
 	
 	@Api(order=200)
@@ -81,16 +75,13 @@ public class AgentTokenResource {
     	return tokenManager.query(criteria, offset, count);
     }
 	
-	@Api(order=500, description="Update token of specified id in request body, or create new if id property not provided")
+	@Api(order=500, description="Create new token")
     @POST
-    public Long createOrUpdate(AgentToken token) {
+    public Long create() {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	if (token == null)
-    		token = new AgentToken();
-    	if (token.isNew())
-    		token.setValue(UUID.randomUUID().toString());
-	    tokenManager.save(token);
+		AgentToken token = new AgentToken();
+	    tokenManager.create(token);
 	    return token.getId();
     }
 	

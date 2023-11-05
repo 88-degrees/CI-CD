@@ -1,14 +1,7 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.List;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.eclipse.jgit.lib.ObjectId;
-import org.hibernate.criterion.Order;
-import org.hibernate.criterion.Restrictions;
-
+import com.google.common.base.Preconditions;
+import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.entitymanager.PullRequestCommentManager;
 import io.onedev.server.entitymanager.PullRequestUpdateManager;
 import io.onedev.server.event.ListenerRegistry;
@@ -21,31 +14,42 @@ import io.onedev.server.persistence.annotation.Transactional;
 import io.onedev.server.persistence.dao.BaseEntityManager;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.persistence.dao.EntityCriteria;
+import org.eclipse.jgit.lib.ObjectId;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.List;
 
 @Singleton
 public class DefaultPullRequestUpdateManager extends BaseEntityManager<PullRequestUpdate> 
 		implements PullRequestUpdateManager {
+	
+	private final ProjectManager projectManager;
 	
 	private final GitService gitService;
 	
 	private final ListenerRegistry listenerRegistry;
 	
 	@Inject
-	public DefaultPullRequestUpdateManager(Dao dao, ListenerRegistry listenerRegistry,
-			PullRequestCommentManager commentManager, GitService gitService) {
+	public DefaultPullRequestUpdateManager(Dao dao, ProjectManager projectManager, ListenerRegistry listenerRegistry, 
+										   PullRequestCommentManager commentManager, GitService gitService) {
 		super(dao);
-		
+
+		this.projectManager = projectManager;
 		this.gitService = gitService;
 		this.listenerRegistry = listenerRegistry;
 	}
 
 	@Transactional
 	@Override
-	public void save(PullRequestUpdate update) {
-		super.save(update);
+	public void create(PullRequestUpdate update) {
+		Preconditions.checkState(update.isNew());
+		dao.persist(update);
 		PullRequest request = update.getRequest();
 		if (!request.getTargetProject().equals(request.getSourceProject())) {
-			if (request.getTargetProject().findPullRequestWithLFS()) {
+			if (projectManager.hasLfsObjects(request.getSourceProject().getId())) {
 				gitService.pushLfsObjects(
 						request.getSourceProject(), request.getSourceRef(),
 						request.getTargetProject(), update.getHeadRef(),
@@ -72,7 +76,7 @@ public class DefaultPullRequestUpdateManager extends BaseEntityManager<PullReque
 				update.setHeadCommitHash(request.getSource().getObjectName());
 				update.setTargetHeadCommitHash(request.getTarget().getObjectName());
 				request.getUpdates().add(update);
-				save(update);
+				create(update);
 
 				gitService.updateRef(request.getTargetProject(), request.getHeadRef(), 
 						ObjectId.fromString(request.getLatestUpdate().getHeadCommitHash()), null);

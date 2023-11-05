@@ -79,8 +79,8 @@ public class CodeCommentResource {
     		@QueryParam("pullRequestId") Long pullRequestId, 
     		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in project code comments page", example="created by me") String query, 
     		@QueryParam("offset") @Api(example="0") int offset, @QueryParam("count") @Api(example="100") int count) {
-		
-    	if (count > RestConstants.MAX_PAGE_SIZE)
+
+		if (!SecurityUtils.isAdministrator() && count > RestConstants.MAX_PAGE_SIZE)
     		throw new InvalidParamException("Count should not be greater than " + RestConstants.MAX_PAGE_SIZE);
 
     	Project project;
@@ -117,16 +117,31 @@ public class CodeCommentResource {
 		return commentManager.query(project, pullRequest, parsedQuery, offset, count);
     }
 	
-	@Api(order=400, description="Update code comment of specified id in request body, or create new if id property not provided")
+	@Api(order=400, description="Create new code comment")
 	@POST
-	public Long createOrUpdate(@NotNull CodeComment comment) {
+	public Long create(@NotNull CodeComment comment) {
     	if (!SecurityUtils.canReadCode(comment.getProject()) || 
     			!SecurityUtils.isAdministrator() && !comment.getUser().equals(SecurityUtils.getUser())) { 
 			throw new UnauthorizedException();
     	}
     	
-		commentManager.save(comment);
+		commentManager.create(comment);
+		
 		return comment.getId();
+	}
+
+	@Api(order=450, description="Update code comment of specified id")
+	@Path("/{commentId}")
+	@POST
+	public Response update(@PathParam("commentId") Long commentId, @NotNull CodeComment comment) {
+		if (!SecurityUtils.canReadCode(comment.getProject()) ||
+				!SecurityUtils.isAdministrator() && !comment.getUser().equals(SecurityUtils.getUser())) {
+			throw new UnauthorizedException();
+		}
+
+		commentManager.update(comment);
+
+		return Response.ok().build();
 	}
 	
 	@Api(order=500)

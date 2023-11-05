@@ -1,11 +1,10 @@
 package io.onedev.server.entitymanager;
 
-import java.util.List;
-
-import javax.annotation.Nullable;
-
 import io.onedev.server.model.LinkSpec;
 import io.onedev.server.persistence.dao.EntityManager;
+
+import javax.annotation.Nullable;
+import java.util.List;
 
 public interface LinkSpecManager extends EntityManager<LinkSpec> {
 
@@ -16,5 +15,7 @@ public interface LinkSpecManager extends EntityManager<LinkSpec> {
 
 	void updateOrders(List<LinkSpec> links);
 	
-	void save(LinkSpec spec, @Nullable String oldName, @Nullable String oldOppositeName);
+	void update(LinkSpec spec, @Nullable String oldName, @Nullable String oldOppositeName);
+
+	void create(LinkSpec spec);
 }

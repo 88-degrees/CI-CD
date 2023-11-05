@@ -1,7 +1,5 @@
 package io.onedev.server.plugin.executor.servershell;
 
-import com.hazelcast.cluster.Member;
-import io.onedev.agent.ExecutorUtils;
 import io.onedev.agent.job.FailedException;
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.loader.AppLoader;
@@ -13,6 +11,7 @@ import io.onedev.commons.utils.command.Commandline;
 import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.k8shelper.*;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.*;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.cluster.ClusterRunnable;
 import io.onedev.server.git.location.GitLocation;
@@ -25,11 +24,7 @@ import io.onedev.server.plugin.executor.servershell.ServerShellExecutor.TestData
 import io.onedev.server.terminal.CommandlineShell;
 import io.onedev.server.terminal.Shell;
 import io.onedev.server.terminal.Terminal;
-import io.onedev.server.util.validation.annotation.Code;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Horizontal;
-import io.onedev.server.web.editable.annotation.Numeric;
-import io.onedev.server.web.editable.annotation.OmitName;
+import io.onedev.server.util.DateUtils;
 import io.onedev.server.web.util.Testable;
 import org.apache.commons.lang.SystemUtils;
 
@@ -42,14 +37,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static io.onedev.agent.ExecutorUtils.newInfoLogger;
+import static io.onedev.agent.ExecutorUtils.newWarningLogger;
 import static io.onedev.agent.ShellExecutorUtils.testCommands;
 import static io.onedev.k8shelper.KubernetesHelper.*;
 
-@Editable(order=ServerShellExecutor.ORDER, name="Server Shell Executor", description=""
-		+ "This executor runs build jobs with OneDev server's shell facility.<br>"
-		+ "<b class='text-danger'>WARNING</b>: Jobs running with this executor has same permission "
-		+ "as OneDev server process. Make sure it can only be used by trusted jobs via job "
-		+ "authorization setting")
+@Editable(order=ServerShellExecutor.ORDER, name="Server Shell Executor", description="" +
+		"This executor runs build jobs with OneDev server's shell facility.<br>" +
+		"<b class='text-danger'>WARNING</b>: Jobs running with this executor has same " +
+		"permission as OneDev server process. Make sure it can only be used by trusted " +
+		"jobs via job requirement setting")
 @Horizontal
 public class ServerShellExecutor extends JobExecutor implements Testable<TestData> {
 
@@ -65,8 +62,9 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 	
 	private transient volatile File buildHome;
 
-	@Editable(order=1000, placeholder = "Number of server cpu", 
-			description = "Specify max number of jobs this executor can run concurrently")
+	@Editable(order=1000, description = "" +
+			"Specify max number of jobs this executor can run concurrently. " +
+			"Leave empty to set as CPU cores")
 	@Numeric
 	public String getConcurrency() {
 		return concurrency;
@@ -106,9 +104,7 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 	@Override
 	public void execute(JobContext jobContext, TaskLogger jobLogger) {
 		ClusterRunnable runnable = () -> {
-			getJobManager().runJobLocal(jobContext, new JobRunnable() {
-
-				private static final long serialVersionUID = 1L;
+			getJobManager().runJob(jobContext, new JobRunnable() {
 
 				@Override
 				public void run(TaskLogger jobLogger) {
@@ -123,12 +119,14 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 								+ "directly on bare metal/virtual machine");
 					}
 
-					buildHome = FileUtils.createTempDir("onedev-build");
+					buildHome = new File(Bootstrap.getTempDir(),
+							"onedev-build-" + jobContext.getProjectId() + "-" + jobContext.getBuildNumber());
+					FileUtils.createDir(buildHome);
 					File workspaceDir = new File(buildHome, "workspace");
 					try {
-						Member server = getClusterManager().getHazelcastInstance().getCluster().getLocalMember();
-						jobLogger.log(String.format("Executing job (executor: %s, server: %s)...", getName(),
-								server.getAddress().getHost() + ":" + server.getAddress().getPort()));
+						String serverAddress = getClusterManager().getLocalServerAddress();
+						jobLogger.log(String.format("Executing job (executor: %s, server: %s)...", 
+								getName(), serverAddress));
 
 						jobLogger.log(String.format("Executing job with executor '%s'...", getName()));
 
@@ -177,7 +175,8 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 								try {
 									String stepNames = entryFacade.getNamesAsString(position);
 									jobLogger.notice("Running step \"" + stepNames + "\"...");
-
+									
+									long time = System.currentTimeMillis();
 									if (facade instanceof CommandFacade) {
 										CommandFacade commandFacade = (CommandFacade) facade;
 										OsExecution execution = commandFacade.getExecution(osInfo);
@@ -205,14 +204,18 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 										interpreter.workingDir(workspaceDir).environments(environments);
 										interpreter.addArgs(jobScriptFile.getAbsolutePath());
 
-										ExecutionResult result = interpreter.execute(ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
+										ExecutionResult result = interpreter.execute(newInfoLogger(jobLogger), newWarningLogger(jobLogger));
 										if (result.getReturnCode() != 0) {
-											jobLogger.error("Step \"" + stepNames + "\" is failed: Command exited with code " + result.getReturnCode());
+											long duration = System.currentTimeMillis() - time;
+											jobLogger.error("Step \"" + stepNames + "\" is failed (" + DateUtils.formatDuration(duration) + "): Command exited with code " + result.getReturnCode());
 											return false;
 										}
-									} else if (facade instanceof RunContainerFacade || facade instanceof BuildImageFacade) {
+									} else if (facade instanceof RunContainerFacade) {
 										throw new ExplicitException("This step can only be executed by server docker executor, "
 												+ "remote docker executor, or kubernetes executor");
+									} else if (facade instanceof BuildImageFacade) {
+										throw new ExplicitException("This step can only be executed by server docker executor or "
+												+ "remote docker executor");
 									} else if (facade instanceof CheckoutFacade) {
 										try {
 											CheckoutFacade checkoutFacade = (CheckoutFacade) facade;
@@ -225,25 +228,26 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 											git.environments(environments);
 
 											checkoutFacade.setupWorkingDir(git, workspaceDir);
-
+											
 											File trustCertsFile = new File(buildHome, "trust-certs.pem");
 											installGitCert(git, Bootstrap.getTrustCertsDir(), trustCertsFile, 
 													trustCertsFile.getAbsolutePath(), 
-													ExecutorUtils.newInfoLogger(jobLogger), 
-													ExecutorUtils.newWarningLogger(jobLogger));
+													newInfoLogger(jobLogger), 
+													newWarningLogger(jobLogger));
 
 											CloneInfo cloneInfo = checkoutFacade.getCloneInfo();
 											cloneInfo.writeAuthData(userHome, git, false, 
-													ExecutorUtils.newInfoLogger(jobLogger), 
-													ExecutorUtils.newWarningLogger(jobLogger));
+													newInfoLogger(jobLogger), 
+													newWarningLogger(jobLogger));
 
 											int cloneDepth = checkoutFacade.getCloneDepth();
 
 											cloneRepository(git, jobContext.getProjectGitDir(), cloneInfo.getCloneUrl(), jobContext.getRefName(),
 													jobContext.getCommitId().name(), checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(),
-													cloneDepth, ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
+													cloneDepth, newInfoLogger(jobLogger), newWarningLogger(jobLogger));
 										} catch (Exception e) {
-											jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+											long duration = System.currentTimeMillis() - time;
+											jobLogger.error("Step \"" + stepNames + "\" is failed (" + DateUtils.formatDuration(duration) + "): " + getErrorMessage(e));
 											return false;
 										}
 									} else {
@@ -259,12 +263,15 @@ public class ServerShellExecutor extends JobExecutor implements Testable<TestDat
 
 											});
 										} catch (Exception e) {
-											if (ExceptionUtils.find(e, InterruptedException.class) == null)
-												jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+											if (ExceptionUtils.find(e, InterruptedException.class) == null) {
+												long duration = System.currentTimeMillis() - time;
+												jobLogger.error("Step \"" + stepNames + "\" is failed: (" + DateUtils.formatDuration(duration) + ") " + getErrorMessage(e));
+											}
 											return false;
 										}
 									}
-									jobLogger.success("Step \"" + stepNames + "\" is successful");
+									long duration = System.currentTimeMillis() - time;
+									jobLogger.success("Step \"" + stepNames + "\" is successful (" + DateUtils.formatDuration(duration) + ")");
 									return true;
 								} finally {
 									runningStep = null;

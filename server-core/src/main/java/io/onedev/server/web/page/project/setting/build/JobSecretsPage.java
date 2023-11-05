@@ -1,9 +1,14 @@
 package io.onedev.server.web.page.project.setting.build;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-
+import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.model.Project;
+import io.onedev.server.model.support.build.JobSecret;
+import io.onedev.server.buildspecmodel.inputspec.SecretInput;
+import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
+import io.onedev.server.web.component.datatable.DefaultDataTable;
+import io.onedev.server.web.component.modal.ModalPanel;
+import io.onedev.server.web.component.svg.SpriteImage;
 import org.apache.wicket.Component;
 import org.apache.wicket.Session;
 import org.apache.wicket.ajax.AjaxRequestTarget;
@@ -14,6 +19,7 @@ import org.apache.wicket.extensions.markup.html.repeater.data.table.AbstractColu
 import org.apache.wicket.extensions.markup.html.repeater.data.table.DataTable;
 import org.apache.wicket.extensions.markup.html.repeater.data.table.IColumn;
 import org.apache.wicket.extensions.markup.html.repeater.util.SortableDataProvider;
+import org.apache.wicket.markup.html.WebMarkupContainer;
 import org.apache.wicket.markup.html.basic.Label;
 import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.markup.repeater.Item;
@@ -21,20 +27,18 @@ import org.apache.wicket.model.IModel;
 import org.apache.wicket.model.Model;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.support.build.JobSecret;
-import io.onedev.server.model.support.inputspec.SecretInput;
-import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
-import io.onedev.server.web.component.datatable.DefaultDataTable;
-import io.onedev.server.web.component.modal.ModalPanel;
-import io.onedev.server.web.component.svg.SpriteImage;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import static java.util.stream.Collectors.*;
 
 @SuppressWarnings("serial")
 public class JobSecretsPage extends ProjectBuildSettingPage {
 
 	private DataTable<JobSecret, Void> secretsTable;
+	
+	private Component showArchivedButton;
 	
 	public JobSecretsPage(PageParameters params) {
 		super(params);
@@ -76,6 +80,7 @@ public class JobSecretsPage extends ProjectBuildSettingPage {
 							@Override
 							protected void onSaved(AjaxRequestTarget target) {
 								target.add(secretsTable);
+								target.add(showArchivedButton);
 								close();
 							}
 							
@@ -87,45 +92,66 @@ public class JobSecretsPage extends ProjectBuildSettingPage {
 			
 		});
 		
+		add(showArchivedButton = new AjaxLink<Void>("showArchived") {
+
+			@Override
+			public void onClick(AjaxRequestTarget target) {
+				setVisibilityAllowed(false);
+				target.add(showArchivedButton);
+				target.add(secretsTable);
+			}
+
+			@Override
+			protected void onConfigure() {
+				super.onConfigure();
+				setVisible(getProject().getBuildSetting().getJobSecrets().stream().anyMatch(JobSecret::isArchived));
+			}
+			
+		}.setOutputMarkupPlaceholderTag(true));
+		
 		List<IColumn<JobSecret, Void>> columns = new ArrayList<>();
 		
-		columns.add(new AbstractColumn<JobSecret, Void>(Model.of("Name")) {
+		columns.add(new AbstractColumn<>(Model.of("Name")) {
 
 			@Override
-			public void populateItem(Item<ICellPopulator<JobSecret>> cellItem, String componentId, 
-					IModel<JobSecret> rowModel) {
-				cellItem.add(new Label(componentId, rowModel.getObject().getName()));
+			public void populateItem(Item<ICellPopulator<JobSecret>> cellItem, String componentId,
+									 IModel<JobSecret> rowModel) {
+				var secret = rowModel.getObject();
+				var fragment = new Fragment(componentId, "nameFrag", JobSecretsPage.this);
+				fragment.add(new Label("name", rowModel.getObject().getName()));
+				fragment.add(new WebMarkupContainer("archived").setVisible(secret.isArchived()));
+				cellItem.add(fragment);
 			}
-			
+
 		});
 		
-		columns.add(new AbstractColumn<JobSecret, Void>(Model.of("Authorized Branches")) {
+		columns.add(new AbstractColumn<>(Model.of("Authorization")) {
 
 			@Override
-			public void populateItem(Item<ICellPopulator<JobSecret>> cellItem, String componentId, 
-					IModel<JobSecret> rowModel) {
-				if (rowModel.getObject().getAuthorizedBranches() != null)
-					cellItem.add(new Label(componentId, rowModel.getObject().getAuthorizedBranches()));
+			public void populateItem(Item<ICellPopulator<JobSecret>> cellItem, String componentId,
+									 IModel<JobSecret> rowModel) {
+				if (rowModel.getObject().getAuthorization() != null)
+					cellItem.add(new Label(componentId, rowModel.getObject().getAuthorization()));
 				else
-					cellItem.add(new Label(componentId, "<i>All</i>").setEscapeModelStrings(false));
+					cellItem.add(new Label(componentId, "<i>All Branches</i>").setEscapeModelStrings(false));
 			}
-			
+
 		});
-		
-		columns.add(new AbstractColumn<JobSecret, Void>(Model.of("")) {
+
+		columns.add(new AbstractColumn<>(Model.of("")) {
 
 			@Override
-			public void populateItem(Item<ICellPopulator<JobSecret>> cellItem, String componentId, 
-					IModel<JobSecret> rowModel) {
+			public void populateItem(Item<ICellPopulator<JobSecret>> cellItem, String componentId,
+									 IModel<JobSecret> rowModel) {
 				Fragment fragment = new Fragment(componentId, "actionFrag", JobSecretsPage.this);
 				int index = cellItem.findParent(Item.class).getIndex();
-				
+
 				fragment.add(new AjaxLink<Void>("edit") {
 
 					@Override
 					public void onClick(AjaxRequestTarget target) {
 						new ModalPanel(target) {
-							
+
 							@Override
 							protected Component newContent(String id) {
 								return new JobSecretEditPanel(id, index) {
@@ -143,17 +169,18 @@ public class JobSecretsPage extends ProjectBuildSettingPage {
 									@Override
 									protected void onSaved(AjaxRequestTarget target) {
 										target.add(secretsTable);
+										target.add(showArchivedButton);
 										close();
 									}
-									
+
 								};
 							}
-							
+
 						};
 					}
-					
+
 				});
-				
+
 				fragment.add(new AjaxLink<Void>("delete") {
 
 					@Override
@@ -166,13 +193,14 @@ public class JobSecretsPage extends ProjectBuildSettingPage {
 					@Override
 					public void onClick(AjaxRequestTarget target) {
 						getProject().getBuildSetting().getJobSecrets().remove(index);
-						OneDev.getInstance(ProjectManager.class).save(getProject());
+						OneDev.getInstance(ProjectManager.class).update(getProject());
 						Session.get().success("Secret '" + rowModel.getObject().getName() + "' deleted");
+						target.add(showArchivedButton);
 						target.add(secretsTable);
 					}
 
 				});
-				
+
 				cellItem.add(fragment);
 			}
 
@@ -180,19 +208,32 @@ public class JobSecretsPage extends ProjectBuildSettingPage {
 			public String getCssClass() {
 				return "actions";
 			}
-			
+
 		});
 		
 		SortableDataProvider<JobSecret, Void> dataProvider = new SortableDataProvider<JobSecret, Void>() {
 
+			private List<JobSecret> getDisplaySecrets() {
+				return getProject().getBuildSetting().getJobSecrets().stream()
+						.filter(it-> !showArchivedButton.isVisibilityAllowed() || !it.isArchived())
+						.sorted((o1, o2) -> {
+							if (o1.isArchived() && !o2.isArchived())
+								return 1;
+							else if (!o1.isArchived() && o2.isArchived())
+								return -1;
+							else
+								return 0;
+						}).collect(toList());
+			}
+			
 			@Override
 			public Iterator<? extends JobSecret> iterator(long first, long count) {
-				return getProject().getBuildSetting().getJobSecrets().iterator();
+				return getDisplaySecrets().iterator();
 			}
 
 			@Override
 			public long size() {
-				return getProject().getBuildSetting().getJobSecrets().size();
+				return getDisplaySecrets().size();
 			}
 
 			@Override

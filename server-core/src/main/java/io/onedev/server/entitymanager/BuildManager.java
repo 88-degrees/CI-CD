@@ -1,19 +1,14 @@
 package io.onedev.server.entitymanager;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.io.File;
+import java.util.*;
 
 import javax.annotation.Nullable;
 
+import io.onedev.server.model.*;
 import io.onedev.server.util.artifact.ArtifactInfo;
 import org.eclipse.jgit.lib.ObjectId;
 
-import io.onedev.server.model.Agent;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
 import io.onedev.server.persistence.dao.EntityManager;
 import io.onedev.server.search.entity.EntityQuery;
 import io.onedev.server.util.ProjectBuildStats;
@@ -22,7 +17,7 @@ import io.onedev.server.util.StatusInfo;
 import io.onedev.server.util.criteria.Criteria;
 
 public interface BuildManager extends EntityManager<Build> {
-
+	
 	@Nullable
 	Build find(Project project, long number);
 
@@ -44,8 +39,9 @@ public interface BuildManager extends EntityManager<Build> {
 	Collection<Long> queryStreamPreviousNumbers(Build build, @Nullable Build.Status status, int limit);
 
 	Collection<Build> query(Project project, ObjectId commitId, @Nullable String jobName, 
-			@Nullable String refName, @Nullable Optional<PullRequest> request, 
-			Map<String, List<String>> params, @Nullable String pipeline);
+							@Nullable String refName, @Nullable Optional<PullRequest> request, 
+							@Nullable Optional<Issue> issue, Map<String, List<String>> params, 
+							@Nullable String pipeline);
 
 	Collection<Build> query(Project project, ObjectId commitId, @Nullable String jobName, 
 			@Nullable String pipeline);
@@ -55,11 +51,14 @@ public interface BuildManager extends EntityManager<Build> {
 	Map<ObjectId, Map<String, Collection<StatusInfo>>> queryStatus(Project project, Collection<ObjectId> commitIds);
 
 	void create(Build build);
+	
+	void update(Build build);
 
 	Map<Long, Long> queryUnfinished();
 	
 	Collection<Build> queryUnfinished(Project project, String jobName, @Nullable String refName, 
-			@Nullable Optional<PullRequest> request, Map<String, List<String>> params);
+									  @Nullable Optional<PullRequest> request, @Nullable Optional<Issue> issue, 
+									  @Nullable Map<String, List<String>> params);
 	
 	List<Build> query(Project project, String term, int count);
 
@@ -69,7 +68,7 @@ public interface BuildManager extends EntityManager<Build> {
 
 	Collection<Long> queryIds(Project project, EntityQuery<Build> buildQuery, int firstResult, int maxResults);
 
-	Collection<Long> getNumbersByProject(Long projectId);
+	Collection<Long> getNumbers(Long projectId);
 
 	Collection<Long> filterNumbers(Long projectId, Collection<String> commitHashes);
 
@@ -93,5 +92,9 @@ public interface BuildManager extends EntityManager<Build> {
 	ArtifactInfo getArtifactInfo(Build build, @Nullable String artifactPath);
 	
 	void deleteArtifact(Build build, @Nullable String artifactPath);
+	
+	void syncBuilds(Long projectId, String activeServer);
+	
+	File getStorageDir(Long projectId, Long buildNumber);
 	
 }

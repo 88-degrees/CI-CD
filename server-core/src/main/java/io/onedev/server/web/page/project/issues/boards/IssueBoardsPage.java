@@ -1,14 +1,41 @@
 package io.onedev.server.web.page.project.issues.boards;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.MilestoneManager;
+import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.model.Issue;
+import io.onedev.server.model.Milestone;
+import io.onedev.server.model.Project;
+import io.onedev.server.model.support.issue.BoardSpec;
+import io.onedev.server.model.support.issue.field.spec.DateField;
+import io.onedev.server.model.support.issue.field.spec.FieldSpec;
+import io.onedev.server.model.support.issue.field.spec.IntegerField;
+import io.onedev.server.model.support.issue.field.spec.choicefield.ChoiceField;
+import io.onedev.server.search.entity.EntitySort;
+import io.onedev.server.search.entity.issue.IssueQuery;
+import io.onedev.server.search.entity.issue.IssueQueryParseOption;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.CollectionUtils;
+import io.onedev.server.util.ProjectScope;
+import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
+import io.onedev.server.web.behavior.IssueQueryBehavior;
+import io.onedev.server.web.behavior.sortable.SortBehavior;
+import io.onedev.server.web.behavior.sortable.SortPosition;
+import io.onedev.server.web.component.beaneditmodal.BeanEditModalPanel;
+import io.onedev.server.web.component.floating.FloatingPanel;
+import io.onedev.server.web.component.issue.board.BoardEditPanel;
+import io.onedev.server.web.component.link.DropdownLink;
 import io.onedev.server.web.component.link.ViewStateAwarePageLink;
+import io.onedev.server.web.component.milestone.MilestoneDateLabel;
+import io.onedev.server.web.component.milestone.MilestoneStatusLabel;
+import io.onedev.server.web.component.modal.ModalLink;
+import io.onedev.server.web.component.modal.ModalPanel;
+import io.onedev.server.web.component.orderedit.OrderEditPanel;
+import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
+import io.onedev.server.web.page.project.issues.ProjectIssuesPage;
+import io.onedev.server.web.util.ConfirmClickModifier;
+import io.onedev.server.web.util.editablebean.MilestoneEditBean;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.wicket.Component;
 import org.apache.wicket.Session;
@@ -18,7 +45,6 @@ import org.apache.wicket.ajax.form.AjaxFormComponentUpdatingBehavior;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
 import org.apache.wicket.ajax.markup.html.form.AjaxButton;
 import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.feedback.FeedbackMessage;
 import org.apache.wicket.feedback.FencedFeedbackPanel;
 import org.apache.wicket.feedback.IFeedbackMessageFilter;
 import org.apache.wicket.markup.head.IHeaderResponse;
@@ -38,38 +64,12 @@ import org.apache.wicket.model.LoadableDetachableModel;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.MilestoneManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.Milestone;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.support.issue.BoardSpec;
-import io.onedev.server.model.support.issue.field.spec.ChoiceField;
-import io.onedev.server.model.support.issue.field.spec.DateField;
-import io.onedev.server.model.support.issue.field.spec.FieldSpec;
-import io.onedev.server.model.support.issue.field.spec.IntegerField;
-import io.onedev.server.search.entity.EntitySort;
-import io.onedev.server.search.entity.issue.IssueQuery;
-import io.onedev.server.search.entity.issue.IssueQueryParseOption;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.ProjectScope;
-import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
-import io.onedev.server.web.behavior.IssueQueryBehavior;
-import io.onedev.server.web.behavior.sortable.SortBehavior;
-import io.onedev.server.web.behavior.sortable.SortPosition;
-import io.onedev.server.web.component.floating.FloatingPanel;
-import io.onedev.server.web.component.issue.board.BoardEditPanel;
-import io.onedev.server.web.component.link.DropdownLink;
-import io.onedev.server.web.component.milestone.MilestoneDateLabel;
-import io.onedev.server.web.component.milestone.MilestoneStatusLabel;
-import io.onedev.server.web.component.modal.ModalLink;
-import io.onedev.server.web.component.modal.ModalPanel;
-import io.onedev.server.web.component.orderedit.OrderEditPanel;
-import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
-import io.onedev.server.web.page.project.issues.ProjectIssuesPage;
-import io.onedev.server.web.util.ConfirmClickModifier;
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @SuppressWarnings("serial")
 public class IssueBoardsPage extends ProjectIssuesPage {
@@ -121,14 +121,7 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 	};
 	
 	private IFeedbackMessageFilter newFeedbackMessageFilter(boolean backlog) {
-		return new IFeedbackMessageFilter() {
-			
-			@Override
-			public boolean accept(FeedbackMessage message) {
-				return ((QueryParseMessage)message.getMessage()).backlog == backlog;
-			}
-			
-		};		
+		return message -> ((QueryParseMessage)message.getMessage()).backlog == backlog;		
 	}
 	
 	@Nullable
@@ -142,22 +135,22 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 		IssueQuery query;
 		try {
 			query = IssueQuery.parse(getProject(), queryString, option, true);
-		} catch (ExplicitException e) {
-			contentFrag.error(new QueryParseMessage(backlog, "Error parsing %squery: " + e.getMessage()));
-			return null;
 		} catch (Exception e) {
-			contentFrag.error(new QueryParseMessage(backlog, "Malformed issue query"));
+			if (e instanceof ExplicitException)
+				contentFrag.error(new QueryParseMessage(backlog, "Error parsing %squery: " + e.getMessage()));
+			else
+				contentFrag.error(new QueryParseMessage(backlog, "Malformed %squery"));
 			return null;
 		}
 
 		IssueQuery baseQuery;
 		try {
 			baseQuery = IssueQuery.parse(getProject(), baseQueryString, option, true);
-		} catch (ExplicitException e) {
-			contentFrag.error(new QueryParseMessage(backlog, "Error parsing %sbase query: " + e.getMessage()));
-			return null;
 		} catch (Exception e) {
-			contentFrag.error(new QueryParseMessage(backlog, "Malformed %sbase query: " + e.getMessage()));
+			if (e instanceof ExplicitException)
+				contentFrag.error(new QueryParseMessage(backlog, "Error parsing %sbase query: " + e.getMessage()));
+			else
+				contentFrag.error(new QueryParseMessage(backlog, "Malformed %sbase query"));
 			return null;
 		}
 		return IssueQuery.merge(baseQuery, query);
@@ -284,7 +277,7 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 						@Override
 						public void onClick() {
 							getProject().getIssueSetting().setBoardSpecs(null);
-							OneDev.getInstance(ProjectManager.class).save(getProject());
+							OneDev.getInstance(ProjectManager.class).update(getProject());
 							setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(getProject()));
 						}
 
@@ -316,7 +309,7 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 							link.add(new Label("name", item.getModelObject().getName()));
 							item.add(link);
 
-							item.add(new WebMarkupContainer("primary").setVisible(item.getIndex() == 0));
+							item.add(new WebMarkupContainer("default").setVisible(item.getIndex() == 0));
 							
 							WebMarkupContainer actions = new WebMarkupContainer("actions") {
 
@@ -346,7 +339,7 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 									BoardSpec currentBoard = getBoard();
 									boards.remove(boardToRemove);
 									getProject().getIssueSetting().setBoardSpecs(boards);
-									OneDev.getInstance(ProjectManager.class).save(getProject());
+									OneDev.getInstance(ProjectManager.class).update(getProject());
 									
 									BoardSpec nextBoard;
 									if (boardToRemove.getName().equals(currentBoard.getName())) 
@@ -369,10 +362,9 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 							
 							@Override
 							protected void onSort(AjaxRequestTarget target, SortPosition from, SortPosition to) {
-								BoardSpec board = boards.get(from.getItemIndex());
-								boards.set(from.getItemIndex(), boards.set(to.getItemIndex(), board));
+								CollectionUtils.move(boards, from.getItemIndex(), to.getItemIndex());
 								getProject().getIssueSetting().setBoardSpecs(boards);
-								OneDev.getInstance(ProjectManager.class).save(getProject());
+								OneDev.getInstance(ProjectManager.class).update(getProject());
 								target.add(menuFragment);
 							}
 							
@@ -479,11 +471,11 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 						private void toggleClose(Milestone milestone) {
 							milestone.setClosed(!milestone.isClosed());
 							if (milestone.equals(IssueBoardsPage.this.getMilestone())) {
-								getMilestoneManager().save(milestone);
+								getMilestoneManager().update(milestone);
 								setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(getProject(), getBoard(), 
 										milestone, backlog, queryString, backlogQueryString));
 							} else {
-								getMilestoneManager().save(milestone);
+								getMilestoneManager().update(milestone);
 							}
 							dropdown.close();
 							if (milestone.isClosed())
@@ -545,12 +537,27 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 									}
 									
 								});
-								fragment.add(new MilestoneEditLink("edit", item.getModelObject().getId()) {
+								
+								var bean = new MilestoneEditBean();
+								bean.readFrom(item.getModelObject());
+								fragment.add(new AjaxLink<Void>("edit") {
 
 									@Override
 									public void onClick(AjaxRequestTarget target) {
-										super.onClick(target);
 										dropdown.close();
+										
+										new BeanEditModalPanel<>(target, bean, "Edit Milestone") {
+
+											@Override
+											protected void onSave(AjaxRequestTarget target, MilestoneEditBean bean) {
+												var milestone = item.getModelObject();
+												bean.writeTo(milestone);
+												getMilestoneManager().update(milestone);
+												setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(
+														getProject(), getBoard(), milestone, backlog, queryString,
+														backlogQueryString));
+											}
+										};
 									}
 
 								});
@@ -624,12 +631,25 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 						
 					});
 					
-					menuFragment.add(new CreateMilestoneLink("newMilestone") {
+					menuFragment.add(new AjaxLink<Void>("newMilestone") {
 
 						@Override
 						public void onClick(AjaxRequestTarget target) {
-							super.onClick(target);
 							dropdown.close();
+							var bean = new MilestoneEditBean();
+							new BeanEditModalPanel<>(target, bean, "Create Milestone") {
+
+								@Override
+								protected void onSave(AjaxRequestTarget target, MilestoneEditBean bean) {
+									var milestone = new Milestone();
+									milestone.setProject(getProject());
+									bean.writeTo(milestone);
+									getMilestoneManager().create(milestone);
+									setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(
+											getProject(), getBoard(), milestone, backlog, queryString,
+											backlogQueryString));
+								}
+							};
 						}
 						
 						@Override
@@ -666,8 +686,9 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 				
 			});
 			
-			IssueQueryParseOption option = new IssueQueryParseOption().withCurrentUserCriteria(true);
-			queryInput.add(new IssueQueryBehavior(projectModel, option));
+			IssueQueryParseOption option = new IssueQueryParseOption()
+					.withCurrentUserCriteria(true).withCurrentProjectCriteria(true);
+			queryInput.add(new IssueQueryBehavior(projectModel, option, true));
 			
 			queryInput.add(new AjaxFormComponentUpdatingBehavior("clear") {
 				
@@ -679,9 +700,9 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 			});
 			
 			if (backlog)
-				queryInput.add(AttributeAppender.append("placeholder", "Filter and order backlog issues..."));
+				queryInput.add(AttributeAppender.append("placeholder", "Filter/order backlog issues. Hit space to show syntax helper"));
 			else
-				queryInput.add(AttributeAppender.append("placeholder", "Filter and order issues..."));
+				queryInput.add(AttributeAppender.append("placeholder", "Filter/order issues. Hit space to show syntax helper"));
 				
 			form.add(queryInput);
 
@@ -844,7 +865,7 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 				@Override
 				public void onClick() {
 					getProject().getIssueSetting().setBoardSpecs(null);
-					OneDev.getInstance(ProjectManager.class).save(getProject());
+					OneDev.getInstance(ProjectManager.class).update(getProject());
 					setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(getProject()));
 				}
 				
@@ -939,68 +960,6 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 		}
 		
 	}
-
-	private class CreateMilestoneLink extends ModalLink {
-
-		public CreateMilestoneLink(String id) {
-			super(id);
-		}
-
-		@Override
-		protected Component newContent(String id, ModalPanel modal) {
-			return new NewMilestonePanel(id) {
-
-				@Override
-				protected Project getProject() {
-					return IssueBoardsPage.this.getProject();
-				}
-
-				@Override
-				protected void onMilestoneCreated(AjaxRequestTarget target, Milestone milestone) {
-					setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(
-							getProject(), getBoard(), milestone, backlog, queryString, 
-							backlogQueryString));
-				}
-
-				@Override
-				protected void onCancel(AjaxRequestTarget target) {
-					modal.close();
-				}
-				
-			};
-		}
-		
-	}	
-	
-	private abstract class MilestoneEditLink extends ModalLink {
-
-		private final Long milestoneId;
-		
-		public MilestoneEditLink(String id, Long milestoneId) {
-			super(id);
-			this.milestoneId = milestoneId;
-		}
-
-		@Override
-		protected Component newContent(String id, ModalPanel modal) {
-			return new MilestoneEditPanel(id, milestoneId) {
-
-				@Override
-				protected void onMilestoneSaved(AjaxRequestTarget target, Milestone milestone) {
-					setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(
-							getProject(), getBoard(), milestone, backlog, queryString, 
-							backlogQueryString));
-				}
-
-				@Override
-				protected void onCancel(AjaxRequestTarget target) {
-					modal.close();
-				}
-				
-			};
-		}
-		
-	}
 	
 	private abstract class BoardEditLink extends ModalLink {
 
@@ -1018,7 +977,7 @@ public class IssueBoardsPage extends ProjectIssuesPage {
 				@Override
 				protected void onSave(AjaxRequestTarget target, BoardSpec board) {
 					getProject().getIssueSetting().setBoardSpecs(boards);
-					OneDev.getInstance(ProjectManager.class).save(getProject());
+					OneDev.getInstance(ProjectManager.class).update(getProject());
 					setResponsePage(IssueBoardsPage.class, IssueBoardsPage.paramsOf(
 							getProject(), board, getMilestone(), backlog, queryString, 
 							backlogQueryString));

@@ -1,19 +1,10 @@
 package io.onedev.server.web.behavior;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.annotation.Nullable;
-
-import org.apache.commons.lang3.StringUtils;
-import org.apache.wicket.Component;
-import org.apache.wicket.model.IModel;
-
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.codeassist.FenceAware;
+import io.onedev.commons.codeassist.InputCompletion;
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.commons.codeassist.grammar.LexerRuleRefElementSpec;
 import io.onedev.commons.codeassist.parser.Element;
@@ -31,10 +22,19 @@ import io.onedev.server.util.DateUtils;
 import io.onedev.server.web.behavior.inputassist.ANTLRAssistBehavior;
 import io.onedev.server.web.behavior.inputassist.InputAssistBehavior;
 import io.onedev.server.web.util.SuggestionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.wicket.Component;
+import org.apache.wicket.model.IModel;
+
+import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 
 @SuppressWarnings("serial")
 public class BuildQueryBehavior extends ANTLRAssistBehavior {
 
+	private static final String FUZZY_SUGGESTION_DESCRIPTION_PREFIX = "surround with ~";
+	
 	private final IModel<Project> projectModel;
 	
 	private final boolean withOrder;
@@ -43,15 +43,20 @@ public class BuildQueryBehavior extends ANTLRAssistBehavior {
 	
 	private final boolean withUnfinishedCriteria;
 	
-	public BuildQueryBehavior(IModel<Project> projectModel, boolean withOrder, 
-			boolean withCurrentUserCriteria, boolean withUnfinishedCriteria) {
-		super(BuildQueryParser.class, "query", false);
+	public BuildQueryBehavior(IModel<Project> projectModel, boolean withOrder, boolean withCurrentUserCriteria, 
+							  boolean withUnfinishedCriteria, boolean hideIfBlank) {
+		super(BuildQueryParser.class, "query", false, hideIfBlank);
 		this.projectModel = projectModel;
 		this.withOrder = withOrder;
 		this.withCurrentUserCriteria = withCurrentUserCriteria;
 		this.withUnfinishedCriteria = withUnfinishedCriteria;
 	}
 
+	public BuildQueryBehavior(IModel<Project> projectModel, boolean withOrder, boolean withCurrentUserCriteria,
+							  boolean withUnfinishedCriteria) {
+		this(projectModel, withOrder, withCurrentUserCriteria, withUnfinishedCriteria, false);
+	}
+	
 	@Override
 	public void detach(Component component) {
 		super.detach(component);
@@ -67,7 +72,11 @@ public class BuildQueryBehavior extends ANTLRAssistBehavior {
 	protected List<InputSuggestion> suggest(TerminalExpect terminalExpect) {
 		if (terminalExpect.getElementSpec() instanceof LexerRuleRefElementSpec) {
 			LexerRuleRefElementSpec spec = (LexerRuleRefElementSpec) terminalExpect.getElementSpec();
-			if (spec.getRuleName().equals("Quoted")) {
+			if (spec.getRuleName().equals("Number")) {
+				return SuggestionUtils.suggestNumber(
+						terminalExpect.getUnmatchedText(), 
+						"find build with this number");
+			} else if (spec.getRuleName().equals("Quoted")) {
 				return new FenceAware(codeAssist.getGrammar(), '"', '"') {
 
 					@Override
@@ -168,6 +177,20 @@ public class BuildQueryBehavior extends ANTLRAssistBehavior {
 					}
 					
 				}.suggest(terminalExpect);
+			} else if (spec.getRuleName().equals("Fuzzy")) {
+				return new FenceAware(codeAssist.getGrammar(), '~', '~') {
+
+					@Override
+					protected List<InputSuggestion> match(String matchWith) {
+						return null;
+					}
+
+					@Override
+					protected String getFencingDescription() {
+						return FUZZY_SUGGESTION_DESCRIPTION_PREFIX + " to query job/version";
+					}
+
+				}.suggest(terminalExpect);
 			}
 		} 
 		return null;
@@ -190,6 +213,8 @@ public class BuildQueryBehavior extends ANTLRAssistBehavior {
 				return null;
 			}
 		}
+		if (suggestedLiteral.equals("#")) 
+			return Optional.of("Find build by number");
 		
 		parseExpect = parseExpect.findExpectByLabel("operator");
 		if (parseExpect != null) {
@@ -227,6 +252,12 @@ public class BuildQueryBehavior extends ANTLRAssistBehavior {
 			}
 		} 
 		return hints;
+	}
+
+	@Override
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return suggestion.getDescription() != null 
+				&& suggestion.getDescription().startsWith(FUZZY_SUGGESTION_DESCRIPTION_PREFIX);
 	}
 	
 }

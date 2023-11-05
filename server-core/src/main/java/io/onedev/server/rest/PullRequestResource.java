@@ -1,45 +1,12 @@
 package io.onedev.server.rest;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.stream.Collectors;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.validation.constraints.NotEmpty;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-
-import org.apache.shiro.authz.UnauthorizedException;
-import org.eclipse.jgit.lib.ObjectId;
-import org.joda.time.DateTime;
-
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.server.entitymanager.PullRequestChangeManager;
 import io.onedev.server.entitymanager.PullRequestManager;
 import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.git.service.GitService;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestAssignment;
-import io.onedev.server.model.PullRequestChange;
-import io.onedev.server.model.PullRequestComment;
-import io.onedev.server.model.PullRequestReview;
+import io.onedev.server.model.*;
 import io.onedev.server.model.PullRequestReview.Status;
-import io.onedev.server.model.PullRequestUpdate;
-import io.onedev.server.model.PullRequestWatch;
-import io.onedev.server.model.User;
 import io.onedev.server.model.support.pullrequest.MergePreview;
 import io.onedev.server.model.support.pullrequest.MergeStrategy;
 import io.onedev.server.rest.annotation.Api;
@@ -49,6 +16,22 @@ import io.onedev.server.rest.support.RestConstants;
 import io.onedev.server.search.entity.pullrequest.PullRequestQuery;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.ProjectAndBranch;
+import org.apache.shiro.authz.UnauthorizedException;
+import org.eclipse.jgit.lib.ObjectId;
+import org.joda.time.DateTime;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.validation.constraints.NotEmpty;
+import javax.validation.constraints.NotNull;
+import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Api(order=3000, description="In most cases, pull request resource is operated with pull request id, which is different from pull request number. "
 		+ "To get pull request id of a particular pull request number, use the <a href='/~help/api/io.onedev.server.rest.PullRequestResource/queryBasicInfo'>Query Basic Info</a> operation with query for "
@@ -87,6 +70,16 @@ public class PullRequestResource {
     	return pullRequest;
     }
 
+	@Api(order=150, description = "Get list of <a href='/~help/api/io.onedev.server.rest.PullRequestLabelResource'>labels</a>")
+	@Path("/{requestId}/labels")
+	@GET
+	public Collection<PullRequestLabel> getLabels(@PathParam("requestId") Long requestId) {
+		PullRequest pullRequest = pullRequestManager.load(requestId);
+		if (!SecurityUtils.canReadCode(pullRequest.getProject()))
+			throw new UnauthorizedException();
+		return pullRequest.getLabels();
+	}
+
 	@Api(order=200)
 	@Path("/{requestId}/merge-preview")
     @GET
@@ -94,7 +87,7 @@ public class PullRequestResource {
 		PullRequest pullRequest = pullRequestManager.load(requestId);
     	if (!SecurityUtils.canReadCode(pullRequest.getProject())) 
 			throw new UnauthorizedException();
-    	return pullRequest.getMergePreview();
+    	return pullRequest.checkMergePreview();
     }
 	
 	@Api(order=300)
@@ -182,11 +175,11 @@ public class PullRequestResource {
 	@Api(order=1100)
 	@GET
     public List<PullRequest> queryBasicInfo(
-    		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in <a href='/pulls'>pull requests page</a>", example="\"Number\" is \"projectName#100\"") String query, 
+    		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in <a href='/~pulls'>pull requests page</a>", example="\"Number\" is \"projectName#100\"") String query, 
     		@QueryParam("offset") @Api(example="0") int offset, 
     		@QueryParam("count") @Api(example="100") int count) {
-		
-    	if (count > RestConstants.MAX_PAGE_SIZE)
+
+		if (!SecurityUtils.isAdministrator() && count > RestConstants.MAX_PAGE_SIZE)
     		throw new InvalidParamException("Count should not be greater than " + RestConstants.MAX_PAGE_SIZE);
 
     	PullRequestQuery parsedQuery;
@@ -207,7 +200,7 @@ public class PullRequestResource {
 		ProjectAndBranch target = new ProjectAndBranch(data.getTargetProjectId(), data.getTargetBranch());
 		ProjectAndBranch source = new ProjectAndBranch(data.getSourceProjectId(), data.getSourceBranch());
 		
-		if (!SecurityUtils.canReadCode(target.getProject()) || !SecurityUtils.canReadCode(source.getProject()))
+		if (user.isEffectiveGuest() || !SecurityUtils.canReadCode(target.getProject()) || !SecurityUtils.canReadCode(source.getProject()))
 			throw new UnauthorizedException();
 		
 		if (target.equals(source))
@@ -246,8 +239,6 @@ public class PullRequestResource {
 
 		PullRequestUpdate update = new PullRequestUpdate();
 		update.setDate(new DateTime(request.getSubmitDate()).plusSeconds(1).toDate());
-		request.getUpdates().add(update);
-		request.setUpdates(request.getUpdates());
 		update.setRequest(request);
 		update.setHeadCommitHash(source.getObjectName());
 		update.setTargetHeadCommitHash(request.getTarget().getObjectName());
@@ -297,7 +288,7 @@ public class PullRequestResource {
 		PullRequest request = pullRequestManager.load(requestId);
     	if (!SecurityUtils.canModify(request))
 			throw new UnauthorizedException();
-		pullRequestManager.saveDescription(request, description);
+		pullRequestChangeManager.changeDescription(request, description);
 		return Response.ok().build();
     }
 	

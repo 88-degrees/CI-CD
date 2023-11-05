@@ -21,9 +21,9 @@ import io.onedev.server.git.location.GitLocation;
 import io.onedev.server.git.location.SystemCurl;
 import io.onedev.server.git.location.SystemGit;
 import io.onedev.server.util.EditContext;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.validation.Validatable;
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.Editable;
 
 @Editable
 @ClassValidating
@@ -42,6 +42,8 @@ public class SystemSetting implements Serializable, Validatable {
 	private GitLocation gitLocation = new SystemGit();
 	
 	private CurlLocation curlLocation = new SystemCurl();
+	
+	private boolean disableAutoUpdateCheck;
 	
 	private boolean gravatarEnabled;
 	
@@ -113,7 +115,21 @@ public class SystemSetting implements Serializable, Validatable {
 	public void setCurlLocation(CurlLocation curlLocation) {
 		this.curlLocation = curlLocation;
 	}
-	
+
+	@Editable(order=400, description = "Auto update check is performed by requesting an image in " +
+			"your browser from onedev.io indicating new version availability, with color " +
+			"indicating severity of the update. It works the same way as how gravatar requests " +
+			"avatar images. If disabled, you are highly recommended to check update manually " +
+			"from time to time (can be done via help menu on left bottom of the screen) to see " +
+			"if there are any security/critical fixes")
+	public boolean isDisableAutoUpdateCheck() {
+		return disableAutoUpdateCheck;
+	}
+
+	public void setDisableAutoUpdateCheck(boolean disableAutoUpdateCheck) {
+		this.disableAutoUpdateCheck = disableAutoUpdateCheck;
+	}
+
 	@Editable(order=500, description="Whether or not to enable user gravatar (https://gravatar.com)")
 	public boolean isGravatarEnabled() {
 		return gravatarEnabled;
@@ -168,7 +184,12 @@ public class SystemSetting implements Serializable, Validatable {
 					isValid = false;
 				}
 			} catch (MalformedURLException e) {
-				context.buildConstraintViolationWithTemplate("Malformed url")
+				String errorMessage;
+				if (!serverUrl.startsWith("http://") && !serverUrl.startsWith("https://"))
+					errorMessage = "Should start with either http:// or https://";
+				else 
+					errorMessage = "Malformed url";
+				context.buildConstraintViolationWithTemplate(errorMessage)
 						.addPropertyNode("serverUrl").addConstraintViolation();
 				isValid = false;
 			}

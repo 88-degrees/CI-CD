@@ -5,7 +5,7 @@ import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.server.OneDev;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.exception.SystemNotReadyException;
+import io.onedev.server.exception.ServerNotReadyException;
 import io.onedev.server.git.command.AdvertiseReceiveRefsCommand;
 import io.onedev.server.git.command.AdvertiseUploadRefsCommand;
 import io.onedev.server.git.exception.GitException;
@@ -15,7 +15,6 @@ import io.onedev.server.model.User;
 import io.onedev.server.persistence.SessionManager;
 import io.onedev.server.security.CodePullAuthorizationSource;
 import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.storage.StorageManager;
 import io.onedev.server.util.ExceptionUtils;
 import io.onedev.server.util.InputStreamWrapper;
 import io.onedev.server.util.OutputStreamWrapper;
@@ -48,7 +47,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 
 import static io.onedev.commons.bootstrap.Bootstrap.BUFFER_SIZE;
@@ -64,8 +62,6 @@ public class GitFilter implements Filter {
 	
 	private final OneDev onedev;
 	
-	private final StorageManager storageManager;
-	
 	private final ProjectManager projectManager;
 	
 	private final WorkExecutor workExecutor;
@@ -77,11 +73,10 @@ public class GitFilter implements Filter {
 	private final Set<CodePullAuthorizationSource> codePullAuthorizationSources;
 	
 	@Inject
-	public GitFilter(OneDev oneDev, StorageManager storageManager, ProjectManager projectManager, 
-			WorkExecutor workExecutor, SessionManager sessionManager, ClusterManager clusterManager, 
-			Set<CodePullAuthorizationSource> codePullAuthorizationSources) {
+	public GitFilter(OneDev oneDev, ProjectManager projectManager, WorkExecutor workExecutor, 
+					 SessionManager sessionManager, ClusterManager clusterManager, 
+					 Set<CodePullAuthorizationSource> codePullAuthorizationSources) {
 		this.onedev = oneDev;
-		this.storageManager = storageManager;
 		this.projectManager = projectManager;
 		this.workExecutor = workExecutor;
 		this.sessionManager = sessionManager;
@@ -123,7 +118,7 @@ public class GitFilter implements Filter {
 	}
 	
 	protected void processPack(final HttpServletRequest request, final HttpServletResponse response) 
-			throws ServletException, IOException, InterruptedException, ExecutionException {
+			throws IOException, InterruptedException, ExecutionException {
 		Long userId = SecurityUtils.getUserId();
 		boolean clusterAccess = userId.equals(User.SYSTEM_ID);
 		
@@ -144,14 +139,14 @@ public class GitFilter implements Filter {
 		InputStream stdin = new InputStreamWrapper(ServletUtils.getInputStream(request)) {
 
 			@Override
-			public void close() throws IOException {
+			public void close() {
 			}
 			
 		};
 		OutputStream stdout = new OutputStreamWrapper(response.getOutputStream()) {
 			
 			@Override
-			public void close() throws IOException {
+			public void close() {
 			}
 			
 		};
@@ -172,9 +167,9 @@ public class GitFilter implements Filter {
 				sessionManager.closeSession();
 			}
 			
-			UUID storageServerUUID = projectManager.getStorageServerUUID(projectId, true);
-			if (storageServerUUID.equals(clusterManager.getLocalServerUUID())) {
-				File gitDir = storageManager.getProjectGitDir(projectId);
+			String activeServer = projectManager.getActiveServer(projectId, true);
+			if (activeServer.equals(clusterManager.getLocalServerAddress())) {
+				File gitDir = projectManager.getGitDir(projectId);
 				if (upload) {
 					workExecutor.submit(new PrioritizedRunnable(PRIORITY) {
 						
@@ -198,7 +193,7 @@ public class GitFilter implements Filter {
 				Client client = ClientBuilder.newClient();
 				client.property(ClientProperties.REQUEST_ENTITY_PROCESSING, "CHUNKED");
 				try {
-					String serverUrl = clusterManager.getServerUrl(storageServerUUID);
+					String serverUrl = clusterManager.getServerUrl(activeServer);
 					WebTarget target = client.target(serverUrl)
 							.path("~api/cluster/git-pack")
 							.queryParam("projectId", projectId)
@@ -207,24 +202,19 @@ public class GitFilter implements Filter {
 							.queryParam("upload", upload);
 					Invocation.Builder builder =  target.request();
 					builder.header(HttpHeaders.AUTHORIZATION, 
-							KubernetesHelper.BEARER + " " + clusterManager.getCredentialValue());
+							KubernetesHelper.BEARER + " " + clusterManager.getCredential());
 					
-					StreamingOutput os = new StreamingOutput() {
-
-						@Override
-						public void write(OutputStream output) throws IOException {
-							try {
-								byte[] buffer = new byte[BUFFER_SIZE];
-						        int length;
-					            while ((length = stdin.read(buffer)) > 0) {
-				            		output.write(buffer, 0, length);
-				            		output.flush();
-					            }
-							} finally {
-								stdin.close();
+					StreamingOutput os = output -> {
+						try {
+							byte[] buffer = new byte[BUFFER_SIZE];
+							int length;
+							while ((length = stdin.read(buffer)) > 0) {
+								output.write(buffer, 0, length);
+								output.flush();
 							}
-						}				   
-					   
+						} finally {
+							stdin.close();
+						}
 					};
 					
 					try (Response gitResponse = builder.post(Entity.entity(os, MediaType.APPLICATION_OCTET_STREAM))) {
@@ -245,7 +235,7 @@ public class GitFilter implements Filter {
 				}
 			}
 		} else {
-			File gitDir = storageManager.getProjectGitDir(projectId);
+			File gitDir = projectManager.getGitDir(projectId);
 			if (upload) { 
 				// Run immediately if accessed with cluster credential to avoid 
 				// possible deadlock as caller itself might also hold some 
@@ -324,9 +314,9 @@ public class GitFilter implements Filter {
 		
 		String protocol = request.getHeader("Git-Protocol");		
 
-		UUID storageServerUUID = projectManager.getStorageServerUUID(projectId, true);
-		if (storageServerUUID.equals(clusterManager.getLocalServerUUID())) {
-			File gitDir = storageManager.getProjectGitDir(projectId);
+		String activeServer = projectManager.getActiveServer(projectId, true);
+		if (activeServer.equals(clusterManager.getLocalServerAddress())) {
+			File gitDir = projectManager.getGitDir(projectId);
 			if (upload) 
 				new AdvertiseUploadRefsCommand(gitDir, output).protocol(protocol).run();
 			else 
@@ -334,7 +324,7 @@ public class GitFilter implements Filter {
 		} else {
 			Client client = ClientBuilder.newClient();
 			try {
-				String serverUrl = clusterManager.getServerUrl(storageServerUUID);
+				String serverUrl = clusterManager.getServerUrl(activeServer);
 				WebTarget target = client.target(serverUrl)
 						.path("~api/cluster/git-advertise-refs")
 						.queryParam("projectId", projectId)
@@ -342,7 +332,7 @@ public class GitFilter implements Filter {
 						.queryParam("upload", upload);
 				Invocation.Builder builder =  target.request();
 				builder.header(HttpHeaders.AUTHORIZATION, 
-						KubernetesHelper.BEARER + " " + clusterManager.getCredentialValue());
+						KubernetesHelper.BEARER + " " + clusterManager.getCredential());
 				try (Response gitResponse = builder.get()) {
 					KubernetesHelper.checkStatus(gitResponse);
 					try (InputStream is = gitResponse.readEntity(InputStream.class)) {
@@ -372,16 +362,16 @@ public class GitFilter implements Filter {
 				if (onedev.isReady())
 					processRefs(httpRequest, httpResponse);
 				else
-					throw new SystemNotReadyException();
+					throw new ServerNotReadyException();
 			} else if (GitSmartHttpTools.isReceivePack(httpRequest) || GitSmartHttpTools.isUploadPack(httpRequest)) {
 				if (onedev.isReady())
 					processPack(httpRequest, httpResponse);
 				else
-					throw new SystemNotReadyException();
+					throw new ServerNotReadyException();
 			} else {
 				chain.doFilter(request, response);
 			}
-		} catch (SystemNotReadyException e) {
+		} catch (ServerNotReadyException e) {
 			GitSmartHttpTools.sendError(httpRequest, httpResponse, HttpServletResponse.SC_SERVICE_UNAVAILABLE, e.getMessage());
 		} catch (UnauthorizedException|AuthenticationException e) {
 			throw e;

@@ -1,27 +1,23 @@
 package io.onedev.server.commandhandler;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.sql.Connection;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.persistence.HibernateConfig;
+import io.onedev.server.data.DataManager;
+import io.onedev.server.persistence.SessionFactoryManager;
+import io.onedev.server.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.loader.AbstractPlugin;
-import io.onedev.server.OneDev;
-import io.onedev.server.persistence.ConnectionCallable;
-import io.onedev.server.persistence.DataManager;
-import io.onedev.server.persistence.HibernateConfig;
-import io.onedev.server.persistence.SessionFactoryManager;
-import io.onedev.server.security.SecurityUtils;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
+import static io.onedev.server.persistence.PersistenceUtils.callWithTransaction;
 
 @Singleton
-public class ApplyDatabaseConstraints extends AbstractPlugin {
+public class ApplyDatabaseConstraints extends CommandHandler {
 
 	public static final String COMMAND = "apply-db-constraints";
 	
@@ -35,7 +31,8 @@ public class ApplyDatabaseConstraints extends AbstractPlugin {
 	
 	@Inject
 	public ApplyDatabaseConstraints(SessionFactoryManager sessionFactoryManager, DataManager dataManager, 
-			HibernateConfig hibernateConfig) {
+									HibernateConfig hibernateConfig) {
+		super(hibernateConfig);
 		this.sessionFactoryManager = sessionFactoryManager;
 		this.dataManager = dataManager;
 		this.hibernateConfig = hibernateConfig;
@@ -45,54 +42,50 @@ public class ApplyDatabaseConstraints extends AbstractPlugin {
 	public void start() {
 		SecurityUtils.bindAsSystem();
 		
-		if (OneDev.isServerRunning(Bootstrap.installDir)) {
-			logger.error("Please stop server before applying db constraints");
-			System.exit(1);
-		}
+		try {
+			if (doMaintenance(() -> {
+				sessionFactoryManager.start();
+				try (var conn = dataManager.openConnection()) {
+					return callWithTransaction(conn, () -> {
+						dataManager.checkDataVersion(conn, false);
 
-		sessionFactoryManager.start();
-		
-		dataManager.callWithConnection(new ConnectionCallable<Void>() {
+						logger.warn("This script is mainly used to apply database constraints after fixing database integrity issues (may happen during restore/upgrade)");
 
-			@Override
-			public Void call(Connection conn) {
-				dataManager.checkDataVersion(conn, false);
-				
-				logger.warn("This script is mainly used to apply database constraints after fixing database integrity issues (may happen during restore/upgrade)");
-				
-				BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-				while (true) {
-					logger.warn("Press 'y' to run the script, or 'n' to stop");
-					String input;
+						BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+						while (true) {
+							logger.warn("Press 'y' to run the script, or 'n' to stop");
+							String input;
+							try {
+								input = reader.readLine();
+							} catch (IOException e) {
+								throw new RuntimeException(e);
+							}
+							if (input.equalsIgnoreCase("y"))
+								break;
+							else if (input.equalsIgnoreCase("n"))
+								return false;
+						}
+
+						dataManager.dropConstraints(conn);
+						dataManager.applyConstraints(conn);
+						return true;
+					});
+				}
+			})) {
+				if (hibernateConfig.isHSQLDialect()) {
 					try {
-						input = reader.readLine();
-					} catch (IOException e) {
-						throw new RuntimeException(e);
+						Thread.sleep(1000);
+					} catch (InterruptedException e) {
 					}
-					if (input.equalsIgnoreCase("y"))
-						break;
-					else if (input.equalsIgnoreCase("n"))
-						System.exit(0);
 				}
 
-				dataManager.dropConstraints(conn);
-				dataManager.applyConstraints(conn);
-				
-				return null;
+				logger.info("Database constraints is applied successfully");
 			}
-			
-		});
-
-		if (hibernateConfig.isHSQLDialect()) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-			}
+			System.exit(0);
+		} catch (ExplicitException e) {
+			logger.error(e.getMessage());
+			System.exit(1);
 		}
-		
-		logger.info("Database constraints is applied successfully");
-		
-		System.exit(0);
 	}
 
 	@Override

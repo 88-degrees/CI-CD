@@ -1,51 +1,6 @@
 package io.onedev.server.search.code;
 
-import static io.onedev.server.search.code.FieldConstants.BLOB_HASH;
-import static io.onedev.server.search.code.FieldConstants.BLOB_INDEX_VERSION;
-import static io.onedev.server.search.code.FieldConstants.BLOB_PATH;
-import static io.onedev.server.search.code.FieldConstants.BLOB_SYMBOL_LIST;
-
-import java.io.IOException;
-import java.io.ObjectStreamException;
-import java.io.Serializable;
-import java.nio.channels.ClosedByInterruptException;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicReference;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.apache.commons.lang3.SerializationUtils;
-import org.apache.lucene.document.Document;
-import org.apache.lucene.index.BinaryDocValues;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.search.BooleanClause.Occur;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.ScoreMode;
-import org.apache.lucene.search.SearcherManager;
-import org.apache.lucene.search.SimpleCollector;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.util.BytesRef;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.revwalk.RevTree;
-import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.treewalk.TreeWalk;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.google.common.base.Preconditions;
-
 import io.onedev.commons.jsymbol.Symbol;
 import io.onedev.commons.jsymbol.SymbolExtractorRegistry;
 import io.onedev.commons.loader.ManagedSerializedForm;
@@ -60,10 +15,40 @@ import io.onedev.server.event.system.SystemStopping;
 import io.onedev.server.model.Project;
 import io.onedev.server.persistence.annotation.Transactional;
 import io.onedev.server.search.code.hit.QueryHit;
+import io.onedev.server.search.code.hit.SymbolHit;
 import io.onedev.server.search.code.query.BlobQuery;
 import io.onedev.server.search.code.query.FileQuery;
-import io.onedev.server.search.code.query.TooGeneralQueryException;
-import io.onedev.server.storage.StorageManager;
+import io.onedev.server.search.code.query.SymbolQuery;
+import org.apache.commons.lang3.SerializationUtils;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.*;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.BytesRef;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.io.IOException;
+import java.io.ObjectStreamException;
+import java.io.Serializable;
+import java.nio.channels.ClosedByInterruptException;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.onedev.server.search.code.FieldConstants.*;
 
 @Singleton
 public class DefaultCodeSearchManager implements CodeSearchManager, Serializable {
@@ -71,8 +56,6 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 	private static final int MAX_BLOB_PATH_QUERY_COUNT = 5;
 	
 	private static final Logger logger = LoggerFactory.getLogger(DefaultCodeSearchManager.class);
-	
-	private final StorageManager storageManager;
 	
 	private final Map<Long, SearcherManager> searcherManagers = new ConcurrentHashMap<>();
 	
@@ -83,9 +66,8 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 	private final ClusterManager clusterManager;
 	
 	@Inject
-	public DefaultCodeSearchManager(StorageManager storageManager, CodeIndexManager indexManager, 
-			ProjectManager projectManager, ClusterManager clusterManager) {
-		this.storageManager = storageManager;
+	public DefaultCodeSearchManager(CodeIndexManager indexManager, ProjectManager projectManager, 
+									ClusterManager clusterManager) {
 		this.indexManager = indexManager;
 		this.projectManager = projectManager;
 		this.clusterManager = clusterManager;
@@ -102,7 +84,7 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 			if (searcherManager == null) synchronized (searcherManagers) {
 				searcherManager = searcherManagers.get(projectId);
 				if (searcherManager == null) {
-					Directory directory = FSDirectory.open(storageManager.getProjectIndexDir(projectId).toPath());
+					Directory directory = FSDirectory.open(projectManager.getIndexDir(projectId).toPath());
 					if (DirectoryReader.indexExists(directory)) {
 						searcherManager = new SearcherManager(directory, null);
 						searcherManagers.put(projectId, searcherManager);
@@ -113,7 +95,7 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 		} catch (ClosedByInterruptException e) {
 			// catch this exception and convert to normal InterruptedException as 
 			// we do not want to throw the original exception to surprise the user
-			// when they searches by typing fast (and subsequent typing will cancel 
+			// when they search by typing fast (and subsequent typing will cancel 
 			// search of previous typing by interrupting previous search thread 
 			// which may creating the searcher manager if it does not exist yet
 			throw new InterruptedException();
@@ -123,10 +105,9 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 	}
 	
 	@Override
-	public List<QueryHit> search(Project project, ObjectId commitId, final BlobQuery query) 
-			throws InterruptedException {
+	public List<QueryHit> search(Project project, ObjectId commitId, final BlobQuery query) {
 		Long projectId = project.getId();
-		return projectManager.runOnProjectServer(projectId, new ClusterTask<List<QueryHit>>() {
+		return projectManager.runOnActiveServer(projectId, new ClusterTask<List<QueryHit>>() {
 
 			private static final long serialVersionUID = 1L;
 
@@ -159,7 +140,7 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 							
 							@Override
 							public void collect(int doc) throws IOException {
-								if (hits.size() < query.getCount() && !Thread.currentThread().isInterrupted()) {
+								if (hits.size() < query.getCount()) {
 									Preconditions.checkState(blobPathValues.advanceExact(doc));
 									String blobPath = blobPathValues.binaryValue().utf8ToString();
 									
@@ -169,6 +150,8 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 											query.collect(searcher, treeWalk, hits);
 										checkedBlobPaths.add(blobPath);
 									}
+								} else {
+									throw new CollectionTerminatedException();
 								}
 							}
 	
@@ -202,7 +185,7 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 		Long projectId = project.getId();
 		
 		// Use Java serialization to maintain symbol parent/child relationship relying on object identity comparison 
-		byte[] bytes = projectManager.runOnProjectServer(projectId, new ClusterTask<byte[]>() {
+		byte[] bytes = projectManager.runOnActiveServer(projectId, new ClusterTask<byte[]>() {
 
 			private static final long serialVersionUID = 1L;
 
@@ -260,7 +243,7 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 							BytesRef bytesRef = document.getBinaryValue(BLOB_SYMBOL_LIST.name());
 							if (bytesRef != null) {
 								try {
-									symbolsRef.set((List<Symbol>) SerializationUtils.deserialize(bytesRef.bytes));
+									symbolsRef.set(SerializationUtils.deserialize(bytesRef.bytes));
 								} catch (Exception e) {
 									logger.error("Error deserializing symbols", e);
 								}
@@ -303,27 +286,20 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 	public void on(EntityRemoved event) {
 		if (event.getEntity() instanceof Project) {
 			Long projectId = event.getEntity().getId();	
-			UUID storageServerUUID = projectManager.getStorageServerUUID(projectId, false);
-			if (storageServerUUID != null) {
-				clusterManager.runOnServer(storageServerUUID, new ClusterTask<Void>() {
-
-					private static final long serialVersionUID = 1L;
-
-					@Override
-					public Void call() throws Exception {
-						synchronized (searcherManagers) {
-							SearcherManager searcherManager = searcherManagers.remove(projectId);
-							if (searcherManager != null) {
-								try {
-									searcherManager.close();
-								} catch (IOException e) {
-									throw ExceptionUtils.unchecked(e);
-								}
+			String activeServer = projectManager.getActiveServer(projectId, false);
+			if (activeServer != null) {
+				clusterManager.runOnServer(activeServer, () -> {
+					synchronized (searcherManagers) {
+						SearcherManager searcherManager = searcherManagers.remove(projectId);
+						if (searcherManager != null) {
+							try {
+								searcherManager.close();
+							} catch (IOException e) {
+								throw ExceptionUtils.unchecked(e);
 							}
 						}
-						return null;
 					}
-					
+					return null;
 				});
 			}
 		}
@@ -343,40 +319,51 @@ public class DefaultCodeSearchManager implements CodeSearchManager, Serializable
 		}
 	}
 
+	@Nullable
 	@Override
-	public String findBlobPath(Project project, ObjectId commit, String fileName, String partialBlobPath) {
-		Long projectId = project.getId();
-		return projectManager.runOnProjectServer(projectId, new ClusterTask<String>() {
-
-			private static final long serialVersionUID = 1L;
-
-			@Override
-			public String call() throws Exception {
-				FileQuery.Builder builder = new FileQuery.Builder();
-				builder.caseSensitive(true);
-				builder.count(MAX_BLOB_PATH_QUERY_COUNT);
-				
-				String blobPath = null;
-				FileQuery query = builder.fileNames(fileName).build();
-				try {
-					for (QueryHit hit: search(projectId, commit, query)) {
-						if (partialBlobPath == null || hit.getBlobPath().contains(partialBlobPath)) { 
-							if (blobPath == null) {
-								blobPath = hit.getBlobPath();
-							} else {
-								blobPath = null;
-								break;
-							}
-						}
-					}
-				} catch (TooGeneralQueryException e) {
-				} catch (InterruptedException e) {
-					throw new RuntimeException(e);
+	public String findBlobPathBySuffix(Project project, ObjectId commit, String blobPathSuffix) {
+		var fileName = blobPathSuffix;
+		var lastIndex = fileName.lastIndexOf('/');
+		if (lastIndex != -1)
+			fileName = fileName.substring(lastIndex + 1);
+		
+		var query = new FileQuery.Builder(fileName).caseSensitive(true).count(MAX_BLOB_PATH_QUERY_COUNT).build();
+		String blobPath = null;
+		for (QueryHit hit: search(project, commit, query)) {
+			if (hit.getBlobPath().endsWith(blobPathSuffix)) {
+				if (blobPath == null) {
+					blobPath = hit.getBlobPath();
+				} else {
+					blobPath = null;
+					break;
 				}
-				return blobPath;
 			}
-			
-		});
+		}
+		return blobPath;
+	}
+	
+	@Nullable
+	@Override
+	public SymbolHit findPrimarySymbol(Project project, ObjectId commitId, String symbolFQN, String fqnSeparator) {
+		var symbolName = symbolFQN;
+		var lastIndex = symbolName.lastIndexOf(fqnSeparator);
+		if (lastIndex != -1)
+			symbolName = symbolName.substring(lastIndex + 1);
+
+		var query = new SymbolQuery.Builder(symbolName).caseSensitive(true).primary(true).count(MAX_BLOB_PATH_QUERY_COUNT).build();
+		SymbolHit found = null;
+		for (var hit : search(project, commitId, query)) {
+			var symbolHit = (SymbolHit) hit;
+			if (symbolFQN.equals(symbolHit.getSymbol().getFQN())) {
+				if (found == null) {
+					found = symbolHit;
+				} else {
+					logger.warn("Multiple primary symbols matching: " + symbolFQN);
+					found = null;
+				}
+			}
+		}
+		return found;
 	}
 
 }

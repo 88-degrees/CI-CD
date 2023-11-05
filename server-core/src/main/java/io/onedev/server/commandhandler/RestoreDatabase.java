@@ -1,27 +1,25 @@
 package io.onedev.server.commandhandler;
 
-import java.io.File;
-import java.sql.Connection;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.bootstrap.Command;
-import io.onedev.commons.loader.AbstractPlugin;
+import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.FileUtils;
-import io.onedev.server.OneDev;
-import io.onedev.server.persistence.ConnectionCallable;
-import io.onedev.server.persistence.DataManager;
+import io.onedev.server.data.DataManager;
 import io.onedev.server.persistence.HibernateConfig;
 import io.onedev.server.persistence.SessionFactoryManager;
 import io.onedev.server.security.SecurityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.io.File;
+import java.sql.SQLException;
+
+import static io.onedev.server.persistence.PersistenceUtils.callWithTransaction;
 
 @Singleton
-public class RestoreDatabase extends AbstractPlugin {
+public class RestoreDatabase extends CommandHandler {
 
 	private static final Logger logger = LoggerFactory.getLogger(RestoreDatabase.class);
 	
@@ -33,9 +31,12 @@ public class RestoreDatabase extends AbstractPlugin {
 	
 	private final HibernateConfig hibernateConfig;
 	
+	private File backupFile;
+	
 	@Inject
-	public RestoreDatabase(DataManager dataManager, SessionFactoryManager sessionFactoryManager, 
-			HibernateConfig hibernateConfig) {
+	public RestoreDatabase(DataManager dataManager, SessionFactoryManager sessionFactoryManager,
+                           HibernateConfig hibernateConfig) {
+		super(hibernateConfig);
 		this.dataManager = dataManager;
 		this.sessionFactoryManager = sessionFactoryManager;
 		this.hibernateConfig = hibernateConfig;
@@ -50,7 +51,7 @@ public class RestoreDatabase extends AbstractPlugin {
 			System.exit(1);
 		}
 		
-		File backupFile = new File(Bootstrap.command.getArgs()[0]);
+		backupFile = new File(Bootstrap.command.getArgs()[0]);
 		if (!backupFile.isAbsolute() && System.getenv("WRAPPER_INIT_DIR") != null)
 			backupFile = new File(System.getenv("WRAPPER_INIT_DIR"), backupFile.getPath());
 		
@@ -59,88 +60,82 @@ public class RestoreDatabase extends AbstractPlugin {
 			System.exit(1);
 		}
 		
-		boolean validateData = true;
-		if (Bootstrap.command.getArgs().length >= 2)
-			validateData = Boolean.parseBoolean(Bootstrap.command.getArgs()[1]);
-		
 		logger.info("Restoring database from {}...", backupFile.getAbsolutePath());
-		
-		if (OneDev.isServerRunning(Bootstrap.installDir)) {
-			logger.error("Please stop server before restoring");
+
+		try {
+			doMaintenance(() -> {
+				sessionFactoryManager.start();
+
+				if (backupFile.isFile()) {
+					File dataDir = FileUtils.createTempDir("restore");
+					try {
+						FileUtils.unzip(backupFile, dataDir);
+						doRestore(dataDir);
+					} finally {
+						FileUtils.deleteDir(dataDir);
+					}
+				} else {
+					doRestore(backupFile);
+				}
+
+				if (hibernateConfig.isHSQLDialect()) {
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException e) {
+					}
+				}
+
+				logger.info("Database is successfully restored from {}", backupFile.getAbsolutePath());
+				return null;
+			});
+			System.exit(0);
+		} catch (ExplicitException e) {
+			logger.error(e.getMessage());
 			System.exit(1);
 		}
-
-		sessionFactoryManager.start();
-		
-		if (backupFile.isFile()) {
-			File dataDir = FileUtils.createTempDir("restore");
-			try {
-				FileUtils.unzip(backupFile, dataDir);
-				doRestore(dataDir, validateData);
-			} finally {
-				FileUtils.deleteDir(dataDir);
-			}
-		} else {
-			doRestore(backupFile, validateData);
-		}
-
-		if (hibernateConfig.isHSQLDialect()) {
-			try {
-				Thread.sleep(1000);
-			} catch (InterruptedException e) {
-			}
-		}
-		
-		logger.info("Database is successfully restored from {}", backupFile.getAbsolutePath());
-		
-		System.exit(0);
 	}
 
-	private void doRestore(File dataDir, boolean validateData) {
+	private void doRestore(File dataDir) {
 		dataManager.migrateData(dataDir);
 		
-		if (validateData)
-			dataManager.validateData(dataDir);
-
-		dataManager.callWithConnection(new ConnectionCallable<Void>() {
-
-			@Override
-			public Void call(Connection conn) {
+		try (var conn = dataManager.openConnection()) {
+			callWithTransaction(conn, () -> {
 				String dbDataVersion = dataManager.checkDataVersion(conn, true);
 
 				if (dbDataVersion != null) {
 					logger.info("Cleaning database...");
 					dataManager.cleanDatabase(conn);
 				}
-				
+
 				logger.info("Creating tables...");
 				dataManager.createTables(conn);
-				
+
 				return null;
-			}
-			
-		});
+			});
+		} catch (SQLException e) {
+			throw new RuntimeException(e);
+		}
 				
 		logger.info("Importing data into database...");
 		dataManager.importData(dataDir);
 
-		dataManager.callWithConnection(new ConnectionCallable<Void>() {
-
-			@Override
-			public Void call(Connection conn) {
+		try (var conn = dataManager.openConnection()) {
+			callWithTransaction(conn, () -> {
 				logger.info("Applying foreign key constraints...");
 				try {
-					dataManager.applyConstraints(conn);		
+					dataManager.applyConstraints(conn);
 				} catch (Exception e) {
-					logger.error("Failed to apply database constraints", e);
-					logger.info("If above error is caused by foreign key constraint violations, you may fix it via your database sql tool, "
-							+ "and then run {} to reapply database constraints", Command.getScript("apply-db-constraints"));
-					System.exit(1);
+					var message = String.format("Failed to apply database constraints. If this error is caused by " +
+							"foreign key constraint violations, you may fix it via your database sql tool, and " +
+							"then run %s to reapply database constraints", 
+							Command.getScript("apply-db-constraints"));
+					throw new RuntimeException(message);
 				}
 				return null;
-			}
-			
-		});
+			});
+		} catch (SQLException e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	@Override

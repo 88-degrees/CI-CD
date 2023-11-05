@@ -2,6 +2,9 @@ package io.onedev.server.web.component.user.profileedit;
 
 import java.io.Serializable;
 
+import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.web.page.my.profile.MyProfilePage;
 import org.apache.wicket.Session;
 import org.apache.wicket.feedback.FencedFeedbackPanel;
 import org.apache.wicket.markup.html.form.Form;
@@ -56,7 +59,7 @@ public class ProfileEditPanel extends GenericPanel<User> {
 				editor.getDescriptor().copyProperties(object, getUser());
 			}
 			
-		}, Sets.newHashSet("password"), true);
+		}, Sets.newHashSet("password", "guest"), true);
 		
 		Form<?> form = new Form<Void>("form") {
 
@@ -74,7 +77,7 @@ public class ProfileEditPanel extends GenericPanel<User> {
 				} 
 				
 				if (editor.isValid()) {
-					userManager.save(user, oldName);
+					userManager.update(user, oldName);
 					Session.get().success("Profile updated");
 					setResponsePage(getPage().getClass(), getPage().getPageParameters());
 				}
@@ -85,6 +88,14 @@ public class ProfileEditPanel extends GenericPanel<User> {
 		
 		form.add(new FencedFeedbackPanel("feedback", form).setEscapeModelStrings(false));
 		
+		boolean canDelete;
+		if (getPage() instanceof MyProfilePage) {
+			canDelete = !getUser().isRoot()
+					&& SecurityUtils.getPrevUserId().equals(0L)
+					&& OneDev.getInstance(SettingManager.class).getSecuritySetting().isEnableSelfDeregister();
+		} else {
+			canDelete = !getUser().isRoot() && !getUser().equals(SecurityUtils.getUser());
+		}
 		form.add(new UserDeleteLink("delete") {
 
 			@Override
@@ -92,7 +103,7 @@ public class ProfileEditPanel extends GenericPanel<User> {
 				return ProfileEditPanel.this.getUser();
 			}
 
-		});
+		}.setVisible(canDelete));
 
 		add(form);
 	}

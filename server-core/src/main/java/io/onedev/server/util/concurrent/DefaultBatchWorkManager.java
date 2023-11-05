@@ -1,26 +1,20 @@
 package io.onedev.server.util.concurrent;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.PriorityBlockingQueue;
-import java.util.stream.Collectors;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
+import io.onedev.server.event.Listen;
+import io.onedev.server.event.system.SystemStarted;
+import io.onedev.server.event.system.SystemStopping;
+import io.onedev.server.security.SecurityUtils;
 import org.apache.shiro.subject.Subject;
 import org.apache.shiro.util.ThreadContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.server.event.Listen;
-import io.onedev.server.event.system.SystemStarted;
-import io.onedev.server.event.system.SystemStopping;
-import io.onedev.server.security.SecurityUtils;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.stream.Collectors;
 
 @Singleton
 public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
@@ -54,9 +48,11 @@ public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
 	}
 
 	@Listen
-	public synchronized void on(SystemStopping event) {
-		thread = null;
-		notify();
+	public void on(SystemStopping event) {
+		synchronized (this) {
+			thread = null;
+			notify();
+		}
 	}
 
 	@Override
@@ -70,8 +66,8 @@ public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
 					works.queued.drainTo(works.working, worker.getMaxBatchSize());
 					if (!works.working.isEmpty()) {
 						double priority = works.working.stream().collect(Collectors.averagingInt(Prioritized::getPriority));
-						workExecutor.submit(new PrioritizedRunnable((int)priority) {
-							
+						workExecutor.submit(new PrioritizedRunnable((int) priority) {
+
 							@Override
 							public void run() {
 								try {
@@ -79,13 +75,13 @@ public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
 								} catch (Exception e) {
 									logger.error("Error doing works", e);
 								} finally {
-									synchronized(DefaultBatchWorkManager.this) {
+									synchronized (DefaultBatchWorkManager.this) {
 										works.working.clear();
 										DefaultBatchWorkManager.this.notify();
 									}
 								}
 							}
-							
+
 						});
 					} else {
 						it.remove();
@@ -94,7 +90,7 @@ public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
 			}
 			try {
 				wait();
-			} catch (InterruptedException e) {
+			} catch (InterruptedException ignored) {
 			}
 		}
 	}
@@ -105,7 +101,7 @@ public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
 		getWorks(new BatchWorker(worker.getId(), worker.getMaxBatchSize()) {
 
 			@Override
-			public void doWorks(Collection<Prioritized> works) {
+			public void doWorks(List<Prioritized> works) {
 				ThreadContext.bind(subject);
 				worker.doWorks(works);
 			}
@@ -118,7 +114,7 @@ public class DefaultBatchWorkManager implements BatchWorkManager, Runnable {
 	private static class Works {
 		BlockingQueue<Prioritized> queued = new PriorityBlockingQueue<>();
 		
-		Collection<Prioritized> working = new ArrayList<>();
+		List<Prioritized> working = new ArrayList<>();
 	}
 
 }

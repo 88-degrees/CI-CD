@@ -3,7 +3,6 @@ package io.onedev.server.web.component.markdown;
 import static org.apache.wicket.ajax.attributes.CallbackParameter.explicit;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -63,7 +62,7 @@ import io.onedev.server.model.PullRequest;
 import io.onedev.server.model.User;
 import io.onedev.server.util.CollectionUtils;
 import io.onedev.server.util.FilenameUtils;
-import io.onedev.server.util.validation.ProjectPathValidator;
+import io.onedev.server.validation.validator.ProjectPathValidator;
 import io.onedev.server.web.asset.emoji.Emojis;
 import io.onedev.server.web.avatar.AvatarManager;
 import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
@@ -274,13 +273,13 @@ public class MarkdownEditor extends FormComponentPanel<String> {
 			
 		});
 		
-		edit.add(input = new TextArea<String>("input", Model.of(getModelObject())) {
+		edit.add(input = new TextArea<>("input", Model.of(getModelObject())) {
 
 			@Override
 			protected boolean shouldTrimInput() {
 				return MarkdownEditor.this.shouldTrimInput();
 			}
-			
+
 		});
 		for (Behavior behavior: getInputBehaviors()) 
 			input.add(behavior);
@@ -416,15 +415,15 @@ public class MarkdownEditor extends FormComponentPanel<String> {
 				case "referenceQuery":
 					String referenceQuery = params.getParameterValue("param1").toOptionalString();
 					String referenceQueryType = params.getParameterValue("param2").toOptionalString();
-					String referenceProjectName = params.getParameterValue("param3").toOptionalString();
+					String referenceProjectPath = params.getParameterValue("param3").toOptionalString();
 					List<Map<String, String>> referenceList = new ArrayList<>();
 					Project referenceProject;
-					if (StringUtils.isNotBlank(referenceProjectName)) 
-						referenceProject = OneDev.getInstance(ProjectManager.class).findByPath(referenceProjectName);
+					if (StringUtils.isNotBlank(referenceProjectPath)) 
+						referenceProject = OneDev.getInstance(ProjectManager.class).findByPath(referenceProjectPath);
 					else
 						referenceProject = null;
-					if (referenceProject != null || StringUtils.isBlank(referenceProjectName)) {
-						if ("issue".equals(referenceQueryType)) {
+					if (referenceProject != null || StringUtils.isBlank(referenceProjectPath)) {
+						if (referenceQueryType.length() == 0 || "issue".equals(referenceQueryType)) {
 							for (Issue issue: getReferenceSupport().findIssues(referenceProject, referenceQuery, ATWHO_LIMIT)) {
 								Map<String, String> referenceMap = new HashMap<>();
 								referenceMap.put("referenceType", "issue");
@@ -433,7 +432,7 @@ public class MarkdownEditor extends FormComponentPanel<String> {
 								referenceMap.put("searchKey", issue.getNumber() + " " + StringUtils.deleteWhitespace(issue.getTitle()));
 								referenceList.add(referenceMap);
 							}
-						} else if ("pullrequest".equals(referenceQueryType)) {
+						} else if ("pr".equals(referenceQueryType) || "pullrequest".equals(referenceQueryType)) {
 							for (PullRequest request: getReferenceSupport().findPullRequests(referenceProject, referenceQuery, ATWHO_LIMIT)) {
 								Map<String, String> referenceMap = new HashMap<>();
 								referenceMap.put("referenceType", "pull request");
@@ -628,16 +627,6 @@ public class MarkdownEditor extends FormComponentPanel<String> {
 	@Nullable
 	public BlobRenderContext getBlobRenderContext() {
 		return blobRenderContext;
-	}
-
-	static class ReferencedEntity implements Serializable {
-		String entityType;
-		
-		String entityTitle;
-		
-		String entityNumber;
-		
-		String searchKey;
 	}
 	
 }

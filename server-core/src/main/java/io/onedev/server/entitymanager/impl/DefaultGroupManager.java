@@ -1,17 +1,8 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.List;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.hibernate.criterion.MatchMode;
-import org.hibernate.criterion.Order;
-import org.hibernate.criterion.Restrictions;
-
+import com.google.common.base.Preconditions;
 import com.hazelcast.core.HazelcastInstance;
-
+import com.hazelcast.cp.IAtomicLong;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.entitymanager.GroupManager;
 import io.onedev.server.entitymanager.IssueFieldManager;
@@ -20,7 +11,7 @@ import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.event.Listen;
 import io.onedev.server.event.entity.EntityPersisted;
 import io.onedev.server.event.entity.EntityRemoved;
-import io.onedev.server.event.system.SystemStarted;
+import io.onedev.server.event.system.SystemStarting;
 import io.onedev.server.model.Group;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.support.code.BranchProtection;
@@ -34,6 +25,17 @@ import io.onedev.server.persistence.dao.EntityCriteria;
 import io.onedev.server.util.facade.GroupCache;
 import io.onedev.server.util.facade.GroupFacade;
 import io.onedev.server.util.usage.Usage;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.List;
+
+import static io.onedev.server.model.Group.PROP_NAME;
+import static org.hibernate.criterion.Restrictions.eq;
 
 @Singleton
 public class DefaultGroupManager extends BaseEntityManager<Group> implements GroupManager {
@@ -64,59 +66,40 @@ public class DefaultGroupManager extends BaseEntityManager<Group> implements Gro
 	
     @Sessional
     @Listen
-    public void on(SystemStarted event) {
+    public void on(SystemStarting event) {
 		HazelcastInstance hazelcastInstance = clusterManager.getHazelcastInstance();
-        cache = new GroupCache(hazelcastInstance.getReplicatedMap("groupCache"));
-        
-    	for (Group group: query()) 
-    		cache.put(group.getId(), group.getFacade());
-    }
-	
-    @Transactional
-    @Listen
-    public void on(EntityRemoved event) {
-    	if (event.getEntity() instanceof Group) {
-    		Long id = event.getEntity().getId();
-    		transactionManager.runAfterCommit(new Runnable() {
+        cache = new GroupCache(hazelcastInstance.getMap("groupCache"));
 
-				@Override
-				public void run() {
-			    	cache.remove(id);
-				}
-				
-    		});
-    	}
-    }
-    
-    @Transactional
-    @Listen
-    public void on(EntityPersisted event) {
-    	if (event.getEntity() instanceof Group) 
-    		cacheAfterCommit((Group) event.getEntity());
-    }
-    
-    private void cacheAfterCommit(Group group) {
-    	GroupFacade facade = group.getFacade();
-		transactionManager.runAfterCommit(new Runnable() {
-
-			@Override
-			public void run() {
-				if (cache != null)
-					cache.put(facade.getId(), facade);
-			}
-			
+		IAtomicLong cacheInited = hazelcastInstance.getCPSubsystem().getAtomicLong("groupCacheInited");
+		clusterManager.init(cacheInited, () -> {
+			for (Group group: query())
+				cache.put(group.getId(), group.getFacade());
+			return 1L;
 		});
     }
     
 	@Transactional
 	@Override
-	public void save(Group group, String oldName) {
+	public void create(Group group) {
+		Preconditions.checkState(group.isNew());
+		dao.persist(group);
+	}
+
+	@Transactional
+	@Override
+	public void update(Group group, String oldName) {
+		Preconditions.checkState(!group.isNew());
 		if (oldName != null && !oldName.equals(group.getName())) {
 			for (Project project: projectManager.query()) {
-				for (BranchProtection protection: project.getBranchProtections()) 
-					protection.onRenameGroup(oldName, group.getName());
-				for (TagProtection protection: project.getTagProtections())
-					protection.onRenameGroup(oldName, group.getName());
+				try {
+					for (BranchProtection protection : project.getBranchProtections())
+						protection.onRenameGroup(oldName, group.getName());
+					for (TagProtection protection : project.getTagProtections())
+						protection.onRenameGroup(oldName, group.getName());
+					project.getBuildSetting().onRenameGroup(oldName, group.getName());
+				} catch (Exception e) {
+					throw new RuntimeException("Error checking group reference in project '" + project.getPath() + "'", e);
+				}
 			}
 			
 			settingManager.onRenameGroup(oldName, group.getName());
@@ -130,30 +113,36 @@ public class DefaultGroupManager extends BaseEntityManager<Group> implements Gro
 	public void delete(Group group) {
     	Usage usage = new Usage();
 		for (Project project: projectManager.query()) {
-			Usage usedInProject = new Usage();
-			for (BranchProtection protection: project.getBranchProtections()) 
-				usedInProject.add(protection.onDeleteGroup(group.getName()));
-			for (TagProtection protection: project.getTagProtections()) 
-				usedInProject.add(protection.onDeleteGroup(group.getName()));
-			usedInProject.prefix("project '" + project.getPath() + "': settings");
-			usage.add(usedInProject);
+			try {
+				Usage usageInProject = new Usage();
+				for (BranchProtection protection : project.getBranchProtections())
+					usageInProject.add(protection.onDeleteGroup(group.getName()));
+				for (TagProtection protection : project.getTagProtections())
+					usageInProject.add(protection.onDeleteGroup(group.getName()));
+				project.getBuildSetting().onDeleteGroup(group.getName());
+				usageInProject.prefix("project '" + project.getPath() + "': settings");
+				usage.add(usageInProject);
+			} catch (Exception e) {
+				throw new RuntimeException("Error checking group reference in project '" + project.getPath() + "'", e);
+			}
 		}
-
 		usage.add(settingManager.onDeleteGroup(group.getName()));
-		
 		usage.checkInUse("Group '" + group.getName() + "'");
-		
+
 		dao.remove(group);
 	}
 
 	@Sessional
     @Override
-    public Group find(String groupName) {
-		GroupFacade facade = cache.find(groupName);
+    public Group find(String name) {
+		/*
+		GroupFacade facade = cache.find(name);
 		if (facade != null)
 			return load(facade.getId());
 		else
 			return null;
+		 */
+		return find(newCriteria().add(eq(PROP_NAME, name)));
     }
 
 	@Override
@@ -193,9 +182,27 @@ public class DefaultGroupManager extends BaseEntityManager<Group> implements Gro
 	@Override
 	public List<Group> queryAdminstrator() {
 		EntityCriteria<Group> criteria = EntityCriteria.of(Group.class);
-		criteria.add(Restrictions.eq(Group.PROP_ADMINISTRATOR, true));
+		criteria.add(eq(Group.PROP_ADMINISTRATOR, true));
 		criteria.setCacheable(true);
 		return query(criteria);
 	}
 
+	@Transactional
+	@Listen
+	public void on(EntityPersisted event) {
+		if (event.getEntity() instanceof Group) {
+			var facade = (GroupFacade) event.getEntity().getFacade();
+			transactionManager.runAfterCommit(() -> cache.put(facade.getId(), facade));
+		}
+	}
+
+	@Transactional
+	@Listen
+	public void on(EntityRemoved event) {
+		if (event.getEntity() instanceof Group) {
+			var id = event.getEntity().getId();
+			transactionManager.runAfterCommit(() -> cache.remove(id));
+		}
+	}
+	
 }

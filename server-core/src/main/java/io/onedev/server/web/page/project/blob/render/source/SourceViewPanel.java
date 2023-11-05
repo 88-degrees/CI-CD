@@ -1,21 +1,71 @@
 package io.onedev.server.web.page.project.blob.render.source;
 
-import static org.apache.wicket.ajax.attributes.CallbackParameter.explicit;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-
-import javax.annotation.Nullable;
-import javax.servlet.http.Cookie;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Preconditions;
+import io.onedev.commons.jsymbol.Symbol;
+import io.onedev.commons.jsymbol.SymbolExtractor;
+import io.onedev.commons.jsymbol.SymbolExtractorRegistry;
+import io.onedev.commons.utils.LinearRange;
+import io.onedev.commons.utils.PlanarRange;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.OneDev;
+import io.onedev.server.attachment.ProjectAttachmentSupport;
+import io.onedev.server.codequality.CodeProblem;
+import io.onedev.server.codequality.CodeProblemContribution;
+import io.onedev.server.codequality.CoverageStatus;
+import io.onedev.server.codequality.LineCoverageContribution;
+import io.onedev.server.entitymanager.BuildManager;
+import io.onedev.server.entitymanager.CodeCommentManager;
+import io.onedev.server.entitymanager.CodeCommentReplyManager;
+import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
+import io.onedev.server.git.BlameBlock;
+import io.onedev.server.git.Blob;
+import io.onedev.server.git.BlobIdent;
+import io.onedev.server.git.GitUtils;
+import io.onedev.server.git.service.GitService;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.CompareContext;
+import io.onedev.server.model.support.Mark;
+import io.onedev.server.search.code.CodeSearchManager;
+import io.onedev.server.search.code.hit.QueryHit;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.DateUtils;
+import io.onedev.server.util.Similarities;
+import io.onedev.server.util.diff.DiffUtils;
+import io.onedev.server.util.patternset.PatternSet;
+import io.onedev.server.web.ajaxlistener.ConfirmLeaveListener;
+import io.onedev.server.web.asset.selectbytyping.SelectByTypingResourceReference;
+import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
+import io.onedev.server.web.behavior.ChangeObserver;
+import io.onedev.server.web.behavior.OnTypingDoneBehavior;
+import io.onedev.server.web.behavior.blamemessage.BlameMessageBehavior;
+import io.onedev.server.web.component.codecomment.CodeCommentPanel;
+import io.onedev.server.web.component.comment.CommentInput;
+import io.onedev.server.web.component.floating.FloatingPanel;
+import io.onedev.server.web.component.link.ViewStateAwareAjaxLink;
+import io.onedev.server.web.component.markdown.SuggestionSupport;
+import io.onedev.server.web.component.menu.MenuItem;
+import io.onedev.server.web.component.modal.ModalLink;
+import io.onedev.server.web.component.modal.ModalPanel;
+import io.onedev.server.web.component.sourceformat.OptionChangeCallback;
+import io.onedev.server.web.component.sourceformat.SourceFormatPanel;
+import io.onedev.server.web.component.suggestionapply.SuggestionApplyBean;
+import io.onedev.server.web.component.suggestionapply.SuggestionApplyModalPanel;
+import io.onedev.server.web.component.svg.SpriteImage;
+import io.onedev.server.web.component.symboltooltip.SymbolTooltipPanel;
+import io.onedev.server.web.page.project.blob.render.BlobRenderContext;
+import io.onedev.server.web.page.project.blob.render.BlobRenderContext.Mode;
+import io.onedev.server.web.page.project.blob.render.BlobRenderer;
+import io.onedev.server.web.page.project.blob.render.view.BlobViewPanel;
+import io.onedev.server.web.page.project.blob.render.view.Positionable;
+import io.onedev.server.web.page.project.blob.search.SearchMenuContributor;
+import io.onedev.server.web.page.project.commits.CommitDetailPage;
+import io.onedev.server.web.util.AnnotationInfo;
+import io.onedev.server.web.util.CodeCommentInfo;
+import io.onedev.server.web.util.WicketUtils;
 import org.apache.wicket.Component;
+import org.apache.wicket.Session;
 import org.apache.wicket.ajax.AjaxChannel;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
@@ -24,7 +74,6 @@ import org.apache.wicket.ajax.form.OnChangeAjaxBehavior;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
 import org.apache.wicket.ajax.markup.html.form.AjaxButton;
 import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
 import org.apache.wicket.extensions.markup.html.repeater.tree.ITreeProvider;
 import org.apache.wicket.extensions.markup.html.repeater.tree.NestedTree;
 import org.apache.wicket.extensions.markup.html.repeater.tree.theme.HumanTheme;
@@ -55,75 +104,11 @@ import org.slf4j.LoggerFactory;
 import org.unbescape.html.HtmlEscape;
 import org.unbescape.javascript.JavaScriptEscape;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Preconditions;
+import javax.annotation.Nullable;
+import javax.servlet.http.Cookie;
+import java.util.*;
 
-import io.onedev.commons.jsymbol.Symbol;
-import io.onedev.commons.jsymbol.SymbolExtractor;
-import io.onedev.commons.jsymbol.SymbolExtractorRegistry;
-import io.onedev.commons.utils.LinearRange;
-import io.onedev.commons.utils.PlanarRange;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.server.OneDev;
-import io.onedev.server.attachment.ProjectAttachmentSupport;
-import io.onedev.server.codequality.CodeProblem;
-import io.onedev.server.codequality.CodeProblemContribution;
-import io.onedev.server.codequality.CoverageStatus;
-import io.onedev.server.codequality.LineCoverageContribution;
-import io.onedev.server.entitymanager.BuildManager;
-import io.onedev.server.entitymanager.CodeCommentManager;
-import io.onedev.server.entitymanager.CodeCommentReplyManager;
-import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
-import io.onedev.server.git.BlameBlock;
-import io.onedev.server.git.Blob;
-import io.onedev.server.git.BlobIdent;
-import io.onedev.server.git.GitUtils;
-import io.onedev.server.git.service.GitService;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.CodeCommentReply;
-import io.onedev.server.model.CodeCommentStatusChange;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.User;
-import io.onedev.server.model.support.CompareContext;
-import io.onedev.server.model.support.Mark;
-import io.onedev.server.search.code.CodeSearchManager;
-import io.onedev.server.search.code.hit.QueryHit;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.DateUtils;
-import io.onedev.server.util.Similarities;
-import io.onedev.server.util.patternset.PatternSet;
-import io.onedev.server.web.ajaxlistener.ConfirmLeaveListener;
-import io.onedev.server.web.asset.selectbytyping.SelectByTypingResourceReference;
-import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
-import io.onedev.server.web.behavior.OnTypingDoneBehavior;
-import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.behavior.blamemessage.BlameMessageBehavior;
-import io.onedev.server.web.component.codecomment.CodeCommentPanel;
-import io.onedev.server.web.component.floating.FloatingPanel;
-import io.onedev.server.web.component.link.ViewStateAwareAjaxLink;
-import io.onedev.server.web.component.markdown.SuggestionSupport;
-import io.onedev.server.web.component.menu.MenuItem;
-import io.onedev.server.web.component.modal.ModalLink;
-import io.onedev.server.web.component.modal.ModalPanel;
-import io.onedev.server.web.component.comment.CommentInput;
-import io.onedev.server.web.component.sourceformat.OptionChangeCallback;
-import io.onedev.server.web.component.sourceformat.SourceFormatPanel;
-import io.onedev.server.web.component.suggestionapply.SuggestionApplyBean;
-import io.onedev.server.web.component.suggestionapply.SuggestionApplyModalPanel;
-import io.onedev.server.web.component.svg.SpriteImage;
-import io.onedev.server.web.component.symboltooltip.SymbolTooltipPanel;
-import io.onedev.server.web.page.project.blob.render.BlobRenderContext;
-import io.onedev.server.web.page.project.blob.render.BlobRenderContext.Mode;
-import io.onedev.server.web.page.project.blob.render.BlobRenderer;
-import io.onedev.server.web.page.project.blob.render.view.BlobViewPanel;
-import io.onedev.server.web.page.project.blob.render.view.Positionable;
-import io.onedev.server.web.page.project.blob.search.SearchMenuContributor;
-import io.onedev.server.web.page.project.commits.CommitDetailPage;
-import io.onedev.server.web.util.AnnotationInfo;
-import io.onedev.server.web.util.CodeCommentInfo;
-import io.onedev.server.web.util.WicketUtils;
+import static org.apache.wicket.ajax.attributes.CallbackParameter.explicit;
 
 /**
  * Make sure to add only one source view panel per page
@@ -160,7 +145,7 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 			
 			List<String> lines = context.getProject().getBlob(context.getBlobIdent(), true).getText().getLines();
 			BuildManager buildManager = OneDev.getInstance(BuildManager.class);
-			for (Build build: buildManager.query(project, commitId, null, null, null, new HashMap<>(), null)) {
+			for (Build build: buildManager.query(project, commitId, null, null, null, null, new HashMap<>(), null)) {
 				for (CodeProblemContribution contribution: OneDev.getExtensions(CodeProblemContribution.class)) {
 					for (CodeProblem problem: contribution.getCodeProblems(build, path, context.getProblemReport())) 
 						problems.add(problem.normalizeRange(lines));
@@ -227,14 +212,9 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 				target.appendJavaScript(script);
 			}
 			
-		}, new OptionChangeCallback() {
-
-			@Override
-			public void onOptioneChange(AjaxRequestTarget target) {
-				String script = String.format("onedev.server.sourceView.onLineWrapModeChange('%s');", sourceFormat.getLineWrapMode());
-				target.appendJavaScript(script);
-			}
-			
+		}, (OptionChangeCallback) target -> {
+			String script = String.format("onedev.server.sourceView.onLineWrapModeChange('%s');", sourceFormat.getLineWrapMode());
+			target.appendJavaScript(script);
 		});
 		return sourceFormat;
 	}
@@ -386,18 +366,13 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 					
 				}));
 				
-				add(new WebSocketObserver() {
+				add(new ChangeObserver() {
 					
 					@Override
-					public void onObservableChanged(IPartialPageRequestHandler handler) {
-						handler.add(component);
-					}
-					
-					@Override
-					public Collection<String> getObservables() {
+					public Collection<String> findObservables() {
 						Set<String> observables = new HashSet<>();
 						if (context.getOpenComment() != null)
-							observables.add(CodeComment.getWebSocketObservable(context.getOpenComment().getId()));
+							observables.add(CodeComment.getChangeObservable(context.getOpenComment().getId()));
 						return observables;
 					}
 					
@@ -441,18 +416,18 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 
 				@Override
 				protected void onSaveComment(AjaxRequestTarget target, CodeComment comment) {
-					OneDev.getInstance(CodeCommentManager.class).save(comment);
+					OneDev.getInstance(CodeCommentManager.class).update(comment);
 					target.add(commentContainer.get("head"));
 				}
 
 				@Override
 				protected void onSaveCommentReply(AjaxRequestTarget target, CodeCommentReply reply) {
-					SourceViewPanel.this.onSaveCommentReply(reply);
+					SourceViewPanel.this.onSaveCommentReply(target, reply);
 				}
 
 				@Override
 				protected void onSaveCommentStatusChange(AjaxRequestTarget target, CodeCommentStatusChange change, String note) {
-					SourceViewPanel.this.onSaveCommentStatusChange(change, note);
+					SourceViewPanel.this.onSaveCommentStatusChange(target, change, note);
 				}
 				
 				@Override
@@ -488,10 +463,22 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 							convertToJson(range), context.getPositionUrl(position), SecurityUtils.getUser()!=null);
 					target.appendJavaScript(script);
 					break;
-				case "addComment": 
+				case "addComment":
 					Preconditions.checkNotNull(SecurityUtils.getUser());
-					
 					range = getRange(params, "param1", "param2", "param3", "param4");
+					var lines = context.getProject().getBlob(context.getBlobIdent(), true).getText().getLines();
+					var containTooLongLines = false;
+					for (var i=range.getFromRow(); i<=range.getToRow(); i++) {
+						if (lines.get(i).length() > DiffUtils.MAX_LINE_LEN) {
+							containTooLongLines = true;
+							break;
+						}
+					}
+					if (containTooLongLines) {
+						Session.get().error("Unable to comment as line is too long");
+						break;
+					}
+					
 					commentContainer.setDefaultModelObject(range);
 					
 					Fragment fragment = new Fragment("body", "newCommentFrag", SourceViewPanel.this);
@@ -584,7 +571,7 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 								comment.setProject(context.getProject());
 								comment.setCompareContext(getCompareContext());
 								
-								OneDev.getInstance(CodeCommentManager.class).save(comment);
+								OneDev.getInstance(CodeCommentManager.class).create(comment);
 								
 								CodeCommentPanel commentPanel = new CodeCommentPanel(fragment.getId(), comment.getId()) {
 
@@ -595,18 +582,18 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 
 									@Override
 									protected void onSaveComment(AjaxRequestTarget target, CodeComment comment) {
-										OneDev.getInstance(CodeCommentManager.class).save(comment);
+										OneDev.getInstance(CodeCommentManager.class).update(comment);
 										target.add(commentContainer.get("head"));
 									}
 
 									@Override
 									protected void onSaveCommentReply(AjaxRequestTarget target, CodeCommentReply reply) {
-										SourceViewPanel.this.onSaveCommentReply(reply);
+										SourceViewPanel.this.onSaveCommentReply(target, reply);
 									}
 
 									@Override
 									protected void onSaveCommentStatusChange(AjaxRequestTarget target, CodeCommentStatusChange change, String note) {
-										SourceViewPanel.this.onSaveCommentStatusChange(change, note);
+										SourceViewPanel.this.onSaveCommentStatusChange(target, change, note);
 									}
 									
 									@Override
@@ -653,18 +640,18 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 
 						@Override
 						protected void onSaveComment(AjaxRequestTarget target, CodeComment comment) {
-							OneDev.getInstance(CodeCommentManager.class).save(comment);
+							OneDev.getInstance(CodeCommentManager.class).update(comment);
 							target.add(commentContainer.get("head"));
 						}
 
 						@Override
 						protected void onSaveCommentReply(AjaxRequestTarget target, CodeCommentReply reply) {
-							SourceViewPanel.this.onSaveCommentReply(reply);
+							SourceViewPanel.this.onSaveCommentReply(target, reply);
 						}
 
 						@Override
 						protected void onSaveCommentStatusChange(AjaxRequestTarget target, CodeCommentStatusChange change, String note) {
-							SourceViewPanel.this.onSaveCommentStatusChange(change, note);
+							SourceViewPanel.this.onSaveCommentStatusChange(target, change, note);
 						}
 						
 						@Override
@@ -819,7 +806,7 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 			protected void onSelect(AjaxRequestTarget target, QueryHit hit) {
 				BlobIdent blobIdent = new BlobIdent(
 						getRevision(), hit.getBlobPath(), FileMode.REGULAR_FILE.getBits());
-				context.onSelect(target, blobIdent, BlobRenderer.getSourcePosition(hit.getTokenPos()));
+				context.onSelect(target, blobIdent, BlobRenderer.getSourcePosition(hit.getHitPos()));
 			}
 
 			@Override
@@ -1245,14 +1232,17 @@ public class SourceViewPanel extends BlobViewPanel implements Positionable, Sear
 		return viewPlainMode;
 	}
 	
-	private void onSaveCommentReply(CodeCommentReply reply) {
+	private void onSaveCommentReply(AjaxRequestTarget target, CodeCommentReply reply) {
 		reply.setCompareContext(getCompareContext());
-		OneDev.getInstance(CodeCommentReplyManager.class).save(reply);
+		if (reply.isNew())
+			OneDev.getInstance(CodeCommentReplyManager.class).create(reply);
+		else
+			OneDev.getInstance(CodeCommentReplyManager.class).update(reply);			
 	}
 	
-	private void onSaveCommentStatusChange(CodeCommentStatusChange change, String note) {
+	private void onSaveCommentStatusChange(AjaxRequestTarget target, CodeCommentStatusChange change, String note) {
 		change.setCompareContext(getCompareContext());
-		OneDev.getInstance(CodeCommentStatusChangeManager.class).save(change, note);
+		OneDev.getInstance(CodeCommentStatusChangeManager.class).create(change, note);
 	}
 	
 	private SuggestionSupport getSuggestionSupport(Mark mark) {

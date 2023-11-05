@@ -9,6 +9,7 @@ import io.onedev.server.util.DateUtils;
 import io.onedev.server.util.artifact.ArtifactInfo;
 import io.onedev.server.util.artifact.DirectoryInfo;
 import io.onedev.server.util.artifact.FileInfo;
+import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
 import io.onedev.server.web.behavior.NoRecordsBehavior;
 import io.onedev.server.web.component.modal.ModalLink;
 import io.onedev.server.web.component.modal.ModalPanel;
@@ -16,10 +17,10 @@ import io.onedev.server.web.component.svg.SpriteImage;
 import io.onedev.server.web.page.project.builds.detail.BuildDetailPage;
 import io.onedev.server.web.resource.ArtifactResource;
 import io.onedev.server.web.resource.ArtifactResourceReference;
-import io.onedev.server.web.util.ConfirmClickModifier;
 import org.apache.commons.io.FileUtils;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
 import org.apache.wicket.behavior.AttributeAppender;
 import org.apache.wicket.extensions.markup.html.repeater.data.grid.ICellPopulator;
@@ -94,8 +95,8 @@ public class BuildArtifactsPage extends BuildDetailPage {
 		
 		List<IColumn<ArtifactInfo, Void>> columns = new ArrayList<>();
 		
-		columns.add(new TreeColumn<ArtifactInfo, Void>(Model.of("Name")));
-		columns.add(new AbstractColumn<ArtifactInfo, Void>(Model.of("Size")) {
+		columns.add(new TreeColumn<>(Model.of("Name")));
+		columns.add(new AbstractColumn<>(Model.of("Size")) {
 
 			@Override
 			public void populateItem(Item<ICellPopulator<ArtifactInfo>> cellItem, String componentId, IModel<ArtifactInfo> rowModel) {
@@ -104,44 +105,50 @@ public class BuildArtifactsPage extends BuildDetailPage {
 					cellItem.add(new Label(componentId, ""));
 				} else {
 					cellItem.add(new Label(
-							componentId, 
+							componentId,
 							FileUtils.byteCountToDisplaySize(((FileInfo) artifact).getLength())));
 				}
 			}
-			
+
 		});
-		columns.add(new AbstractColumn<ArtifactInfo, Void>(Model.of("Last Modified")) {
+		columns.add(new AbstractColumn<>(Model.of("Last Modified")) {
 
 			@Override
 			public void populateItem(Item<ICellPopulator<ArtifactInfo>> cellItem, String componentId, IModel<ArtifactInfo> rowModel) {
 				ArtifactInfo artifact = rowModel.getObject();
 				cellItem.add(new Label(componentId, DateUtils.formatAge(new Date(artifact.getLastModified()))));
 			}
-			
+
 		});
 		if (SecurityUtils.canManage(getBuild())) {
-			columns.add(new AbstractColumn<ArtifactInfo, Void>(Model.of("")) {
+			columns.add(new AbstractColumn<>(Model.of("")) {
 
 				@Override
 				public void populateItem(Item<ICellPopulator<ArtifactInfo>> cellItem, String componentId, IModel<ArtifactInfo> rowModel) {
 					Fragment fragment = new Fragment(componentId, "deleteFrag", BuildArtifactsPage.this);
-					AjaxLink<?> link = new AjaxLink<Void>("link") { 
+					AjaxLink<?> link = new AjaxLink<Void>("link") {
+						@Override
+						protected void updateAjaxAttributes(AjaxRequestAttributes attributes) {
+							super.updateAjaxAttributes(attributes);
+							String confirmMessage;
+							if (rowModel.getObject() instanceof DirectoryInfo)
+								confirmMessage = "Do you really want to delete this directory?";
+							else
+								confirmMessage = "Do you really want to delete this file?";
+							attributes.getAjaxCallListeners().add(new ConfirmClickListener(confirmMessage));
+						}
 
 						@Override
 						public void onClick(AjaxRequestTarget target) {
 							getBuildManager().deleteArtifact(getBuild(), rowModel.getObject().getPath());
 							updateArtifacts(target);
 						}
-						
+
 					};
-					if (rowModel.getObject() instanceof DirectoryInfo)
-						link.add(new ConfirmClickModifier("Do you really want to delete this directory?"));
-					else
-						link.add(new ConfirmClickModifier("Do you really want to delete this file?"));
 					fragment.add(link);
 					cellItem.add(fragment);
 				}
-				
+
 			});
 		}
 		

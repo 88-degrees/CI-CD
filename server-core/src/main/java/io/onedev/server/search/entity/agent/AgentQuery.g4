@@ -14,6 +14,7 @@ criteria
     | criteria WS+ Or WS+ criteria #OrCriteria
     | Not WS* LParens WS* criteria WS* RParens #NotCriteria
     | LParens WS* criteria WS* RParens #ParensCriteria
+    | Fuzzy #FuzzyCriteria
     ;
 
 order
@@ -98,6 +99,10 @@ Quoted
 
 WS
     : ' '
+    ;
+
+Fuzzy
+    : '~' ('\\'.|~[~])+? '~'
     ;
 
 Identifier

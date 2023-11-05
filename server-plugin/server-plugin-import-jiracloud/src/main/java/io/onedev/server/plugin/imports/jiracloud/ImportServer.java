@@ -1,26 +1,46 @@
 package io.onedev.server.plugin.imports.jiracloud;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.commons.utils.TaskLogger;
+import io.onedev.server.OneDev;
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Password;
+import io.onedev.server.attachment.AttachmentManager;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.entitymanager.IssueManager;
+import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.entityreference.ReferenceMigrator;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.issue.IssuesImported;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.LastActivity;
+import io.onedev.server.model.support.administration.GlobalIssueSetting;
+import io.onedev.server.model.support.issue.field.spec.FieldSpec;
+import io.onedev.server.persistence.TransactionManager;
+import io.onedev.server.persistence.dao.Dao;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.DateUtils;
+import io.onedev.server.util.JerseyUtils;
+import io.onedev.server.util.JerseyUtils.PageDataConsumer;
+import io.onedev.server.util.Pair;
+import io.onedev.server.validation.Validatable;
+import io.onedev.server.web.component.taskbutton.TaskResult;
+import io.onedev.server.web.component.taskbutton.TaskResult.HtmlMessgae;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.shiro.authz.UnauthorizedException;
+import org.glassfish.jersey.client.ClientProperties;
+import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
+import org.joda.time.format.ISODateTimeFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.unbescape.html.HtmlEscape;
 
 import javax.annotation.Nullable;
 import javax.validation.ConstraintValidatorContext;
@@ -32,51 +52,16 @@ import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-
-import io.onedev.server.event.ListenerRegistry;
-import io.onedev.server.event.project.issue.IssuesImported;
-import io.onedev.server.security.SecurityUtils;
-import org.apache.http.client.utils.URIBuilder;
-import org.glassfish.jersey.client.ClientProperties;
-import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
-import org.joda.time.format.ISODateTimeFormat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.unbescape.html.HtmlEscape;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.commons.utils.TaskLogger;
-import io.onedev.server.OneDev;
-import io.onedev.server.attachment.AttachmentManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.entityreference.ReferenceMigrator;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.IssueField;
-import io.onedev.server.model.IssueSchedule;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.User;
-import io.onedev.server.model.support.LastActivity;
-import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputSpec;
-import io.onedev.server.model.support.issue.field.spec.FieldSpec;
-import io.onedev.server.persistence.dao.Dao;
-import io.onedev.server.util.DateUtils;
-import io.onedev.server.util.JerseyUtils;
-import io.onedev.server.util.JerseyUtils.PageDataConsumer;
-import io.onedev.server.util.Pair;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Password;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Editable
 @ClassValidating
@@ -168,20 +153,20 @@ public class ImportServer implements Serializable, Validatable {
 	}
 	
 	@Nullable
-	private User getUser(Map<String, Optional<User>> users, JsonNode userNode, TaskLogger logger) {
+	private Long getUserId(Map<String, Optional<Long>> userIds, JsonNode userNode, TaskLogger logger) {
 		String accountId = userNode.get("accountId").asText();
-		Optional<User> userOpt = users.get(accountId);
-		if (userOpt == null) {
+		Optional<Long> userIdOpt = userIds.get(accountId);
+		if (userIdOpt == null) {
 			String displayName = null;
 			if (userNode.hasNonNull("displayName"))
 				displayName = userNode.get("displayName").asText(null);
 			if (displayName != null)
-				userOpt = Optional.ofNullable(OneDev.getInstance(UserManager.class).findByFullName(displayName));
+				userIdOpt = Optional.ofNullable(User.idOf(OneDev.getInstance(UserManager.class).findByFullName(displayName)));
 			else
-				userOpt = Optional.empty();
-			users.put(accountId, userOpt);
+				userIdOpt = Optional.empty();
+			userIds.put(accountId, userIdOpt);
 		}
-		return userOpt.orElse(null);
+		return userIdOpt.orElse(null);
 	}
 	
 	private String getMarkdown(JsonNode contentNode, boolean escape) {
@@ -333,66 +318,81 @@ public class ImportServer implements Serializable, Validatable {
 		return markdown.toString();
 	}
 	
-	String importProjects(ImportProjects projects, ImportOption option, boolean dryRun, TaskLogger logger) {
-		Map<String, JsonNode> projectNodes = getProjectNodes(logger);
-		
+	TaskResult importProjects(ImportProjects projects, ImportOption option, boolean dryRun, TaskLogger logger) {
 		Client client = newClient();
 		try {
-			Map<String, Optional<User>> users = new HashMap<>();
+			Map<String, Optional<Long>> userIds = new HashMap<>();
+			Map<String, JsonNode> projectNodes = getProjectNodes(logger);
 			ImportResult result = new ImportResult();
-			for (ProjectMapping projectMapping: projects.getProjectMappings()) {
-				String jiraProject = projectMapping.getJiraProject();
-				JsonNode projectNode = projectNodes.get(jiraProject);
-				if (projectNode == null)
-					throw new ExplicitException("Unable to find project: " + jiraProject);
+			for (var jiraProject: projects.getImportProjects()) {
+				OneDev.getInstance(TransactionManager.class).run(() -> {
+					String oneDevProjectPath;
+					if (projects.getParentOneDevProject() != null)
+						oneDevProjectPath = projects.getParentOneDevProject() + "/" + jiraProject;
+					else
+						oneDevProjectPath = jiraProject;
 
-				String apiEndpoint = getApiEndpoint("/project/" + projectNode.get("id").asText());
-				
-				// Get more detail project information
-				projectNode = JerseyUtils.get(client, apiEndpoint, logger);
-				
-				ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);				
-				Project project = projectManager.setup(projectMapping.getOneDevProject());
-				
-				project.setDescription(projectNode.get("description").asText(null));
-				
-				if (!dryRun && project.isNew()) 
-					projectManager.create(project);
-				
-				logger.log("Importing issues from project " + jiraProject + "...");
-				ImportResult currentResult = importIssues(projectNode, project, option, users, dryRun, logger);
-				result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
-				result.errorAttachments.addAll(currentResult.errorAttachments);
-				result.tooLargeAttachments.addAll(currentResult.tooLargeAttachments);
-				result.unmappedIssuePriorities.addAll(currentResult.unmappedIssuePriorities);
-				result.unmappedIssueStatuses.addAll(currentResult.unmappedIssueStatuses);
-				result.unmappedIssueTypes.addAll(currentResult.unmappedIssueTypes);
+					logger.log("Importing from '" + jiraProject + "' to '" + oneDevProjectPath + "'...");
+
+					ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);
+					Project project = projectManager.setup(oneDevProjectPath);
+
+					if (!project.isNew() && !SecurityUtils.canManage(project)) {
+						throw new UnauthorizedException("Import target already exists. " +
+								"You need to have project management privilege over it");
+					}
+
+					JsonNode projectNode = projectNodes.get(jiraProject);
+					if (projectNode == null)
+						throw new ExplicitException("Unable to find project: " + jiraProject);
+
+					String apiEndpoint = getApiEndpoint("/project/" + projectNode.get("id").asText());
+
+					// Get more detail project information
+					projectNode = JerseyUtils.get(client, apiEndpoint, logger);
+
+					project.setDescription(projectNode.get("description").asText(null));
+
+					if (!dryRun && project.isNew())
+						projectManager.create(project);
+
+					logger.log("Importing issues...");
+					ImportResult currentResult = importIssues(projectNode, project, option, userIds, dryRun, logger);
+					result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
+					result.errorAttachments.addAll(currentResult.errorAttachments);
+					result.tooLargeAttachments.addAll(currentResult.tooLargeAttachments);
+					result.unmappedIssuePriorities.addAll(currentResult.unmappedIssuePriorities);
+					result.unmappedIssueStatuses.addAll(currentResult.unmappedIssueStatuses);
+					result.unmappedIssueTypes.addAll(currentResult.unmappedIssueTypes);
+				});
 			}
 			
-			return result.toHtml("Projects imported successfully");
+			return new TaskResult(true, new HtmlMessgae(result.toHtml("Projects imported successfully")));
 		} finally {
 			client.close();
 		}	
 	}
 	
-	String importIssues(Project project, String jiraProject, ImportOption option, boolean dryRun, TaskLogger logger) {
+	TaskResult importIssues(Long projectId, String jiraProject, ImportOption option, boolean dryRun, TaskLogger logger) {
 		Map<String, JsonNode> projectNodes = getProjectNodes(logger);
-		
 		Client client = newClient();
 		try {
-			Map<String, Optional<User>> users = new HashMap<>();
 			JsonNode projectNode = projectNodes.get(jiraProject);
 			if (projectNode == null)
 				throw new ExplicitException("Unable to find project: " + jiraProject);
-			ImportResult result = importIssues(projectNode, project, option, users, dryRun, logger);
-			return result.toHtml("Issues imported successfully");
+			return OneDev.getInstance(TransactionManager.class).call(() -> {
+				var project = OneDev.getInstance(ProjectManager.class).load(projectId);
+				Map<String, Optional<Long>> userIds = new HashMap<>();
+				ImportResult result = importIssues(projectNode, project, option, userIds, dryRun, logger);
+				return new TaskResult(true, new HtmlMessgae(result.toHtml("Issues imported successfully")));
+			});
 		} finally {
 			client.close();
 		}
 	}
 	
 	private ImportResult importIssues(JsonNode jiraProject, Project oneDevProject, ImportOption option, 
-			Map<String, Optional<User>> users, boolean dryRun, TaskLogger logger) {
+			Map<String, Optional<Long>> userIds, boolean dryRun, TaskLogger logger) {
 		IssueManager issueManager = OneDev.getInstance(IssueManager.class);
 		Client client = newClient();
 		try {
@@ -530,10 +530,10 @@ public class ImportServer implements Serializable, Validatable {
 							if (mapped != null) {
 								IssueField typeField = new IssueField();
 								typeField.setIssue(issue);
-								typeField.setName(mapped.getFirst().getName());
+								typeField.setName(mapped.getLeft().getName());
 								typeField.setType(InputSpec.ENUMERATION);
-								typeField.setValue(mapped.getSecond());
-								typeField.setOrdinal(mapped.getFirst().getOrdinal(mapped.getSecond()));
+								typeField.setValue(mapped.getRight());
+								typeField.setOrdinal(mapped.getLeft().getOrdinal(mapped.getRight()));
 								issue.getFields().add(typeField);
 							} else {
 								extraIssueInfo.put("Type", HtmlEscape.escapeHtml5(untranslatedTypeName));
@@ -550,10 +550,10 @@ public class ImportServer implements Serializable, Validatable {
 						if (mapped != null) {
 							IssueField priorityField = new IssueField();
 							priorityField.setIssue(issue);
-							priorityField.setName(mapped.getFirst().getName());
+							priorityField.setName(mapped.getLeft().getName());
 							priorityField.setType(InputSpec.ENUMERATION);
-							priorityField.setValue(mapped.getSecond());
-							priorityField.setOrdinal(mapped.getFirst().getOrdinal(mapped.getSecond()));
+							priorityField.setValue(mapped.getRight());
+							priorityField.setOrdinal(mapped.getLeft().getOrdinal(mapped.getRight()));
 							issue.getFields().add(priorityField);
 						} else {
 							extraIssueInfo.put("Priority", HtmlEscape.escapeHtml5(priorityName));
@@ -586,13 +586,14 @@ public class ImportServer implements Serializable, Validatable {
 								extraIssueInfo.put("Labels", joinAsMultilineHtml(labels));
 						}
 						
+						var userManager = OneDev.getInstance(UserManager.class);
 						JsonNode authorNode = fieldsNode.get("reporter");
 						if (authorNode == null)
 							authorNode = fieldsNode.get("creator");
 						if (authorNode != null) {
-							User user = getUser(users, authorNode, logger);
-							if (user != null) {
-								issue.setSubmitter(user);
+							Long userId = getUserId(userIds, authorNode, logger);
+							if (userId != null) {
+								issue.setSubmitter(userManager.load(userId));
 							} else {
 								issue.setSubmitter(OneDev.getInstance(UserManager.class).getUnknown());
 								nonExistentLogins.add(authorNode.get("displayName").asText());
@@ -608,9 +609,9 @@ public class ImportServer implements Serializable, Validatable {
 							assigneeField.setName(option.getAssigneeIssueField());
 							assigneeField.setType(InputSpec.USER);
 							
-							User user = getUser(users, assigneeNode, logger);
-							if (user != null) { 
-								assigneeField.setValue(user.getName());
+							Long userId = getUserId(userIds, assigneeNode, logger);
+							if (userId != null) { 
+								assigneeField.setValue(userManager.load(userId).getName());
 								issue.getFields().add(assigneeField);
 							} else {
 								nonExistentLogins.add(assigneeNode.get("displayName").asText());
@@ -712,9 +713,9 @@ public class ImportServer implements Serializable, Validatable {
 									
 									authorNode = commentNode.get("author");
 									if (authorNode != null) {
-										User user = getUser(users, authorNode, logger);
-										if (user != null) {
-											comment.setUser(user);
+										Long userId = getUserId(userIds, authorNode, logger);
+										if (userId != null) {
+											comment.setUser(userManager.load(userId));
 										} else {
 											comment.setUser(OneDev.getInstance(UserManager.class).getUnknown());
 											nonExistentLogins.add(authorNode.get("displayName").asText());

@@ -156,7 +156,7 @@ public class PullRequestListPage extends LayoutPage {
 										} else {
 											namedQuery.setQuery(query);
 										}
-										OneDev.getInstance(UserManager.class).save(getLoginUser());
+										OneDev.getInstance(UserManager.class).update(getLoginUser(), null);
 										target.add(savedQueries);
 										close();
 									}
@@ -224,7 +224,7 @@ public class PullRequestListPage extends LayoutPage {
 	
 	@Override
 	protected String getPageTitle() {
-		return "Pull Requests - OneDev";
+		return "Pull Requests - " + OneDev.getInstance(SettingManager.class).getBrandingSetting().getName();
 	}
 	
 	public static PageParameters paramsOf(int page) {

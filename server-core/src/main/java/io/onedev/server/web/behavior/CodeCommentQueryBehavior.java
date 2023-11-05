@@ -3,6 +3,7 @@ package io.onedev.server.web.behavior;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import io.onedev.commons.codeassist.FenceAware;
+import io.onedev.commons.codeassist.InputCompletion;
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.commons.codeassist.grammar.LexerRuleRefElementSpec;
 import io.onedev.commons.codeassist.parser.Element;
@@ -30,19 +31,27 @@ import static io.onedev.server.search.entity.codecomment.CodeCommentQueryLexer.*
 @SuppressWarnings("serial")
 public class CodeCommentQueryBehavior extends ANTLRAssistBehavior {
 
+	private static final String FUZZY_SUGGESTION_DESCRIPTION_PREFIX = "surround with ~";
+	
 	private final IModel<Project> projectModel;
 	
 	private final boolean withCurrentUserCriteria;
 	
 	private final boolean withOrder;
 	
-	public CodeCommentQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria, boolean withOrder) {
-		super(CodeCommentQueryParser.class, "query", false);
+	public CodeCommentQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria, 
+									boolean withOrder, boolean hideIfBlank) {
+		super(CodeCommentQueryParser.class, "query", false, hideIfBlank);
 		this.projectModel = projectModel;
 		this.withCurrentUserCriteria = withCurrentUserCriteria;
 		this.withOrder = withOrder;
 	}
 
+	public CodeCommentQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria,
+									boolean withOrder) {
+		this(projectModel, withCurrentUserCriteria, withOrder, false);
+	}
+	
 	@Override
 	public void detach(Component component) {
 		super.detach(component);
@@ -74,7 +83,7 @@ public class CodeCommentQueryBehavior extends ANTLRAssistBehavior {
 							String operatorName = StringUtils.normalizeSpace(operatorElements.get(0).getMatchedText());
 							int operator = CodeCommentQuery.getOperator(operatorName);							
 							if (fieldElements.isEmpty()) {
-								if (operator == Mentioned || operator == CreatedBy) 
+								if (operator == Mentioned || operator == CreatedBy || operator == RepliedBy) 
 									return SuggestionUtils.suggestUsers(matchWith);
 								else 
 									return null;
@@ -104,6 +113,20 @@ public class CodeCommentQueryBehavior extends ANTLRAssistBehavior {
 					}
 					
 				}.suggest(terminalExpect);
+			} else if (spec.getRuleName().equals("Fuzzy")) {
+				return new FenceAware(codeAssist.getGrammar(), '~', '~') {
+
+					@Override
+					protected List<InputSuggestion> match(String matchWith) {
+						return null;
+					}
+
+					@Override
+					protected String getFencingDescription() {
+						return FUZZY_SUGGESTION_DESCRIPTION_PREFIX + " to query path/content/reply";
+					}
+
+				}.suggest(terminalExpect);
 			}
 		} 
 		return null;
@@ -112,7 +135,7 @@ public class CodeCommentQueryBehavior extends ANTLRAssistBehavior {
 	@Override
 	protected Optional<String> describe(ParseExpect parseExpect, String suggestedLiteral) {
 		if (!withOrder && suggestedLiteral.equals(getRuleName(OrderBy))
-				|| !withCurrentUserCriteria && (suggestedLiteral.equals(getRuleName(CreatedByMe)) || suggestedLiteral.equals(getRuleName(MentionedMe)))) {
+				|| !withCurrentUserCriteria && (suggestedLiteral.equals(getRuleName(CreatedByMe)) || suggestedLiteral.equals(getRuleName(RepliedByMe)) || suggestedLiteral.equals(getRuleName(MentionedMe)))) {
 			return null;
 		}
 		
@@ -148,6 +171,12 @@ public class CodeCommentQueryBehavior extends ANTLRAssistBehavior {
 			}
 		} 
 		return hints;
+	}
+
+	@Override
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return suggestion.getDescription() != null 
+				&& suggestion.getDescription().startsWith(FUZZY_SUGGESTION_DESCRIPTION_PREFIX);
 	}
 	
 }

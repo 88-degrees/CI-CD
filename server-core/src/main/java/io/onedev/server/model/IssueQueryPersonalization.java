@@ -29,6 +29,8 @@ public class IssueQueryPersonalization extends AbstractEntity implements QueryPe
 
 	private static final long serialVersionUID = 1L;
 
+	public static final String PROP_PROJECT = "project";
+	
 	@ManyToOne(fetch=FetchType.LAZY)
 	@JoinColumn(nullable=false)
 	private Project project;
@@ -97,7 +99,10 @@ public class IssueQueryPersonalization extends AbstractEntity implements QueryPe
 
 	@Override
 	public void onUpdated() {
-		OneDev.getInstance(IssueQueryPersonalizationManager.class).save(this);
+		if (isNew())
+			OneDev.getInstance(IssueQueryPersonalizationManager.class).create(this);
+		else
+			OneDev.getInstance(IssueQueryPersonalizationManager.class).update(this);
 	}
 	
 }

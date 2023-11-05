@@ -378,7 +378,7 @@ public class ProjectBranchesPage extends ProjectPage {
 							editor.error(new Path(new PathNode.Named("name")), 
 									"Branch '" + branchName + "' already exists, please choose a different name");
 							target.add(form);
-						} else if (getProject().getHierarchyBranchProtection(branchName, user).isPreventCreation()) {
+						} else if (getProject().getBranchProtection(branchName, user).isPreventCreation()) {
 							editor.error(new Path(new PathNode.Named("name")), "Unable to create protected branch");
 							target.add(form);
 						} else {
@@ -437,8 +437,11 @@ public class ProjectBranchesPage extends ProjectPage {
 				fragment.setRenderBodyOnly(true);
 				RefFacade ref = rowModel.getObject();
 				String branch = GitUtils.ref2branch(ref.getName());
-				
-				BlobIdent blobIdent = new BlobIdent(branch, null, FileMode.TREE.getBits());
+				BlobIdent blobIdent;
+				if (getProject().getTagRef(branch) != null)
+					blobIdent = new BlobIdent(ref.getName(), null, FileMode.TREE.getBits());
+				else
+					blobIdent = new BlobIdent(branch, null, FileMode.TREE.getBits());
 				ProjectBlobPage.State state = new ProjectBlobPage.State(blobIdent);
 				AbstractLink link = new ViewStateAwarePageLink<Void>("branchLink", 
 						ProjectBlobPage.class, ProjectBlobPage.paramsOf(getProject(), state));
@@ -516,7 +519,7 @@ public class ProjectBranchesPage extends ProjectPage {
 
 					@Override
 					protected String getRevision() {
-						return branch;
+						return ref.getName();
 					}
 					
 				});
@@ -595,7 +598,7 @@ public class ProjectBranchesPage extends ProjectPage {
 							if (project.getDefaultBranch().equals(branch)) 
 								setEnabled(false);
 							else 
-								setEnabled(!project.getHierarchyBranchProtection(branch, getLoginUser()).isPreventDeletion());
+								setEnabled(!project.getBranchProtection(branch, getLoginUser()).isPreventDeletion());
 						} else {
 							setVisible(false);
 						}
@@ -701,7 +704,7 @@ public class ProjectBranchesPage extends ProjectPage {
 			@Override
 			protected void onBeforeRender() {
 				BuildManager buildManager = OneDev.getInstance(BuildManager.class);
-				getProject().cacheCommitStatus(buildManager.queryStatus(getProject(), getCommitIdsToDisplay()));
+				getProject().cacheCommitStatuses(buildManager.queryStatus(getProject(), getCommitIdsToDisplay()));
 				super.onBeforeRender();
 			}
 			

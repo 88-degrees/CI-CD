@@ -1,65 +1,15 @@
 package io.onedev.server.model;
 
-import static io.onedev.server.model.AbstractEntity.PROP_NUMBER;
-import static io.onedev.server.model.Build.PROP_COMMIT;
-import static io.onedev.server.model.Build.PROP_FINISH_DATE;
-import static io.onedev.server.model.Build.PROP_FINISH_DAY;
-import static io.onedev.server.model.Build.PROP_JOB;
-import static io.onedev.server.model.Build.PROP_PENDING_DATE;
-import static io.onedev.server.model.Build.PROP_PIPELINE;
-import static io.onedev.server.model.Build.PROP_REF_NAME;
-import static io.onedev.server.model.Build.PROP_RUNNING_DATE;
-import static io.onedev.server.model.Build.PROP_STATUS;
-import static io.onedev.server.model.Build.PROP_SUBMIT_DATE;
-import static io.onedev.server.model.Build.PROP_VERSION;
-
-import java.io.File;
-import java.io.Serializable;
-import java.lang.reflect.InvocationTargetException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.Stack;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import javax.annotation.Nullable;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.FetchType;
-import javax.persistence.Index;
-import javax.persistence.JoinColumn;
-import javax.persistence.ManyToOne;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.UniqueConstraint;
-
-import io.onedev.server.util.artifact.ArtifactInfo;
-import io.onedev.server.util.artifact.DirectoryInfo;
-import io.onedev.server.util.validation.annotation.Directory;
-import org.apache.commons.lang3.StringUtils;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.hibernate.criterion.Criterion;
-import org.hibernate.criterion.Restrictions;
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
+import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.WordUtils;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Markdown;
 import io.onedev.server.attachment.AttachmentStorageSupport;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.buildspec.job.Job;
@@ -68,57 +18,71 @@ import io.onedev.server.buildspec.param.ParamUtils;
 import io.onedev.server.buildspec.param.spec.ParamSpec;
 import io.onedev.server.buildspec.param.spec.SecretParam;
 import io.onedev.server.buildspec.param.supply.ParamSupply;
+import io.onedev.server.buildspecmodel.inputspec.SecretInput;
 import io.onedev.server.entitymanager.BuildManager;
+import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.entityreference.Referenceable;
 import io.onedev.server.git.GitUtils;
 import io.onedev.server.git.service.GitService;
 import io.onedev.server.git.service.RefFacade;
-import io.onedev.server.infomanager.CommitInfoManager;
+import io.onedev.server.xodus.CommitInfoManager;
+import io.onedev.server.job.JobAuthorizationContext;
 import io.onedev.server.model.support.BuildMetric;
 import io.onedev.server.model.support.LabelSupport;
 import io.onedev.server.model.support.ProjectBelonging;
 import io.onedev.server.model.support.build.JobSecret;
-import io.onedev.server.model.support.build.actionauthorization.ActionAuthorization;
-import io.onedev.server.model.support.build.actionauthorization.CloseMilestoneAuthorization;
-import io.onedev.server.model.support.build.actionauthorization.CreateTagAuthorization;
-import io.onedev.server.model.support.inputspec.SecretInput;
-import io.onedev.server.storage.StorageManager;
-import io.onedev.server.util.CollectionUtils;
-import io.onedev.server.util.ComponentContext;
-import io.onedev.server.util.Day;
-import io.onedev.server.util.Input;
-import io.onedev.server.util.JobSecretAuthorizationContext;
-import io.onedev.server.util.MatrixRunner;
-import io.onedev.server.util.ProjectScopedNumber;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.*;
+import io.onedev.server.util.artifact.ArtifactInfo;
+import io.onedev.server.util.artifact.DirectoryInfo;
 import io.onedev.server.util.criteria.Criteria;
 import io.onedev.server.util.facade.BuildFacade;
-import io.onedev.server.util.match.WildcardUtils;
-import io.onedev.server.util.script.identity.JobIdentity;
-import io.onedev.server.util.script.identity.ScriptIdentity;
 import io.onedev.server.web.editable.BeanDescriptor;
 import io.onedev.server.web.editable.PropertyDescriptor;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Markdown;
 import io.onedev.server.web.util.BuildAware;
 import io.onedev.server.web.util.WicketUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.criterion.Criterion;
+import org.hibernate.criterion.Restrictions;
+
+import javax.annotation.Nullable;
+import javax.persistence.*;
+import java.io.File;
+import java.io.Serializable;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static io.onedev.server.model.AbstractEntity.PROP_NUMBER;
+import static io.onedev.server.model.Build.*;
+import static io.onedev.server.model.Project.BUILDS_DIR;
 
 @Entity
 @Table(
 		indexes={@Index(columnList="o_project_id"), @Index(columnList="o_submitter_id"), @Index(columnList="o_canceller_id"),
 				@Index(columnList="o_request_id"),  
-				@Index(columnList=PROP_COMMIT), @Index(columnList=PROP_PIPELINE),
+				@Index(columnList= PROP_COMMIT_HASH), @Index(columnList=PROP_PIPELINE),
 				@Index(columnList=PROP_NUMBER), @Index(columnList=PROP_JOB), 
 				@Index(columnList=PROP_STATUS), @Index(columnList=PROP_REF_NAME),  
 				@Index(columnList=PROP_SUBMIT_DATE), @Index(columnList=PROP_PENDING_DATE), 
 				@Index(columnList=PROP_RUNNING_DATE), @Index(columnList=PROP_FINISH_DATE), 
 				@Index(columnList=PROP_FINISH_DAY), @Index(columnList=PROP_VERSION), 
-				@Index(columnList="o_numberScope_id"), @Index(columnList="o_project_id, " + PROP_COMMIT)},
+				@Index(columnList="o_numberScope_id"), @Index(columnList="o_project_id, " + PROP_COMMIT_HASH)},
 		uniqueConstraints={@UniqueConstraint(columnNames={"o_numberScope_id", PROP_NUMBER})}
 )
+@DynamicUpdate
 public class Build extends ProjectBelonging 
 		implements Referenceable, AttachmentStorageSupport, LabelSupport<BuildLabel> {
 
 	private static final long serialVersionUID = 1L;
+	
+	public static final String ARTIFACTS_DIR = "artifacts";
+
+	public static final String LOG_FILE = "build.log";
 
 	public static final int MAX_DESCRIPTION_LEN = 12000;
 	
@@ -178,7 +142,7 @@ public class Build extends ProjectBelonging
 	
 	public static final String PROP_REF_NAME = "refName";
 	
-	public static final String PROP_COMMIT = "commitHash";
+	public static final String PROP_COMMIT_HASH = "commitHash";
 	
 	public static final String PROP_PARAMS = "params";
 	
@@ -190,9 +154,9 @@ public class Build extends ProjectBelonging
 	
 	public static final String PROP_PULL_REQUEST = "request";
 	
-	public static final String NAME_LOG = "Log";
+	public static final String PROP_ISSUE = "issue";
 	
-	public static final String PROP_TRIGGER_ID = "triggerId";
+	public static final String NAME_LOG = "Log";
 	
 	public static final Set<String> ALL_FIELDS = Sets.newHashSet(
 			NAME_PROJECT, NAME_NUMBER, NAME_JOB, NAME_LABEL, NAME_STATUS, NAME_SUBMITTER, 
@@ -217,19 +181,35 @@ public class Build extends ProjectBelonging
 			NAME_RUNNING_DATE, PROP_RUNNING_DATE,
 			NAME_FINISH_DATE, PROP_FINISH_DATE,
 			NAME_PROJECT, PROP_PROJECT,
-			NAME_COMMIT, PROP_COMMIT);	
+			NAME_COMMIT, PROP_COMMIT_HASH);	
 	
-	private static ThreadLocal<Stack<Build>> stack =  new ThreadLocal<Stack<Build>>() {
+	private static ThreadLocal<Stack<Build>> stack = ThreadLocal.withInitial(Stack::new);
 
-		@Override
-		protected Stack<Build> initialValue() {
-			return new Stack<Build>();
-		}
+	public static File getLogFile(Long projectId, Long buildNumber) {
+		File buildDir = OneDev.getInstance(BuildManager.class).getStorageDir(projectId, buildNumber);
+		return new File(buildDir, LOG_FILE);
+	}
 	
-	};
+	public static String getProjectRelativeStoragePath(Long buildNumber) {
+		return BUILDS_DIR + "/" + getStoragePath(buildNumber);		
+	}
 	
-	public static final String ARTIFACTS_DIR = "artifacts";
+	public static String getStoragePath(Long buildNumber) {
+		return String.format("s%03d", buildNumber%1000) + "/" + buildNumber;
+	}
 	
+	public File getLogFile() {
+		return getLogFile(getProject().getId(), getNumber());
+	}
+	
+	public static String getLogLockName(Long projectId, Long buildNumber) {
+		return "build-log: " + projectId + ":" + buildNumber;
+	}
+	
+	public String getLogLockName() {
+		return getLogLockName(getProject().getId(), getNumber());
+	}
+
 	public enum Status {
 		// Most significant status comes first, refer to getOverallStatus
 		WAITING, PENDING, RUNNING, FAILED, CANCELLED, TIMED_OUT, SUCCESSFUL;
@@ -288,7 +268,9 @@ public class Build extends ProjectBelonging
 	@Column(nullable=false)
 	private String jobName;
 	
-	private String jobWorkspace;
+	@Lob
+	@Column(nullable=false)
+	private ArrayList<String> checkoutPaths = new ArrayList<>();
 	
 	@Column(nullable=false)
 	private String refName;
@@ -354,6 +336,9 @@ public class Build extends ProjectBelonging
 	
 	@ManyToOne(fetch=FetchType.LAZY)
 	private PullRequest request;
+
+	@ManyToOne(fetch=FetchType.LAZY)
+	private Issue issue;
 	
 	private transient Collection<Long> fixedIssueIds;
 	
@@ -369,7 +354,7 @@ public class Build extends ProjectBelonging
 	
 	private transient Map<Integer, Collection<Long>> streamPreviousNumbersCache = new HashMap<>();
 	
-	private transient JobSecretAuthorizationContext jobSecretAuthorizationContext;
+	private transient JobAuthorizationContext jobAuthorizationContext;
 	
 	private transient List<ArtifactInfo> rootArtifacts;
 	
@@ -429,13 +414,8 @@ public class Build extends ProjectBelonging
 		this.jobName = jobName;
 	}
 
-	@Nullable
-	public String getJobWorkspace() {
-		return jobWorkspace;
-	}
-
-	public void setJobWorkspace(@Nullable String jobWorkspace) {
-		this.jobWorkspace = jobWorkspace;
+	public Collection<String> getCheckoutPaths() {
+		return checkoutPaths;
 	}
 
 	@Nullable
@@ -663,6 +643,15 @@ public class Build extends ProjectBelonging
 		this.request = request;
 	}
 
+	@Nullable
+	public Issue getIssue() {
+		return issue;
+	}
+
+	public void setIssue(Issue issue) {
+		this.issue = issue;
+	}
+
 	public Map<String, List<String>> getParamMap() {
 		if (paramMap == null) {
 			paramMap = new HashMap<>();
@@ -739,18 +728,21 @@ public class Build extends ProjectBelonging
 		return new BuildFacade(getId(), getProject().getId(), getNumber(), getCommitHash());
 	}
 	
-	public JobSecretAuthorizationContext getJobSecretAuthorizationContext() {
-		if (jobSecretAuthorizationContext == null)
-			jobSecretAuthorizationContext = new JobSecretAuthorizationContext(project, getCommitId(), request);
-		return jobSecretAuthorizationContext;
+	public JobAuthorizationContext getJobAuthorizationContext() {
+		if (jobAuthorizationContext == null) 
+			jobAuthorizationContext = new JobAuthorizationContext(project, getCommitId(), getSubmitter(), request);
+		return jobAuthorizationContext;
+	}
+	
+	// For backward compatibility
+	public JobAuthorizationContext getJobSecretAuthorizationContext() {
+		return getJobAuthorizationContext();
 	}
 	
 	public Collection<String> getSecretValuesToMask() {
 		Collection<String> secretValuesToMask = new HashSet<>();
-		for (JobSecret secret: getProject().getHierarchyJobSecrets()) {
-			if (getJobSecretAuthorizationContext().isOnBranches(secret.getAuthorizedBranches()))
-				secretValuesToMask.add(secret.getValue());
-		}
+		for (JobSecret secret: getProject().getHierarchyJobSecrets()) 
+			secretValuesToMask.add(secret.getValue());
 		
 		for (BuildParam param: getParams()) {
 			if (param.getType().equals(ParamSpec.SECRET) && param.getValue() != null) {		
@@ -775,11 +767,11 @@ public class Build extends ProjectBelonging
 	
 	@Nullable
 	public Job getJob() {
-		JobSecretAuthorizationContext.push(getJobSecretAuthorizationContext());
+		JobAuthorizationContext.push(getJobAuthorizationContext());
 		try {
 			return getSpec()!=null? getSpec().getJobMap().get(getJobName()): null;
 		} finally {
-			JobSecretAuthorizationContext.pop();
+			JobAuthorizationContext.pop();
 		}
 	}
 
@@ -804,20 +796,20 @@ public class Build extends ProjectBelonging
 		return paramBean;
 	}
 	
-	public File getDir() {
-		return getDir(getProject().getId(), getNumber());
+	public File getStorageDir() {
+		return getStorageDir(getProject().getId(), getNumber());
 	}
 	
 	public File getArtifactsDir() {
 		return getArtifactsDir(getProject().getId(), getNumber());
 	}
 	
-	public static File getDir(Long projectId, Long buildNumber) {
-		return OneDev.getInstance(StorageManager.class).getBuildDir(projectId, buildNumber);
+	public static File getStorageDir(Long projectId, Long buildNumber) {
+		return OneDev.getInstance(BuildManager.class).getStorageDir(projectId, buildNumber);
 	}
 	
 	public static File getArtifactsDir(Long projectId, Long buildNumber) {
-		return new File(getDir(projectId, buildNumber), ARTIFACTS_DIR);
+		return new File(getStorageDir(projectId, buildNumber), ARTIFACTS_DIR);
 	}
 	
 	@Nullable
@@ -875,52 +867,54 @@ public class Build extends ProjectBelonging
 		return branches;
 	}
 	
-	public static String getLogWebSocketObservable(Long buildId) {
+	public static String getLogChangeObservable(Long buildId) {
 		return "build-log:" + buildId;
 	}
 	
-	public static String getWebSocketObservable(Long buildId) {
+	public static String getDetailChangeObservable(Long buildId) {
 		return Build.class.getName() + ":" + buildId;
+	}
+	
+	public static String getCommitStatusChangeObservable(Long projectId, String commitHash) {
+		return "commit-status:" + projectId + ":" + commitHash;
+	}
+
+	public static String getJobStatusChangeObservable(Long projectId, String commitHash, String jobName) {
+		return "job-status:" + projectId + ":" + commitHash + ":" + jobName;
+	}
+	
+	public Collection<String> getChangeObservables() {
+		return Sets.newHashSet(
+				getDetailChangeObservable(getId()),
+				getCommitStatusChangeObservable(getProject().getId(), getCommitHash()),
+				getJobStatusChangeObservable(getProject().getId(), getCommitHash(), getJobName()));
 	}
 	
 	public static void push(@Nullable Build build) {
 		stack.get().push(build);
-		if (build != null)
-			ScriptIdentity.push(new JobIdentity(build.getProject(), build.getCommitId()));
 	}
 
 	public static void pop() {
-		Build build = stack.get().pop();
-		if (build != null)
-			ScriptIdentity.pop();
+		stack.get().pop();
+	}
+
+	public boolean canCreateBranch(String accessTokenSecret, String branchName) {
+		return SecurityUtils.canCreateBranch(getUser(accessTokenSecret), getProject(), branchName);
+	}
+	public boolean canCreateTag(String accessTokenSecret, String tagName) {
+		return SecurityUtils.canCreateTag(getUser(accessTokenSecret), getProject(), tagName);
 	}
 	
-	public boolean canCreateTag(String tagName) {
-		for (ActionAuthorization authorization: getProject().getHierarchyActionAuthorizations()) {
-			if (getJobSecretAuthorizationContext().isOnBranches(authorization.getAuthorizedBranches())) {
-				if (authorization instanceof CreateTagAuthorization) {
-					CreateTagAuthorization createTagAuthorization = (CreateTagAuthorization) authorization;
-					String tagNames = createTagAuthorization.getTagNames();
-					if (tagNames == null || WildcardUtils.matchPath(tagNames, tagName))
-						return true;
-				}
-			}
-		}
-		return false;
+	private User getUser(String accessTokenSecret) {
+		String accessToken = getJobAuthorizationContext().getSecretValue(accessTokenSecret);
+		User user = OneDev.getInstance(UserManager.class).findByAccessToken(accessToken);
+		if (user == null)
+			throw new ExplicitException("No user found with specified access token");
+		return user;
 	}
 	
-	public boolean canCloseMilestone(String milestoneName) {
-		for (ActionAuthorization authorization: getProject().getHierarchyActionAuthorizations()) {
-			if (getJobSecretAuthorizationContext().isOnBranches(authorization.getAuthorizedBranches())) {
-				if (authorization instanceof CloseMilestoneAuthorization) {
-					CloseMilestoneAuthorization closeMilestoneAuthorization = (CloseMilestoneAuthorization) authorization;
-					String milestoneNames = closeMilestoneAuthorization.getMilestoneNames();
-					if (milestoneNames == null || WildcardUtils.matchPath(milestoneNames, milestoneName))
-						return true;
-				}
-			}
-		}
-		return false;
+	public boolean canCloseMilestone(String accessTokenSecret, String milestoneName) {
+		return SecurityUtils.canManageIssues(getUser(accessTokenSecret), getProject());
 	}
 	
 	public boolean isValid() {
@@ -1005,4 +999,23 @@ public class Build extends ProjectBelonging
 		return rootArtifacts;
 	}
 	
+	@Nullable
+	public String getBlobPath(String filePath) {
+		if (checkoutPaths.isEmpty())
+			throw new ExplicitException("No checkout path detected");
+		
+		filePath = filePath.replace('\\', '/');
+		filePath = Paths.get(filePath).normalize().toString();
+		filePath = filePath.replace('\\', '/');
+		for (var checkoutPath: checkoutPaths) {
+			if (filePath.startsWith(checkoutPath + "/")) {
+				var blobPath = filePath.substring(checkoutPath.length() + 1);
+				if (getProject().findBlobIdent(getCommitId(), blobPath) != null)
+					return blobPath;
+			} else if (filePath.equals(checkoutPath)) {
+				return "";
+			}
+		}
+		return null;
+	}
 }

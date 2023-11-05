@@ -160,7 +160,7 @@ public class ProjectListPage extends LayoutPage {
 										} else {
 											namedQuery.setQuery(query);
 										}
-										OneDev.getInstance(UserManager.class).save(getLoginUser());
+										OneDev.getInstance(UserManager.class).update(getLoginUser(), null);
 										target.add(savedQueries);
 										close();
 									}
@@ -229,7 +229,7 @@ public class ProjectListPage extends LayoutPage {
 
 	@Override
 	protected String getPageTitle() {
-		return "Projects - OneDev";
+		return "Projects - " + OneDev.getInstance(SettingManager.class).getBrandingSetting().getName();
 	}
 	
 	@Override

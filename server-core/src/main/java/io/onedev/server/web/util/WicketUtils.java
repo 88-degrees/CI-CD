@@ -1,45 +1,63 @@
 package io.onedev.server.web.util;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.annotation.Nullable;
-import javax.servlet.http.HttpServletRequest;
-
+import io.onedev.server.OneDev;
+import io.onedev.server.SubscriptionManager;
+import io.onedev.server.util.LongRange;
+import io.onedev.server.web.WebSession;
+import io.onedev.server.web.page.base.BasePage;
+import io.onedev.server.web.websocket.PageKey;
 import org.apache.wicket.Component;
-import org.apache.wicket.Page;
+import org.apache.wicket.MetaDataKey;
 import org.apache.wicket.behavior.AttributeAppender;
 import org.apache.wicket.core.request.handler.IPageRequestHandler;
 import org.apache.wicket.markup.html.WebMarkupContainer;
 import org.apache.wicket.protocol.ws.api.registry.PageIdKey;
-import org.apache.wicket.request.IRequestHandler;
 import org.apache.wicket.request.IRequestHandlerDelegate;
-import org.apache.wicket.request.Url;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.request.resource.AbstractResource;
 
-import io.onedev.server.util.LongRange;
-import io.onedev.server.web.websocket.PageKey;
+import javax.annotation.Nullable;
+import javax.servlet.http.HttpServletRequest;
+import java.util.ArrayList;
+import java.util.List;
 
 public class WicketUtils {
-	
-	public static String relativizeUrl(String url) {
-		if (Url.parse(url).isFull())
-			return url;
-		else
-			return RequestCycle.get().getUrlRenderer().renderContextRelativeUrl(url);
-	}
+
+	private static class SubscriptionActiveKey extends MetaDataKey<Boolean> {
+		static final SubscriptionActiveKey INSTANCE = new SubscriptionActiveKey();
+	};
 	
 	@Nullable
-	public static Page getPage() {
-		RequestCycle requestCycle = RequestCycle.get();
+	public static BasePage getPage() {
+		var pageRequestHandler = getPageRequestHandler();
+		if (pageRequestHandler != null)
+			return (BasePage) pageRequestHandler.getPage();
+		else 
+			return null;
+	}
+	
+	public static boolean isSubscriptionActive() {
+		var requestCycle = RequestCycle.get();
+		if (requestCycle == null)
+			throw new IllegalStateException("No active request cycle");
+		Boolean subscriptionActive = requestCycle.getMetaData(SubscriptionActiveKey.INSTANCE);
+		if (subscriptionActive == null) {
+			subscriptionActive = OneDev.getInstance(SubscriptionManager.class).isSubscriptionActive();
+			requestCycle.setMetaData(SubscriptionActiveKey.INSTANCE, subscriptionActive);
+		}
+		return subscriptionActive;
+	}
+
+	@Nullable
+	private static IPageRequestHandler getPageRequestHandler() {
+		var requestCycle = RequestCycle.get();
 		if (requestCycle != null) {
-			IRequestHandler requestHandler = requestCycle.getActiveRequestHandler();
-			if (requestHandler instanceof IRequestHandlerDelegate) 
-				requestHandler = ((IRequestHandlerDelegate) requestHandler).getDelegateHandler();			
+			var requestHandler = requestCycle.getActiveRequestHandler();
+			if (requestHandler instanceof IRequestHandlerDelegate)
+				requestHandler = ((IRequestHandlerDelegate) requestHandler).getDelegateHandler();
 			if (requestHandler instanceof IPageRequestHandler)
-				return (Page) ((IPageRequestHandler) requestHandler).getPage();	
-		} 
+				return ((IPageRequestHandler) requestHandler);
+		}
 		return null;
 	}
 	
@@ -85,11 +103,12 @@ public class WicketUtils {
 	
 	@Nullable
 	public static PageKey getPageKey() {
-		Page page = getPage();
-		if (page != null) {
-			String sessionId = page.getSession().getId();
-			if (sessionId != null) {
-				return new PageKey(sessionId, new PageIdKey(page.getPageId()));
+		var pageRequestHandler = getPageRequestHandler();
+		if (pageRequestHandler != null) {
+			var pageId = pageRequestHandler.getPageId();
+			if (pageId != null) {
+				var session = WebSession.get();
+				return new PageKey(session.getId(), new PageIdKey(pageId));
 			}
 		}
 		return null;

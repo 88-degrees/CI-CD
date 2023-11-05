@@ -1,31 +1,35 @@
 package io.onedev.server.search.entitytext;
 
-import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.WordUtils;
+import io.onedev.server.OneDev;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.cluster.ClusterTask;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.event.Listen;
+import io.onedev.server.event.project.ActiveServerChanged;
 import io.onedev.server.event.project.ProjectDeleted;
 import io.onedev.server.event.system.SystemStarted;
-import io.onedev.server.event.system.SystemStopping;
+import io.onedev.server.event.system.SystemStarting;
+import io.onedev.server.event.system.SystemStopped;
 import io.onedev.server.model.AbstractEntity;
+import io.onedev.server.model.support.EntityTouch;
 import io.onedev.server.model.support.ProjectBelonging;
+import io.onedev.server.persistence.SessionManager;
 import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.annotation.Sessional;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.persistence.dao.EntityCriteria;
-import io.onedev.server.storage.StorageManager;
 import io.onedev.server.util.ReflectionUtils;
 import io.onedev.server.util.concurrent.BatchWorkManager;
 import io.onedev.server.util.concurrent.BatchWorker;
 import io.onedev.server.util.concurrent.Prioritized;
+import io.onedev.server.util.lucene.BooleanQueryBuilder;
+import io.onedev.server.util.lucene.LuceneUtils;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.WordlistLoader;
-import org.apache.lucene.analysis.cn.smart.SmartChineseAnalyzer;
 import org.apache.lucene.analysis.da.DanishAnalyzer;
 import org.apache.lucene.analysis.de.GermanAnalyzer;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
@@ -39,6 +43,7 @@ import org.apache.lucene.analysis.no.NorwegianAnalyzer;
 import org.apache.lucene.analysis.pt.PortugueseAnalyzer;
 import org.apache.lucene.analysis.ru.RussianAnalyzer;
 import org.apache.lucene.analysis.snowball.SnowballFilter;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.sv.SwedishAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
@@ -46,7 +51,6 @@ import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.*;
-import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
@@ -63,6 +67,17 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.Function;
+
+import static com.google.common.collect.Lists.partition;
+import static io.onedev.server.util.criteria.Criteria.forManyValues;
+import static java.lang.Long.valueOf;
+import static java.lang.Math.min;
+import static java.util.stream.Collectors.toList;
+import static org.apache.lucene.document.Field.Store.YES;
+import static org.apache.lucene.document.LongPoint.newExactQuery;
+import static org.apache.lucene.search.BooleanClause.Occur.MUST;
+
 public abstract class ProjectTextManager<T extends ProjectBelonging> implements Serializable {
 
 	private static final long serialVersionUID = 1L;
@@ -70,19 +85,21 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 	private static final Logger logger = LoggerFactory.getLogger(ProjectTextManager.class);
 
 	private static final String FIELD_TYPE = "type";
+	
+	private static final String TYPE_META = "meta";
+	
+	private static final String FIELD_VERSION = "version";
 
-	private static final String FIELD_INDEX_VERSION = "indexVersion";
-
-	private static final String FIELD_LAST_ENTITY_ID = "lastEntityId";
-
+	private static final String FIELD_TOUCH_ID = "touchId";
+	
 	private static final String FIELD_ENTITY_ID = "entityId";
 
 	protected static final String FIELD_PROJECT_ID = "projectId";
 	
-	private static final int INDEXING_PRIORITY = 20;
-
+	private static final int INDEXING_PRIORITY = 100;
+	
 	private static final int BATCH_SIZE = 5000;
-
+	
 	private static final CharArraySet STOP_WORDS = new CharArraySet(1000, false);
 
 	static {
@@ -99,7 +116,6 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 		STOP_WORDS.addAll(RussianAnalyzer.getDefaultStopSet());
 		STOP_WORDS.addAll(SpanishAnalyzer.getDefaultStopSet());
 		STOP_WORDS.addAll(SwedishAnalyzer.getDefaultStopSet());
-		STOP_WORDS.addAll(SmartChineseAnalyzer.getDefaultStopSet());
 
 		try {
 			STOP_WORDS.addAll(WordlistLoader.getSnowballWordSet(IOUtils.getDecodingReader(
@@ -115,8 +131,6 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 
 	protected final Dao dao;
 
-	private final StorageManager storageManager;
-
 	private final BatchWorkManager batchWorkManager;
 
 	protected final TransactionManager transactionManager;
@@ -124,13 +138,15 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 	protected final ProjectManager projectManager;
 	
 	protected final ClusterManager clusterManager;
+	
+	private final SessionManager sessionManager;
 
 	private volatile SearcherManager searcherManager;
 	
 	@SuppressWarnings("unchecked")
-	public ProjectTextManager(Dao dao, StorageManager storageManager, BatchWorkManager batchWorkManager,
-			TransactionManager transactionManager, ProjectManager projectManager, 
-			ClusterManager clusterManager) {
+	public ProjectTextManager(Dao dao, BatchWorkManager batchWorkManager, 
+							  TransactionManager transactionManager, ProjectManager projectManager, 
+							  ClusterManager clusterManager, SessionManager sessionManager) {
 		List<Class<?>> typeArguments = ReflectionUtils.getTypeArguments(ProjectTextManager.class, getClass());
 		if (typeArguments.size() == 1 && AbstractEntity.class.isAssignableFrom(typeArguments.get(0))) {
 			entityClass = (Class<T>) typeArguments.get(0);
@@ -139,32 +155,15 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 					+ "be EntityIndexManager and must realize the type argument <T>");
 		}
 		this.dao = dao;
-		this.storageManager = storageManager;
+		this.projectManager = projectManager;
 		this.batchWorkManager = batchWorkManager;
 		this.transactionManager = transactionManager;
-		this.projectManager = projectManager;
 		this.clusterManager = clusterManager;
+		this.sessionManager = sessionManager;
 	}
 
-	protected TermQuery getTermQuery(String name, String value) {
-		return new TermQuery(getTerm(name, value));
-	}
-
-	protected Term getTerm(String name, String value) {
-		return new Term(name, value);
-	}
-
-	private String getIndexName() {
-		return WordUtils.uncamel(entityClass.getSimpleName()).replace(" ", "_").toLowerCase();
-	}
-
-	private File getIndexDir() {
-		return new File(storageManager.getIndexDir(), getIndexName());
-	}
-
-	@Sessional
 	@Listen
-	public void on(SystemStarted event) {
+	public void on(SystemStarting event) {
 		File indexDir = getIndexDir();
 		FileUtils.createDir(indexDir);
 		try {
@@ -173,22 +172,19 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 			if (DirectoryReader.indexExists(directory)) {
 				try (IndexReader reader = DirectoryReader.open(directory)) {
 					IndexSearcher searcher = new IndexSearcher(reader);
-					indexVersion = getIndexVersion(searcher);
-				} catch (IndexFormatTooOldException e) {
+					Document doc = readMetaDoc(searcher, 0L);
+					if (doc != null)
+						indexVersion = Integer.parseInt(doc.get(FIELD_VERSION));
+				} catch (IndexFormatTooOldException ignored) {
 				}
 			}
 			if (indexVersion != getIndexVersion()) {
 				FileUtils.cleanDir(indexDir);
-				doWithWriter(new WriterRunnable() {
-
-					@Override
-					public void run(IndexWriter writer) throws IOException {
-						Document document = new Document();
-						document.add(new StringField(FIELD_TYPE, FIELD_INDEX_VERSION, Store.NO));
-						document.add(new StoredField(FIELD_INDEX_VERSION, String.valueOf(getIndexVersion())));
-						writer.updateDocument(getTerm(FIELD_TYPE, FIELD_INDEX_VERSION), document);
-					}
-
+				callWithWriter(writer -> {
+					Document document = new Document();
+					document.add(new StoredField(FIELD_VERSION, String.valueOf(getIndexVersion())));
+					updateMetaDoc(writer, 0L, document);
+					return null;
 				});
 			}
 			searcherManager = new SearcherManager(directory, null);
@@ -196,11 +192,16 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 			throw new RuntimeException(e);
 		}
 
-		batchWorkManager.submit(getBatchWorker(), new IndexWork(INDEXING_PRIORITY, null));
 	}
 
 	@Listen
-	public void on(SystemStopping event) {
+	public void on(SystemStarted event) {
+		for (var projectId: projectManager.getActiveIds()) 
+			requestToIndex(projectId);
+	}
+	
+	@Listen
+	public void on(SystemStopped event) {
 		if (searcherManager != null) {
 			try {
 				searcherManager.close();
@@ -209,167 +210,114 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 			}
 		}
 	}
-	
-	protected void deleteEntitiesLocal(Collection<Long> entityIds) {
-		doWithWriter(new WriterRunnable() {
-
-			@Override
-			public void run(IndexWriter writer) throws IOException {
-				for (Long entityId: entityIds)
-					writer.deleteDocuments(getTerm(FIELD_ENTITY_ID, String.valueOf(entityId)));
-			}
-
-		});
-	}
 
 	@Sessional
 	@Listen
 	public void on(ProjectDeleted event) {
 		Long projectId = event.getProjectId();
-		doWithWriter(new WriterRunnable() {
-	
-			@Override
-			public void run(IndexWriter writer) throws IOException {
-				writer.deleteDocuments(LongPoint.newExactQuery(FIELD_PROJECT_ID, projectId));
-			}
-	
-		});
-	}
-	
-	protected void requestIndexLocal(T entity) {
-		batchWorkManager.submit(getBatchWorker(), new IndexWork(INDEXING_PRIORITY, entity.getId()));
-	}
-	
-	protected void doWithWriter(WriterRunnable runnable) {
-		File indexDir = getIndexDir();
-		try (Directory directory = FSDirectory.open(indexDir.toPath()); Analyzer analyzer = newAnalyzer()) {
-			IndexWriterConfig writerConfig = new IndexWriterConfig(analyzer);
-			writerConfig.setOpenMode(OpenMode.CREATE_OR_APPEND);
-			try (IndexWriter writer = new IndexWriter(directory, writerConfig)) {
+		clusterManager.submitToAllServers(() -> {
+			callWithWriter(writer -> {
 				try {
-					runnable.run(writer);
-					writer.commit();
-				} catch (Exception e) {
-					writer.rollback();
-					throw ExceptionUtils.unchecked(e);
-				} finally {
-					if (searcherManager != null)
-						searcherManager.maybeRefresh();
+					return writer.deleteDocuments(newExactQuery(FIELD_PROJECT_ID, projectId));
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+			return null;
+		});
+	}
+	
+	@Listen
+	public void on(ActiveServerChanged event) {
+		for(var projectId: event.getProjectIds()) 	
+			requestToIndex(projectId);
+	}
+	
+	protected <R> R callWithSearcher(Function<IndexSearcher, R> func) {
+		return LuceneUtils.callWithSearcher(getIndexDir(), func);
+	}
+	
+	protected synchronized <R> R callWithWriter(Function<IndexWriter, R> func) {
+		try (Analyzer analyzer = newAnalyzer()) {
+			return LuceneUtils.callWithWriter(getIndexDir(), analyzer, func);
+		} finally {
+			if (searcherManager != null) {
+				try {
+					searcherManager.maybeRefresh();
+				} catch (IOException e) {
+					throw new RuntimeException(e);
 				}
 			}
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	protected Analyzer newAnalyzer() {
-		return new SmartChineseAnalyzer(STOP_WORDS);
-	}
-
-	private int getIndexVersion(IndexSearcher searcher) throws IOException {
-		TopDocs topDocs = searcher.search(getTermQuery(FIELD_TYPE, FIELD_INDEX_VERSION), 1);
-		if (topDocs.scoreDocs.length != 0) {
-			Document doc = searcher.doc(topDocs.scoreDocs[0].doc);
-			return Integer.parseInt(doc.get(FIELD_INDEX_VERSION));
-		} else {
-			return -1;
-		}
-	}
-
-	private Long getLastEntityId(IndexSearcher searcher) throws IOException {
-		TopDocs topDocs = searcher.search(getTermQuery(FIELD_TYPE, FIELD_LAST_ENTITY_ID), 1);
-		if (topDocs.scoreDocs.length != 0) {
-			Document doc = searcher.doc(topDocs.scoreDocs[0].doc);
-			return Long.valueOf(doc.get(FIELD_LAST_ENTITY_ID));
-		} else {
-			return 0L;
 		}
 	}
 	
-	private BatchWorker getBatchWorker() {
-		return new BatchWorker("index" + entityClass.getSimpleName()) {
+	protected void requestToIndex(Long projectId) {
+		var batchWorker = new BatchWorker("project-" + projectId + "-indexText-" + entityClass.getSimpleName()) {
 
 			@Override
-			public void doWorks(Collection<Prioritized> works) {
+			public void doWorks(List<Prioritized> works) {
 				String entityName = WordUtils.uncamel(entityClass.getSimpleName()).toLowerCase();
-
-				boolean checkNewEntities = false;
-				Collection<Long> entityIds = new HashSet<>();
-				for (Prioritized work : works) {
-					Long entityId = ((IndexWork) work).getEntityId();
-					if (entityId != null)
-						entityIds.add(entityId);
-					else
-						checkNewEntities = true;
-				}
-
-				index(entityIds);
-
-				if (checkNewEntities) {
-					// do the work batch by batch to avoid consuming too much memory
-					while (index());
-				}
-
-				logger.debug("Indexed {}s", entityName);
-			}
-
-		};
-	}
-
-	@Sessional
-	protected void index(Collection<Long> entityIds) {
-		doWithWriter(new WriterRunnable() {
-
-			@Override
-			public void run(IndexWriter writer) throws IOException {
-				for (Long entityId : entityIds) {
-					T entity = dao.load(entityClass, entityId);
-					index(writer, entity);
-				}
-			}
-
-		});
-	}
-
-	@Sessional
-	protected boolean index() {
-		File indexDir = getIndexDir();
-		try (Directory directory = FSDirectory.open(indexDir.toPath())) {
-			Long lastEntityId = 0L;
-			if (DirectoryReader.indexExists(directory)) {
-				try (IndexReader reader = DirectoryReader.open(directory)) {
-					lastEntityId = getLastEntityId(new IndexSearcher(reader));
-				}
-			}
-			List<T> unprocessedEntities = dao.queryAfter(entityClass, lastEntityId, BATCH_SIZE);
-
-			doWithWriter(new WriterRunnable() {
-
-				@Override
-				public void run(IndexWriter writer) throws IOException {
-					T lastEntity = null;
-					for (T entity: unprocessedEntities) {
-						if (clusterManager.getLocalServerUUID().equals(projectManager.getStorageServerUUID(entity.getProject().getId(), false))) 
-							index(writer, entity);
-						lastEntity = entity;
+				String projectPath = projectManager.findFacadeById(projectId).getPath();
+				logger.debug("Indexing {} (project: {})", entityName, projectPath);
+				
+				var touchInfo = callWithSearcher(searcher -> {
+					var touchId = 0L;
+					var metaDoc = readMetaDoc(searcher, projectId);
+					if (metaDoc != null)
+						touchId = metaDoc.getField(FIELD_TOUCH_ID).numericValue().longValue();
+					
+					var touches = queryTouchesAfter(projectId, touchId);
+					if (!touches.isEmpty()) {
+						var entityIds = new HashSet<Long>();
+						var maxTouchId = 0L;
+						for (var touch: touches) {
+							entityIds.add(touch.getEntityId());
+							if (touch.getId() > maxTouchId)
+								maxTouchId = touch.getId();
+						}
+						return new EntityTouchInfo(maxTouchId, entityIds);
+					} else {
+						return null;
 					}
-
-					if (lastEntity != null) {
-						Document document = new Document();
-						document.add(new StringField(FIELD_TYPE, FIELD_LAST_ENTITY_ID, Store.NO));
-						document.add(new StoredField(FIELD_LAST_ENTITY_ID, String.valueOf(lastEntity.getId())));
-						writer.updateDocument(getTerm(FIELD_TYPE, FIELD_LAST_ENTITY_ID), document);
+				});
+				
+				callWithWriter(writer -> {
+					if (touchInfo != null) {
+						for (var partition: partition(new ArrayList<>(touchInfo.getEntityIds()), BATCH_SIZE)) {
+							sessionManager.run(() -> {
+								try {
+									for (var entityId: partition) {
+										var queryBuilder = new BooleanQueryBuilder();
+										queryBuilder.add(newExactQuery(FIELD_PROJECT_ID, projectId), MUST);
+										queryBuilder.add(getTermQuery(FIELD_ENTITY_ID, String.valueOf(entityId)), MUST);											
+										writer.deleteDocuments(queryBuilder.build());
+										var entity = dao.get(entityClass, entityId);
+										if (entity != null && entity.getProject().getId().equals(projectId)) {
+											Document entityDoc = new Document();
+											entityDoc.add(new LongPoint(FIELD_PROJECT_ID, entity.getProject().getId()));
+											entityDoc.add(new StringField(FIELD_ENTITY_ID, String.valueOf(entityId), YES));
+											addFields(entityDoc, entity);
+											writer.addDocument(entityDoc);
+										}
+									}
+								} catch (IOException e) {
+									throw new RuntimeException(e);
+								}
+							});
+						}
+						var metaDoc = new Document();
+						metaDoc.add(new StoredField(FIELD_TOUCH_ID, touchInfo.getTouchId()));
+						updateMetaDoc(writer, projectId, metaDoc);
 					}
-				}
+					return null;
+				});
+				logger.debug("Indexed {} (project: {})", entityName, projectPath);
+			}
 
-			});
-
-			return unprocessedEntities.size() == BATCH_SIZE;
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
-	}
-
+		};		
+		batchWorkManager.submit(batchWorker, new IndexWork(INDEXING_PRIORITY));
+	}	
+	
 	private Query parse(String queryString) {
 		try {
 			QueryParser parser = new QueryParser("", newAnalyzer()) {
@@ -388,19 +336,26 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 		}
 	}
 	
-	protected long count(Query query) {
-		String queryString = query.toString();
-		return clusterManager.runOnAllServers(new ClusterTask<Long>() {
-
-			private static final long serialVersionUID = 1L;
-			@Override
-			public Long call() throws Exception {
+	private Query buildQuery(Map<String, Collection<Long>> projectIdsByServer, String contentQueryString) {
+		var queryBuilder = new BooleanQueryBuilder();
+		var allIds = projectManager.getIds();
+		var projectIds = projectIdsByServer.get(clusterManager.getLocalServerAddress());
+		queryBuilder.add(forManyValues(FIELD_PROJECT_ID, projectIds, allIds), MUST);
+		queryBuilder.add(parse(contentQueryString), MUST);
+		return queryBuilder.build();
+	}
+	
+	protected long count(@Nullable EntityTextQuery query) {
+		if (query != null) {
+			String contentQueryString = query.getContentQuery().toString();
+			var projectIdsByServer = projectManager.groupByActiveServers(query.getApplicableProjectIds());
+			return clusterManager.runOnServers(projectIdsByServer.keySet(), () -> {
 				if (searcherManager != null) {
 					try {
 						IndexSearcher indexSearcher = searcherManager.acquire();
 						try {
 							TotalHitCountCollector collector = new TotalHitCountCollector();
-							indexSearcher.search(parse(queryString), collector);
+							indexSearcher.search(buildQuery(projectIdsByServer, contentQueryString), collector);
 							return (long) collector.getTotalHits();
 						} finally {
 							searcherManager.release(indexSearcher);
@@ -411,33 +366,31 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 				} else {
 					return 0L;
 				}
-			}
-			
-		}).values().stream().reduce(0L, Long::sum);
+			}).values().stream().reduce(0L, Long::sum);
+		} else {
+			return 0;
+		}
 	}
 
-	protected List<T> search(Query query, int firstResult, int maxResults) {
-		String queryString = query.toString();
-		Map<Long, Float> entityScores = new HashMap<>();
-		for (var entry: clusterManager.runOnAllServers(new ClusterTask<Map<Long, Float>>() {
-
-			private static final long serialVersionUID = 1L;
-
-			@Override
-			public Map<Long, Float> call() throws Exception {
+	protected List<T> search(@Nullable EntityTextQuery query, int firstResult, int maxResults) {
+		if (query != null) {
+			String contentQueryString = query.getContentQuery().toString();
+			var projectIdsByServer = projectManager.groupByActiveServers(query.getApplicableProjectIds());
+			Map<Long, Float> entityScores = new HashMap<>();
+			for (var entry : clusterManager.runOnServers(projectIdsByServer.keySet(), (ClusterTask<Map<Long, Float>>) () -> {
 				if (searcherManager != null) {
 					try {
-						IndexSearcher indexSearcher = searcherManager.acquire();
+						IndexSearcher searcher = searcherManager.acquire();
 						try {
-							Map<Long, Float> entityScores = new HashMap<>();
-							TopDocs topDocs = indexSearcher.search(parse(queryString), firstResult + maxResults);
-							for (var scoreDoc: topDocs.scoreDocs) {
-								Document doc = indexSearcher.doc(scoreDoc.doc);
-								entityScores.put(Long.valueOf(doc.get(FIELD_ENTITY_ID)), scoreDoc.score);
+							Map<Long, Float> innerEntityScores = new HashMap<>();
+							TopDocs topDocs = searcher.search(buildQuery(projectIdsByServer, contentQueryString), firstResult + maxResults);
+							for (var scoreDoc : topDocs.scoreDocs) {
+								Document doc = searcher.doc(scoreDoc.doc);
+								innerEntityScores.put(valueOf(doc.get(FIELD_ENTITY_ID)), scoreDoc.score);
 							}
-							return entityScores;
+							return innerEntityScores;
 						} finally {
-							searcherManager.release(indexSearcher);
+							searcherManager.release(searcher);
 						}
 					} catch (IOException e) {
 						throw new RuntimeException(e);
@@ -445,78 +398,123 @@ public abstract class ProjectTextManager<T extends ProjectBelonging> implements 
 				} else {
 					return new HashMap<>();
 				}
+			}).entrySet()) {
+				entityScores.putAll(entry.getValue());
 			}
-			
-		}).entrySet()) {
-			entityScores.putAll(entry.getValue());
-		}
-		
-		List<Long> entityIds = new ArrayList<>(entityScores.keySet());
-		Collections.sort(entityIds, new Comparator<>() {
 
-			@Override
-			public int compare(Object o1, Object o2) {
-				if (entityScores.get(o1) < entityScores.get(o2))
-					return 1;
-				else
-					return -1;
-			}
+			List<Map.Entry<Long, Float>> entries = new ArrayList<>(entityScores.entrySet());
+			entries.sort((o1, o2) -> o2.getValue().compareTo(o1.getValue()));
 			
-		});
-		
-		if (firstResult < entityIds.size()) {
-			EntityCriteria<T> criteria = EntityCriteria.of(entityClass);
-			criteria.add(Restrictions.in(
-					AbstractEntity.PROP_ID, 
-					entityIds.subList(firstResult, Math.min(firstResult + maxResults, entityIds.size()))));
-			
-			List<T> entities = dao.query(criteria);
-			Collections.sort(entities, new Comparator<T>() {
-
-				@Override
-				public int compare(T o1, T o2) {
-					return entityIds.indexOf(o1.getId()) - entityIds.indexOf(o2.getId());
+			if (firstResult < entries.size()) {
+				entries = entries.subList(firstResult, min(firstResult + maxResults, entries.size()));
+				EntityCriteria<T> criteria = EntityCriteria.of(entityClass);
+				criteria.add(Restrictions.in(
+						AbstractEntity.PROP_ID,
+						entries.stream().map(Map.Entry::getKey).collect(toList())));
+				
+				var mapOfEntities = new HashMap<Long, T>();
+				for (var entity: dao.query(criteria))
+					mapOfEntities.put(entity.getId(), entity);
+				
+				var entities = new ArrayList<T>();
+				for (var entry: entries) {
+					var entity = mapOfEntities.get(entry.getKey());
+					if (entity != null)
+						entities.add(entity);
 				}
-
-			});
-			return entities;
+				return entities;
+			} else {
+				return new ArrayList<>();
+			}
 		} else {
 			return new ArrayList<>();
 		}
 	}
+	
+	private String getIndexName() {
+		return WordUtils.uncamel(entityClass.getSimpleName()).replace(" ", "_").toLowerCase();
+	}
 
-	private void index(IndexWriter writer, T entity) throws IOException {
-		Document document = new Document();
-		document.add(new StringField(FIELD_ENTITY_ID, String.valueOf(entity.getId()), Store.YES));
-		document.add(new LongPoint(FIELD_PROJECT_ID, entity.getProject().getId()));
-		addFields(document, entity);
-		writer.updateDocument(getTerm(FIELD_ENTITY_ID, String.valueOf(entity.getId())), document);
+	private File getIndexDir() {
+		return new File(OneDev.getIndexDir(), getIndexName());
+	}
+	
+	protected Analyzer newAnalyzer() {
+		return new StandardAnalyzer(STOP_WORDS);
+	}
+	
+	protected void updateMetaDoc(IndexWriter writer, Long projectId, Document document) {
+		document.add(new StringField(FIELD_TYPE, TYPE_META, Store.NO));
+		document.add(new LongPoint(FIELD_PROJECT_ID, projectId));
+		try {
+			writer.deleteDocuments(newMetaQuery(projectId));
+			writer.addDocument(document);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+	}
+	
+	private Query newMetaQuery(Long projectId) {
+		var queryBuilder = new BooleanQueryBuilder();
+		queryBuilder.add(getTermQuery(FIELD_TYPE, TYPE_META), MUST);
+		queryBuilder.add(newExactQuery(FIELD_PROJECT_ID, projectId), MUST);
+		return queryBuilder.build();
+	}
+	
+	@Nullable
+	protected Document readMetaDoc(IndexSearcher searcher, Long projectId) {
+		try {
+			TopDocs topDocs = searcher.search(newMetaQuery(projectId), 1);
+			if (topDocs.scoreDocs.length != 0) 
+				return searcher.doc(topDocs.scoreDocs[0].doc);
+			else 
+				return null;
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	protected TermQuery getTermQuery(String name, String value) {
+		return new TermQuery(getTerm(name, value));
+	}
+
+	protected Term getTerm(String name, String value) {
+		return new Term(name, value);
 	}
 
 	protected abstract int getIndexVersion();
-
-	protected abstract void addFields(Document document, T entity);
+	
+	@Nullable
+	protected abstract List<? extends EntityTouch> queryTouchesAfter(Long projectId, Long touchId);
+	
+	protected abstract void addFields(Document entityDoc, T entity);
 
 	private static class IndexWork extends Prioritized {
 
-		private final Long entityId;
-
-		public IndexWork(int priority, @Nullable Long entityId) {
+		public IndexWork(int priority) {
 			super(priority);
-			this.entityId = entityId;
-		}
-
-		@Nullable
-		public Long getEntityId() {
-			return entityId;
 		}
 
 	}
 
-	protected static interface WriterRunnable {
+	private static class EntityTouchInfo {
 
-		abstract void run(IndexWriter writer) throws IOException;
+		private final Long touchId;
 
+		private final Collection<Long> entityIds;
+
+		public EntityTouchInfo(Long touchId, Collection<Long> entityIds) {
+			this.touchId = touchId;
+			this.entityIds = entityIds;
+		}
+
+		public Long getTouchId() {
+			return touchId;
+		}
+
+		public Collection<Long> getEntityIds() {
+			return entityIds;
+		}
 	}
 	
 }

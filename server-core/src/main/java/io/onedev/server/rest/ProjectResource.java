@@ -1,49 +1,19 @@
 package io.onedev.server.rest;
 
-import java.io.Serializable;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Objects;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.validation.constraints.NotEmpty;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-
-import org.apache.shiro.authz.UnauthorizedException;
-import org.hibernate.criterion.Restrictions;
-
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.server.entitymanager.MilestoneManager;
 import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.UrlManager;
+import io.onedev.server.web.UrlManager;
 import io.onedev.server.git.GitContribution;
 import io.onedev.server.git.GitContributor;
-import io.onedev.server.infomanager.CommitInfoManager;
-import io.onedev.server.model.GroupAuthorization;
-import io.onedev.server.model.Milestone;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.UserAuthorization;
-import io.onedev.server.model.support.code.BranchProtection;
+import io.onedev.server.xodus.CommitInfoManager;
+import io.onedev.server.model.*;
 import io.onedev.server.model.support.NamedCodeCommentQuery;
 import io.onedev.server.model.support.NamedCommitQuery;
-import io.onedev.server.model.support.code.TagProtection;
 import io.onedev.server.model.support.WebHook;
 import io.onedev.server.model.support.build.ProjectBuildSetting;
+import io.onedev.server.model.support.code.BranchProtection;
+import io.onedev.server.model.support.code.TagProtection;
 import io.onedev.server.model.support.issue.ProjectIssueSetting;
 import io.onedev.server.model.support.pullrequest.ProjectPullRequestSetting;
 import io.onedev.server.persistence.dao.EntityCriteria;
@@ -56,6 +26,21 @@ import io.onedev.server.util.DateUtils;
 import io.onedev.server.util.Day;
 import io.onedev.server.util.facade.ProjectFacade;
 import io.onedev.server.web.page.project.setting.ContributedProjectSetting;
+import org.apache.shiro.authz.UnauthorizedException;
+import org.hibernate.criterion.Restrictions;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.validation.Valid;
+import javax.validation.constraints.NotEmpty;
+import javax.validation.constraints.NotNull;
+import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import java.io.Serializable;
+import java.time.LocalDate;
+import java.util.*;
 
 @Api(order=1000)
 @Path("/projects")
@@ -166,15 +151,25 @@ public class ProjectResource {
 			throw new UnauthorizedException();
     	return project.getUserAuthorizations();
     }
+
+	@Api(order=600, description = "Get list of <a href='/~help/api/io.onedev.server.rest.ProjectLabelResource'>labels</a>")
+	@Path("/{projectId}/labels")
+	@GET
+	public Collection<ProjectLabel> getLabels(@PathParam("projectId") Long projectId) {
+		Project project = projectManager.load(projectId);
+		if (!SecurityUtils.canAccess(project))
+			throw new UnauthorizedException();
+		return project.getLabels();
+	}
 	
 	@Api(order=700)
 	@GET
     public List<Project> queryBasicInfo(
-    		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in <a href='/projects'>projects page</a>", example="\"Name\" is \"projectName\"") String query, 
+    		@QueryParam("query") @Api(description="Syntax of this query is the same as query box in <a href='/~projects'>projects page</a>", example="\"Name\" is \"projectName\"") String query, 
     		@QueryParam("offset") @Api(example="0") int offset, 
     		@QueryParam("count") @Api(example="100") int count) {
-		
-    	if (count > RestConstants.MAX_PAGE_SIZE)
+
+		if (!SecurityUtils.isAdministrator() && count > RestConstants.MAX_PAGE_SIZE)
     		throw new InvalidParamException("Count should not be greater than " + RestConstants.MAX_PAGE_SIZE);
 
     	ProjectQuery parsedQuery;
@@ -249,46 +244,70 @@ public class ProjectResource {
 		return DateUtils.formatISO8601Date(new Date());
 	}
 	
-	@Api(order=800, description="Update project of specified id in request body, or create new if id property not provided")
+	@Api(order=800, description="Create new project")
     @POST
-    public Long createOrUpdate(@NotNull Project project) {
+    public Long create(@NotNull @Valid Project project) {
+		Project parent = project.getParent();
+		
+		checkProjectCreationPermission(parent);
+	
+		if (parent != null && project.isSelfOrAncestorOf(parent)) 
+			throw new ExplicitException("Can not use current or descendant project as parent");
+		
+		checkProjectNameDuplication(project);
+		
+		projectManager.create(project);
+    	
+    	return project.getId();
+    }
+
+	@Api(order=850, description="Update projecty basic info of specified id")
+	@Path("/{projectId}")
+	@POST
+	public Response updateBasicInfo(@PathParam("projectId") Long projectId, @NotNull @Valid Project project) {
 		Project parent = project.getParent();
 		Long oldParentId;
 		if (project.getOldVersion() != null)
 			oldParentId = ((ProjectFacade) project.getOldVersion()).getParentId();
 		else
 			oldParentId = null;
-		
-		if (project.isNew() || !Objects.equals(oldParentId, Project.idOf(parent))) {
-			if (parent != null && !SecurityUtils.canCreateChildren(parent))
-				throw new UnauthorizedException("Not authorized to create project under '" + parent.getPath() + "'");
-			if (parent == null && !SecurityUtils.canCreateRootProjects()) 
-				throw new UnauthorizedException("Not authorized to create root project");
-		}
-	
-		if (parent != null && project.isSelfOrAncestorOf(parent)) 
+
+		if (!Objects.equals(oldParentId, Project.idOf(parent))) 
+			checkProjectCreationPermission(parent);
+
+		if (parent != null && project.isSelfOrAncestorOf(parent))
 			throw new ExplicitException("Can not use current or descendant project as parent");
-		
+
+		checkProjectNameDuplication(project);
+
+		if (!SecurityUtils.canManage(project)) {
+			throw new UnauthorizedException();
+		} else {
+			projectManager.update(project);
+		}
+
+		return Response.ok().build();
+	}
+	
+	private void checkProjectCreationPermission(@Nullable Project parent) {
+		if (parent != null && !SecurityUtils.canCreateChildren(parent))
+			throw new UnauthorizedException("Not authorized to create project under '" + parent.getPath() + "'");
+		if (parent == null && !SecurityUtils.canCreateRootProjects())
+			throw new UnauthorizedException("Not authorized to create root project");
+	}
+	
+	private void checkProjectNameDuplication(Project project) {
+		Project parent = project.getParent();
 		Project projectWithSameName = projectManager.find(parent, project.getName());
 		if (projectWithSameName != null && !projectWithSameName.equals(project)) {
 			if (parent != null) {
-				throw new ExplicitException("Name '" + project.getName() + "' is already used by another project under '" 
+				throw new ExplicitException("Name '" + project.getName() + "' is already used by another project under '"
 						+ parent.getPath() + "'");
 			} else {
 				throw new ExplicitException("Name '" + project.getName() + "' is already used by another root project");
 			}
 		}
-		
-    	if (project.isNew()) { 
-    		projectManager.create(project);
-    	} else if (!SecurityUtils.canManage(project)) {
-			throw new UnauthorizedException();
-    	} else {
-    		projectManager.save(project);
-    	}
-    	
-    	return project.getId();
-    }
+	}
 	
 	@Api(order=900, description="Update project setting")
 	@Path("/{projectId}/setting")
@@ -306,7 +325,7 @@ public class ProjectResource {
 		project.setNamedCommitQueries(setting.namedCommitQueries);
 		project.setPullRequestSetting(setting.pullRequestSetting);
 		project.setWebHooks(setting.webHooks);
-		projectManager.save(project);
+		projectManager.update(project);
 		return Response.ok().build();
     }
 	

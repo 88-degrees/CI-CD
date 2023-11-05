@@ -4,8 +4,8 @@ import io.onedev.commons.codeassist.InputCompletion;
 import io.onedev.commons.codeassist.InputStatus;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.buildspec.NamedElement;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.SuggestionProvider;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.SuggestionProvider;
 
 import javax.validation.constraints.NotEmpty;
 import java.io.Serializable;
@@ -20,6 +20,8 @@ public class JobProperty implements NamedElement, Serializable {
 	private String name;
 	
 	private String value;
+	
+	private boolean archived;
 
 	@Editable(order=100)
 	@SuggestionProvider("getNameSuggestions")
@@ -53,5 +55,15 @@ public class JobProperty implements NamedElement, Serializable {
 	public void setValue(String value) {
 		this.value = value;
 	}
-	
+
+	@Editable(order=300, description = "Mark a property archived if it is no longer used by current " +
+			"build spec, but still need to exist to reproduce old builds. Archived properties " +
+			"will not be shown by default")
+	public boolean isArchived() {
+		return archived;
+	}
+
+	public void setArchived(boolean archived) {
+		this.archived = archived;
+	}
 }

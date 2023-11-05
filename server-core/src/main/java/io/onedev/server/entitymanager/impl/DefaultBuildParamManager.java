@@ -1,24 +1,12 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.hibernate.query.Query;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import com.google.common.base.Preconditions;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.entitymanager.BuildParamManager;
 import io.onedev.server.event.Listen;
+import io.onedev.server.event.entity.EntityPersisted;
 import io.onedev.server.event.entity.EntityRemoved;
-import io.onedev.server.event.system.SystemStarted;
+import io.onedev.server.event.system.SystemStarting;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.BuildParam;
 import io.onedev.server.model.Project;
@@ -27,6 +15,14 @@ import io.onedev.server.persistence.annotation.Sessional;
 import io.onedev.server.persistence.annotation.Transactional;
 import io.onedev.server.persistence.dao.BaseEntityManager;
 import io.onedev.server.persistence.dao.Dao;
+import org.hibernate.query.Query;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.*;
 
 @Singleton
 public class DefaultBuildParamManager extends BaseEntityManager<BuildParam> implements BuildParamManager {
@@ -58,40 +54,34 @@ public class DefaultBuildParamManager extends BaseEntityManager<BuildParam> impl
 	@SuppressWarnings("unchecked")
 	@Sessional
 	@Listen
-	public void on(SystemStarted event) {
+	public void on(SystemStarting event) {
 		logger.info("Caching build param info...");
 
-		Map<Long, Long> projectIds = new HashMap<>();
-		Query<?> query = dao.getSession().createQuery("select id, project.id from Build");
-		for (Object[] fields: (List<Object[]>)query.list()) 
-			projectIds.put((Long)fields[0], (Long)fields[1]);
+		var hazelcastInstance = clusterManager.getHazelcastInstance();
+		paramNames = hazelcastInstance.getMap("buildParamNames");
 		
-		paramNames = clusterManager.getHazelcastInstance().getReplicatedMap("buildParamNames");
-		
-		query = dao.getSession().createQuery("select build.id, name from BuildParam");
-		for (Object[] fields: (List<Object[]>)query.list()) {
-			Long projectId = projectIds.get(fields[0]);
-			if (projectId != null)
-				addParam(projectId, (String) fields[1]);
-		}
+		var cacheInited = hazelcastInstance.getCPSubsystem().getAtomicLong("buildParamCacheInited");
+		clusterManager.init(cacheInited, () -> {
+			Map<Long, Long> projectIds = new HashMap<>();
+			Query<?> query = dao.getSession().createQuery("select id, project.id from Build");
+			for (Object[] fields: (List<Object[]>)query.list())
+				projectIds.put((Long)fields[0], (Long)fields[1]);
+
+			query = dao.getSession().createQuery("select build.id, name from BuildParam");
+			for (Object[] fields: (List<Object[]>)query.list()) {
+				Long projectId = projectIds.get(fields[0]);
+				if (projectId != null)
+					addParam(projectId, (String) fields[1]);
+			}
+			return 1L;			
+		});		
 	}
 
 	@Transactional
 	@Override
-	public void save(BuildParam param) {
-		super.save(param);
-		
-		Long projectId = param.getBuild().getProject().getId();
-		String paramName = param.getName();
-		
-		transactionManager.runAfterCommit(new Runnable() {
-
-			@Override
-			public void run() {
-				addParam(projectId, paramName);
-			}
-			
-		});
+	public void create(BuildParam param) {
+		Preconditions.checkState(param.isNew());
+		dao.persist(param);
 	}
 
 	private void addParam(Long projectId, String paramName) {
@@ -111,20 +101,24 @@ public class DefaultBuildParamManager extends BaseEntityManager<BuildParam> impl
 		}
 		return paramNames;
 	}
+
+	@Transactional
+	@Listen
+	public void on(EntityPersisted event) {
+		if (event.getEntity() instanceof BuildParam) {
+			BuildParam param = (BuildParam) event.getEntity();
+			Long projectId = param.getBuild().getProject().getId();
+			String paramName = param.getName();
+			transactionManager.runAfterCommit(() -> addParam(projectId, paramName));
+		}
+	}
 	
 	@Transactional
 	@Listen
 	public void on(EntityRemoved event) {
 		if (event.getEntity() instanceof Project) {
 			Long projectId = event.getEntity().getId();
-			transactionManager.runAfterCommit(new Runnable() {
-
-				@Override
-				public void run() {
-					paramNames.remove(projectId);
-				}
-				
-			});
+			transactionManager.runAfterCommit(() -> paramNames.remove(projectId));
 		}
 	}
 	

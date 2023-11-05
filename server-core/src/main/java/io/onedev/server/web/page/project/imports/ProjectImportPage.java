@@ -1,7 +1,16 @@
 package io.onedev.server.web.page.project.imports;
 
-import java.util.concurrent.Callable;
-
+import io.onedev.commons.utils.TaskLogger;
+import io.onedev.server.OneDev;
+import io.onedev.server.imports.ProjectImporter;
+import io.onedev.server.imports.ProjectImporterContribution;
+import io.onedev.server.search.entity.project.ProjectQuery;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.web.component.taskbutton.TaskButton;
+import io.onedev.server.web.component.taskbutton.TaskResult;
+import io.onedev.server.web.component.wizard.WizardPanel;
+import io.onedev.server.web.page.layout.LayoutPage;
+import io.onedev.server.web.page.project.ProjectListPage;
 import org.apache.wicket.Component;
 import org.apache.wicket.RestartResponseException;
 import org.apache.wicket.ajax.AjaxRequestTarget;
@@ -10,18 +19,6 @@ import org.apache.wicket.markup.html.basic.Label;
 import org.apache.wicket.markup.html.form.Form;
 import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
-
-import io.onedev.commons.utils.TaskLogger;
-import io.onedev.server.OneDev;
-import io.onedev.server.imports.ProjectImporter;
-import io.onedev.server.imports.ProjectImporterContribution;
-import io.onedev.server.persistence.TransactionManager;
-import io.onedev.server.search.entity.project.ProjectQuery;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.web.component.taskbutton.TaskButton;
-import io.onedev.server.web.component.wizard.WizardPanel;
-import io.onedev.server.web.page.layout.LayoutPage;
-import io.onedev.server.web.page.project.ProjectListPage;
 
 @SuppressWarnings("serial")
 public class ProjectImportPage extends LayoutPage {
@@ -71,15 +68,8 @@ public class ProjectImportPage extends LayoutPage {
 					}
 
 					@Override
-					protected String runTask(TaskLogger logger) {
-						return OneDev.getInstance(TransactionManager.class).call(new Callable<String>() {
-
-							@Override
-							public String call() throws Exception {
-								return importer.doImport(false, logger);
-							}
-							
-						});
+					protected TaskResult runTask(TaskLogger logger) {
+						return importer.doImport(false, logger);
 					}
 					
 					@Override
@@ -98,15 +88,8 @@ public class ProjectImportPage extends LayoutPage {
 				fragment.add(new TaskButton("dryRun") {
 
 					@Override
-					protected String runTask(TaskLogger logger) {
-						return OneDev.getInstance(TransactionManager.class).call(new Callable<String>() {
-
-							@Override
-							public String call() throws Exception {
-								return importer.doImport(true, logger);
-							}
-							
-						});
+					protected TaskResult runTask(TaskLogger logger) {
+						return importer.doImport(true, logger);
 					}
 					
 					@Override

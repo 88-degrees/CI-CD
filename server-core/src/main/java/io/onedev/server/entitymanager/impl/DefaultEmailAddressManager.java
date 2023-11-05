@@ -1,27 +1,19 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.Arrays;
-import java.util.stream.Collectors;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.eclipse.jgit.lib.PersonIdent;
-
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.hazelcast.core.HazelcastInstance;
-
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.entitymanager.EmailAddressManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.event.Listen;
 import io.onedev.server.event.entity.EntityPersisted;
 import io.onedev.server.event.entity.EntityRemoved;
-import io.onedev.server.event.system.SystemStarted;
+import io.onedev.server.event.system.SystemStarting;
 import io.onedev.server.mail.MailManager;
 import io.onedev.server.model.EmailAddress;
 import io.onedev.server.model.User;
+import io.onedev.server.model.support.administration.emailtemplates.EmailTemplates;
 import io.onedev.server.persistence.SessionManager;
 import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.annotation.Sessional;
@@ -30,6 +22,13 @@ import io.onedev.server.persistence.dao.BaseEntityManager;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.util.facade.EmailAddressCache;
 import io.onedev.server.util.facade.EmailAddressFacade;
+import org.eclipse.jgit.lib.PersonIdent;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.stream.Collectors;
 
 @Singleton
 public class DefaultEmailAddressManager extends BaseEntityManager<EmailAddress> implements EmailAddressManager {
@@ -60,12 +59,14 @@ public class DefaultEmailAddressManager extends BaseEntityManager<EmailAddress> 
 
     @Listen
     @Sessional
-    public void on(SystemStarted event) {
+    public void on(SystemStarting event) {
 		HazelcastInstance hazelcastInstance = clusterManager.getHazelcastInstance();
+		
+		// Use replicated map, otherwise it will be slow to display many user avatars
+		// (in issue list for instance) which will call findPrimaryFacade many times
         cache = new EmailAddressCache(hazelcastInstance.getReplicatedMap("emailAddressCache"));
-        
-    	for (EmailAddress address: query())
-    		cache.put(address.getId(), address.getFacade());
+		for (EmailAddress address: query())
+			cache.put(address.getId(), address.getFacade());
     }
     
     @Sessional
@@ -137,8 +138,8 @@ public class DefaultEmailAddressManager extends BaseEntityManager<EmailAddress> 
 
 	@Transactional
 	@Override
-	public void save(EmailAddress emailAddress) {
-		boolean isNew = emailAddress.isNew();
+	public void create(EmailAddress emailAddress) {
+		Preconditions.checkState(emailAddress.isNew());
 		emailAddress.setValue(emailAddress.getValue().toLowerCase());
 		
 		User user = emailAddress.getOwner();
@@ -150,47 +151,36 @@ public class DefaultEmailAddressManager extends BaseEntityManager<EmailAddress> 
 		
 		user.getEmailAddresses().add(emailAddress);
 		
-		if (isNew && !emailAddress.isVerified() && settingManager.getMailSetting() != null) {
+		if (!emailAddress.isVerified() && settingManager.getMailService() != null) {
 			Long addressId = emailAddress.getId();
-			sessionManager.runAsyncAfterCommit(new Runnable() {
-
-				@Override
-				public void run() {
-					sendVerificationEmail(load(addressId));
-				}
-				
-			});
+			sessionManager.runAsyncAfterCommit(() -> sendVerificationEmail(load(addressId)));
 		}
 	}
 
+	@Transactional
+	@Override
+	public void update(EmailAddress emailAddress) {
+		Preconditions.checkState(!emailAddress.isNew());
+		emailAddress.setValue(emailAddress.getValue().toLowerCase());
+		dao.persist(emailAddress);
+	}
+	
     @Transactional
     @Listen
     public void on(EntityRemoved event) {
     	if (event.getEntity() instanceof EmailAddress) {
     		Long id = event.getEntity().getId();
-    		transactionManager.runAfterCommit(new Runnable() {
-
-				@Override
-				public void run() {
-			    	cache.remove(id);
-				}
-    			
-    		});
+    		transactionManager.runAfterCommit(() -> cache.remove(id));
     	} else if (event.getEntity() instanceof User) {
     		Long ownerId = event.getEntity().getId();
-    		transactionManager.runAfterCommit(new Runnable() {
-
-				@Override
-				public void run() {
-					for (var id: cache.entrySet().stream()
-							.filter(it->it.getValue().getOwnerId().equals(ownerId))
-							.map(it->it.getKey())
-							.collect(Collectors.toSet())) {
-						cache.remove(id);
-					}
+    		transactionManager.runAfterCommit(() -> {
+				for (var id: cache.entrySet().stream()
+						.filter(it->it.getValue().getOwnerId().equals(ownerId))
+						.map(it->it.getKey())
+						.collect(Collectors.toSet())) {
+					cache.remove(id);
 				}
-    			
-    		});
+			});
     	}
     }
     
@@ -199,46 +189,35 @@ public class DefaultEmailAddressManager extends BaseEntityManager<EmailAddress> 
     public void on(EntityPersisted event) {
     	if (event.getEntity() instanceof EmailAddress) {
     		EmailAddressFacade facade = ((EmailAddress) event.getEntity()).getFacade();
-    		transactionManager.runAfterCommit(new Runnable() {
-
-				@Override
-				public void run() {
-					if (cache != null)
-						cache.put(facade.getId(), facade);
-				}
-    			
-    		});
+    		transactionManager.runAfterCommit(() -> cache.put(facade.getId(), facade));
     	}
     }
     
 	@Override
 	public void sendVerificationEmail(EmailAddress emailAddress) {
-		Preconditions.checkState(settingManager.getMailSetting() != null 
+		Preconditions.checkState(settingManager.getMailService() != null 
 				&& !emailAddress.isVerified());
 
 		User user = emailAddress.getOwner();
-		
 		String serverUrl = settingManager.getSystemSetting().getServerUrl();
-		
 		String verificationUrl = String.format("%s/~verify-email-address/%d/%s", 
 				serverUrl, emailAddress.getId(), emailAddress.getVerificationCode());
-		String htmlBody = String.format("Hello,"
-			+ "<p style='margin: 16px 0;'>"
-			+ "The account \"%s\" at \"%s\" tries to use email address \"%s\", please visit below link to verify if this is you:<br><br>"
-			+ "<a href='%s'>%s</a>",
-			user.getName(), serverUrl, emailAddress.getValue(), verificationUrl, verificationUrl);
-
-		String textBody = String.format("Hello,\n\n"
-				+ "The account \"%s\" at \"%s\" tries to use email address \"%s\", please visit below link to verify if this is you:\n\n"
-				+ "%s",
-				user.getName(), serverUrl, emailAddress.getValue(), verificationUrl);
 		
-		mailManager.sendMail(
-				settingManager.getMailSetting().getSendSetting(), 
-				Arrays.asList(emailAddress.getValue()),
+		var bindings = new HashMap<String, Object>();
+		bindings.put("user", user);
+		bindings.put("emailAddress", emailAddress.getValue());
+		bindings.put("serverUrl", serverUrl);
+		bindings.put("verificationUrl", verificationUrl);
+		
+		String template = settingManager.getEmailTemplates().getEmailVerification();
+
+		var htmlBody = EmailTemplates.evalTemplate(true, template, bindings);
+		var textBody = EmailTemplates.evalTemplate(false, template, bindings);
+		
+		mailManager.sendMail(Arrays.asList(emailAddress.getValue()),
 				Lists.newArrayList(), Lists.newArrayList(), 
-				"[Verification] Please Verify Your Email Address", 
-				htmlBody, textBody, null, null);
+				"[Email Verification] Please Verify Your Email Address", 
+				htmlBody, textBody, null, null, null);
 	}
 
 	@Override

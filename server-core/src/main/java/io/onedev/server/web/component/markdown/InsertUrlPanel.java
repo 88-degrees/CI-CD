@@ -1,20 +1,34 @@
 package io.onedev.server.web.component.markdown;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import javax.activation.MimetypesFileTypeMap;
-import javax.annotation.Nullable;
-
+import com.google.common.base.Preconditions;
+import io.onedev.commons.utils.PathUtils;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.OneDev;
+import io.onedev.server.attachment.AttachmentSupport;
+import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.git.BlobIdent;
+import io.onedev.server.git.BlobIdentFilter;
+import io.onedev.server.git.exception.GitException;
+import io.onedev.server.git.service.GitService;
+import io.onedev.server.model.Project;
+import io.onedev.server.util.ExceptionUtils;
+import io.onedev.server.util.FilenameUtils;
+import io.onedev.server.util.UrlUtils;
+import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
+import io.onedev.server.web.behavior.ReferenceInputBehavior;
+import io.onedev.server.web.component.blob.BlobFolderSelector;
+import io.onedev.server.web.component.blob.BlobSelector;
+import io.onedev.server.web.component.dropzonefield.DropzoneField;
+import io.onedev.server.web.component.floating.FloatingPanel;
+import io.onedev.server.web.component.link.DropdownLink;
+import io.onedev.server.web.component.tabbable.AjaxActionTab;
+import io.onedev.server.web.component.tabbable.Tab;
+import io.onedev.server.web.component.tabbable.Tabbable;
+import io.onedev.server.web.page.project.blob.ProjectBlobPage;
+import io.onedev.server.web.page.project.blob.render.BlobRenderContext;
+import io.onedev.server.web.upload.FileUpload;
+import io.onedev.server.web.upload.UploadManager;
 import org.apache.commons.fileupload.FileUploadException;
-import org.apache.commons.text.StringEscapeUtils;
 import org.apache.wicket.Component;
 import org.apache.wicket.MetaDataKey;
 import org.apache.wicket.ajax.AjaxRequestTarget;
@@ -33,45 +47,21 @@ import org.apache.wicket.markup.html.list.ListItem;
 import org.apache.wicket.markup.html.list.ListView;
 import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.markup.html.panel.Panel;
-import org.apache.wicket.model.AbstractReadOnlyModel;
-import org.apache.wicket.model.IModel;
-import org.apache.wicket.model.LoadableDetachableModel;
-import org.apache.wicket.model.Model;
-import org.apache.wicket.model.PropertyModel;
+import org.apache.wicket.model.*;
 import org.apache.wicket.protocol.http.WebSession;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.util.lang.Bytes;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.unbescape.html.HtmlEscape;
 import org.unbescape.javascript.JavaScriptEscape;
 
-import com.google.common.base.Preconditions;
-
-import io.onedev.commons.utils.PathUtils;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.server.OneDev;
-import io.onedev.server.attachment.AttachmentSupport;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.git.BlobIdent;
-import io.onedev.server.git.BlobIdentFilter;
-import io.onedev.server.git.exception.GitException;
-import io.onedev.server.git.service.GitService;
-import io.onedev.server.model.Project;
-import io.onedev.server.util.FilenameUtils;
-import io.onedev.server.util.UrlUtils;
-import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
-import io.onedev.server.web.behavior.ReferenceInputBehavior;
-import io.onedev.server.web.component.blob.BlobFolderSelector;
-import io.onedev.server.web.component.blob.BlobSelector;
-import io.onedev.server.web.component.dropzonefield.DropzoneField;
-import io.onedev.server.web.component.floating.FloatingPanel;
-import io.onedev.server.web.component.link.DropdownLink;
-import io.onedev.server.web.component.tabbable.AjaxActionTab;
-import io.onedev.server.web.component.tabbable.Tab;
-import io.onedev.server.web.component.tabbable.Tabbable;
-import io.onedev.server.web.page.project.blob.ProjectBlobPage;
-import io.onedev.server.web.page.project.blob.render.BlobRenderContext;
-import io.onedev.server.web.util.FileUpload;
+import javax.activation.MimetypesFileTypeMap;
+import javax.annotation.Nullable;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.*;
 
 @SuppressWarnings("serial")
 abstract class InsertUrlPanel extends Panel {
@@ -94,7 +84,7 @@ abstract class InsertUrlPanel extends Panel {
 	
 	private static final String CONTENT_ID = "content";
 	
-	private Collection<FileUpload> uploads = new ArrayList<>();
+	private String uploadId;
 	
 	private String linkUrl;
 	
@@ -155,6 +145,13 @@ abstract class InsertUrlPanel extends Panel {
 				}
 			}
 			
+		});
+		form.add(new AjaxLink<Void>("cancel") {
+
+			@Override
+			public void onClick(AjaxRequestTarget target) {
+				onClose(target);
+			}
 		});
 		
 		fragment.add(form);
@@ -305,7 +302,7 @@ abstract class InsertUrlPanel extends Panel {
 							}
 
 						};
-						selectLink.add(new ExternalImage("image", StringEscapeUtils.escapeHtml4(attachmentUrl)));
+						selectLink.add(new ExternalImage("image", HtmlEscape.escapeHtml5(attachmentUrl)));
 						item.add(selectLink);
 						
 						item.add(new AjaxLink<Void>("delete") {
@@ -359,7 +356,7 @@ abstract class InsertUrlPanel extends Panel {
 							}
 
 						};
-						selectLink.add(new Label("file", StringEscapeUtils.escapeHtml4(attachmentName)));
+						selectLink.add(new Label("file", HtmlEscape.escapeHtml5(attachmentName)));
 						item.add(selectLink);
 						
 						item.add(new AjaxLink<Void>("delete") {
@@ -389,7 +386,7 @@ abstract class InsertUrlPanel extends Panel {
 	private Component newUploadPanel() {
 		Fragment fragment;
 
-		IModel<Collection<FileUpload>> model = new PropertyModel<Collection<FileUpload>>(this, "uploads");
+		IModel<String> model = new PropertyModel<String>(this, "uploadId");
 		String acceptedFiles;
 		if (isImage)
 			acceptedFiles = "image/*";
@@ -408,17 +405,22 @@ abstract class InsertUrlPanel extends Panel {
 					
 					AjaxRequestTarget target = RequestCycle.get().find(AjaxRequestTarget.class);
 					String attachmentName;
-					FileUpload upload = uploads.iterator().next();
-					try (InputStream is = upload.getInputStream()) {
-						attachmentName = attachmentSupport.saveAttachment(
-								FilenameUtils.sanitizeFilename(upload.getFileName()), is);
-						upload.release();
-					} catch (IOException e) {
-						throw new RuntimeException(e);
+					var upload = getUploadManager().getUpload(uploadId);
+					try {
+						for (var item : upload.getItems()) {
+							try (InputStream is = item.getInputStream()) {
+								attachmentName = attachmentSupport.saveAttachment(
+										FilenameUtils.sanitizeFilename(FileUpload.getFileName(item)), is);
+								markdownEditor.insertUrl(target, isImage,
+										attachmentSupport.getAttachmentUrlPath(attachmentName),
+										linkText!=null?linkText:attachmentName, null);
+							} catch (IOException e) {
+								throw new RuntimeException(e);
+							}
+						}
+					} finally {
+						upload.clear();
 					}
-					markdownEditor.insertUrl(target, isImage, 
-							attachmentSupport.getAttachmentUrlPath(attachmentName), 
-							linkText!=null?linkText:attachmentName, null);
 					onClose(target);
 				}
 
@@ -439,7 +441,12 @@ abstract class InsertUrlPanel extends Panel {
 					.setRequired(true).setLabel(Model.of("Attachment")));
 			
 			form.add(new AjaxButton("insert"){});
-			
+			form.add(new AjaxLink<Void>("cancel") {
+				@Override
+				public void onClick(AjaxRequestTarget target) {
+					onClose(target);
+				}
+			});
 			fragment.add(form);
 		} else {
 			int maxUploadFileSize = OneDev.getInstance(SettingManager.class).getPerformanceSetting().getMaxUploadFileSize();
@@ -517,8 +524,15 @@ abstract class InsertUrlPanel extends Panel {
 				}
 				
 			});
+
+			form.add(new AjaxLink<Void>("cancel") {
+				@Override
+				public void onClick(AjaxRequestTarget target) {
+					onClose(target);
+				}
+			});
 			
-			ReferenceInputBehavior behavior = new ReferenceInputBehavior(true) {
+			ReferenceInputBehavior behavior = new ReferenceInputBehavior() {
 				
 				@Override
 				protected Project getProject() {
@@ -539,23 +553,26 @@ abstract class InsertUrlPanel extends Panel {
 					String commitMessage = InsertUrlPanel.this.commitMessage;
 					if (StringUtils.isBlank(commitMessage))
 						commitMessage = "Add files via upload";
-					
+
+					var upload = getUploadManager().getUpload(uploadId);
 					try {
 						String directory = WebSession.get().getMetaData(UPLOAD_DIRECTORY);
-						context.onCommitted(null, context.uploadFiles(uploads, directory, commitMessage));
-						String fileName = uploads.iterator().next().getFileName();
+						context.onCommitted(null, context.uploadFiles(upload, directory, commitMessage));
+						String fileName = FileUpload.getFileName(upload.getItems().iterator().next());
 						String url;
 						if (directory != null) 
 							url = StringUtils.stripEnd(directory, "/") + "/" + UrlUtils.encodePath(fileName);
 						else 
 							url = UrlUtils.encodePath(fileName);
 						markdownEditor.insertUrl(target, isImage, url, linkText!=null?linkText:fileName, null);
-						for (FileUpload upload: uploads) 
-							upload.release();
+						upload.clear();
 						onClose(target);
 					} catch (GitException e) {
 						form.error(e.getMessage());
 						target.add(feedback);
+					} catch (Exception e) {
+						upload.clear();
+						throw ExceptionUtils.unchecked(e);
 					}
 				}
 
@@ -645,13 +662,15 @@ abstract class InsertUrlPanel extends Panel {
 
 			@Override
 			public void onClick(AjaxRequestTarget target) {
-				for (FileUpload upload: uploads)
-					upload.release();
 				onClose(target);
 			}
 			
 		});
 		
+	}
+	
+	private UploadManager getUploadManager() {
+		return OneDev.getInstance(UploadManager.class);
 	}
 	
 	protected abstract void onClose(AjaxRequestTarget target);

@@ -5,14 +5,14 @@ import java.util.List;
 
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.annotation.Editable;
 
 @Editable
 public class Ignore implements ValueProvider {
 
 	private static final long serialVersionUID = 1L;
 	
-	public static final String DISPLAY_NAME = "Ignore";
+	public static final String DISPLAY_NAME = "Ingore this field";
 	
 	@Override
 	public boolean equals(Object other) {

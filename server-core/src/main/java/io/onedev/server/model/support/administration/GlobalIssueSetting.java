@@ -1,39 +1,23 @@
 package io.onedev.server.model.support.administration;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
 import com.google.common.collect.Lists;
-
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.Choice;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.buildspecmodel.inputspec.showcondition.ShowCondition;
+import io.onedev.server.buildspecmodel.inputspec.showcondition.ValueIsOneOf;
 import io.onedev.server.model.Issue;
+import io.onedev.server.model.IssueSchedule;
 import io.onedev.server.model.Project;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.Choice;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
-import io.onedev.server.model.support.inputspec.choiceinput.defaultvalueprovider.DefaultValue;
-import io.onedev.server.model.support.inputspec.choiceinput.defaultvalueprovider.SpecifiedDefaultValue;
-import io.onedev.server.model.support.inputspec.showcondition.ShowCondition;
-import io.onedev.server.model.support.inputspec.showcondition.ValueIsOneOf;
-import io.onedev.server.model.support.issue.BoardSpec;
-import io.onedev.server.model.support.issue.IssueTemplate;
-import io.onedev.server.model.support.issue.NamedIssueQuery;
-import io.onedev.server.model.support.issue.StateSpec;
-import io.onedev.server.model.support.issue.TransitionSpec;
+import io.onedev.server.model.support.issue.*;
 import io.onedev.server.model.support.issue.field.spec.BuildChoiceField;
-import io.onedev.server.model.support.issue.field.spec.ChoiceField;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
-import io.onedev.server.model.support.issue.field.spec.UserChoiceField;
+import io.onedev.server.model.support.issue.field.spec.choicefield.ChoiceField;
+import io.onedev.server.model.support.issue.field.spec.choicefield.defaultvalueprovider.DefaultValue;
+import io.onedev.server.model.support.issue.field.spec.choicefield.defaultvalueprovider.SpecifiedDefaultValue;
+import io.onedev.server.model.support.issue.field.spec.userchoicefield.UserChoiceField;
 import io.onedev.server.model.support.issue.transitiontrigger.BranchUpdateTrigger;
 import io.onedev.server.model.support.issue.transitiontrigger.BuildSuccessfulTrigger;
 import io.onedev.server.model.support.issue.transitiontrigger.PressButtonTrigger;
@@ -44,12 +28,12 @@ import io.onedev.server.util.match.Matcher;
 import io.onedev.server.util.match.PathMatcher;
 import io.onedev.server.util.patternset.PatternSet;
 import io.onedev.server.util.usage.Usage;
-import io.onedev.server.web.component.issue.workflowreconcile.ReconcileUtils;
-import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldResolution;
-import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValue;
-import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValuesResolution;
-import io.onedev.server.web.component.issue.workflowreconcile.UndefinedStateResolution;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.web.component.issue.workflowreconcile.*;
+
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Editable
 public class GlobalIssueSetting implements Serializable {
@@ -64,6 +48,8 @@ public class GlobalIssueSetting implements Serializable {
 	
 	private List<BoardSpec> boardSpecs = new ArrayList<>();
 	
+	private TimeTrackingSetting timeTrackingSetting = new TimeTrackingSetting();
+	
 	private List<String> listFields = new ArrayList<>();
 	
 	private List<String> listLinks = new ArrayList<>();
@@ -71,6 +57,8 @@ public class GlobalIssueSetting implements Serializable {
 	private List<NamedIssueQuery> namedQueries = new ArrayList<>();
 	
 	private List<IssueTemplate> issueTemplates = new ArrayList<>();
+	
+	private CommitMessageFixPatterns commitMessageFixPatterns;
 	
 	private boolean reconciled = true;
 	
@@ -252,7 +240,7 @@ public class GlobalIssueSetting implements Serializable {
 		board.setName(Issue.NAME_STATE);
 		board.setIdentifyField(Issue.NAME_STATE);
 		board.setColumns(Lists.newArrayList("Open", "Closed"));
-		board.setDisplayFields(Lists.newArrayList(Issue.NAME_STATE, "Type", "Priority", "Assignees"));
+		board.setDisplayFields(Lists.newArrayList(Issue.NAME_STATE, "Type", "Priority", "Assignees", IssueSchedule.NAME_MILESTONE));
 		board.setDisplayLinks(Lists.newArrayList("Child Issue", "Blocked By"));
 		boardSpecs.add(board);
 		
@@ -260,6 +248,7 @@ public class GlobalIssueSetting implements Serializable {
 		listFields.add("Type");
 		listFields.add("Priority");
 		listFields.add("Assignees");
+		listFields.add(IssueSchedule.NAME_MILESTONE);
 		
 		listLinks.add("Child Issue");
 		listLinks.add("Blocked By");
@@ -268,15 +257,28 @@ public class GlobalIssueSetting implements Serializable {
 		namedQueries.add(new NamedIssueQuery("Assigned to me & Open", "\"Assignees\" is me and \"State\" is \"Open\""));
 		namedQueries.add(new NamedIssueQuery("Submitted by me & Open", "submitted by me and \"State\" is \"Open\""));
 		namedQueries.add(new NamedIssueQuery("Assigned to me", "\"Assignees\" is me"));
-		namedQueries.add(new NamedIssueQuery("Blocked Issues", "any \"Blocked By\" matching(\"State\" is \"Open\") or any \"Child Issue\" matching(\"State\" is \"Open\")"));
 		namedQueries.add(new NamedIssueQuery("Submitted by me", "submitted by me"));
 		namedQueries.add(new NamedIssueQuery("Submitted recently", "\"Submit Date\" is since \"last week\""));
 		namedQueries.add(new NamedIssueQuery("Mentioned me", "mentioned me"));
+		namedQueries.add(new NamedIssueQuery("Blocked Issues", "any \"Blocked By\" matching(\"State\" is \"Open\") or any \"Child Issue\" matching(\"State\" is \"Open\")"));
 		namedQueries.add(new NamedIssueQuery("Has activity recently", "\"Last Activity Date\" is since \"last week\""));
 		namedQueries.add(new NamedIssueQuery("Open & Critical", "\"State\" is \"Open\" and \"Priority\" is \"Critical\""));
 		namedQueries.add(new NamedIssueQuery("Open & Unassigned", "\"State\" is \"Open\" and \"Assignees\" is empty"));
+		namedQueries.add(new NamedIssueQuery("Open & Unscheduled", "\"State\" is \"Open\" and \"Milestone\" is empty"));
 		namedQueries.add(new NamedIssueQuery("Closed", "\"State\" is \"Closed\""));
 		namedQueries.add(new NamedIssueQuery("All", null));
+		
+		commitMessageFixPatterns = new CommitMessageFixPatterns();
+		var entry = new CommitMessageFixPatterns.Entry();
+		entry.setPrefix("(^|\\W)(fix|fixed|fixes|fixing|resolve|resolved|resolves|resolving|close|closed|closes|closing)[\\s:]+");
+		entry.setSuffix("(?=$|\\W)");
+		commitMessageFixPatterns.getEntries().add(entry);
+		entry = new CommitMessageFixPatterns.Entry();
+		entry.setPrefix("\\(\\s*");
+		entry.setSuffix("\\s*\\)\\s*$");
+		commitMessageFixPatterns.getEntries().add(entry);
+		
+		timeTrackingSetting.setAggregationLink("Child Issue");
 	}
 	
 	public List<String> sortFieldNames(Collection<String> fieldNames) {
@@ -367,7 +369,6 @@ public class GlobalIssueSetting implements Serializable {
 		
 		IssueQueryParseOption option = new IssueQueryParseOption().enableAll(true);
 		for (NamedIssueQuery namedQuery: getNamedQueries()) {
-			
 			try {
 				IssueQuery query = IssueQuery.parse(null, namedQuery.getQuery(), option, false);
 				undefinedStates.addAll(query.getUndefinedStates());
@@ -380,8 +381,11 @@ public class GlobalIssueSetting implements Serializable {
 	public Collection<String> getUndefinedFields() {
 		Collection<String> undefinedFields = new HashSet<>();
 		for (String fieldName: getListFields()) {
-			if (!fieldName.equals(Issue.NAME_STATE) && getFieldSpec(fieldName) == null)
+			if (!fieldName.equals(Issue.NAME_STATE) 
+					&& !fieldName.equals(IssueSchedule.NAME_MILESTONE) 
+					&& getFieldSpec(fieldName) == null) {
 				undefinedFields.add(fieldName);
+			}
 		}
 		
 		for (TransitionSpec transition: getTransitionSpecs())
@@ -641,6 +645,8 @@ public class GlobalIssueSetting implements Serializable {
 			template.getQueryUpdater().onRenameLink(oldName, newName);
 		
 		ReconcileUtils.renameItem(listLinks, oldName, newName);
+		
+		timeTrackingSetting.onRenameLink(oldName, newName);
 	}
 
 	public Usage onDeleteLink(String linkName) {
@@ -655,7 +661,7 @@ public class GlobalIssueSetting implements Serializable {
 			usage.add(board.getBaseQueryUpdater().onDeleteLink(linkName).prefix("default board #" + index));
 			usage.add(board.getBacklogBaseQueryUpdater().onDeleteLink(linkName).prefix("default board #" + index));
 			if (board.getDisplayLinks().contains(linkName))
-				usage.add("display links").prefix("default board #" + index);
+				usage.add(new Usage().add("display links").prefix("default board #" + index));
 			index++;
 		}
 		
@@ -665,6 +671,8 @@ public class GlobalIssueSetting implements Serializable {
 		
 		if (listLinks.contains(linkName))
 			usage.add(new Usage().add("fields & links").prefix("-> issues"));
+		
+		usage.add(timeTrackingSetting.onDeleteLink(linkName).prefix("time tracking"));
 		
 		return usage.prefix("issue settings");
 	}
@@ -682,6 +690,14 @@ public class GlobalIssueSetting implements Serializable {
 
 	public void setBoardSpecs(List<BoardSpec> boardSpecs) {
 		this.boardSpecs = boardSpecs;
+	}
+
+	public TimeTrackingSetting getTimeTrackingSetting() {
+		return timeTrackingSetting;
+	}
+
+	public void setTimeTrackingSetting(TimeTrackingSetting timeTrackingSetting) {
+		this.timeTrackingSetting = timeTrackingSetting;
 	}
 
 	public List<String> getListFields() {
@@ -714,6 +730,14 @@ public class GlobalIssueSetting implements Serializable {
 
 	public void setIssueTemplates(List<IssueTemplate> issueTemplates) {
 		this.issueTemplates = issueTemplates;
+	}
+
+	public CommitMessageFixPatterns getCommitMessageFixPatterns() {
+		return commitMessageFixPatterns;
+	}
+
+	public void setCommitMessageFixPatterns(CommitMessageFixPatterns commitMessageFixPatterns) {
+		this.commitMessageFixPatterns = commitMessageFixPatterns;
 	}
 
 	@Nullable

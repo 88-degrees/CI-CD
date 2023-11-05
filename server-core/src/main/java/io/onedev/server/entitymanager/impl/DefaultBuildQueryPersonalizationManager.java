@@ -7,6 +7,7 @@ import java.util.stream.Collectors;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
+import com.google.common.base.Preconditions;
 import org.hibernate.criterion.Restrictions;
 
 import io.onedev.server.entitymanager.BuildQueryPersonalizationManager;
@@ -38,9 +39,7 @@ public class DefaultBuildQueryPersonalizationManager extends BaseEntityManager<B
 		return find(criteria);
 	}
 
-	@Transactional
-	@Override
-	public void save(BuildQueryPersonalization personalization) {
+	private void createOrUpdate(BuildQueryPersonalization personalization) {
 		Collection<String> retainNames = new HashSet<>();
 		retainNames.addAll(personalization.getQueries().stream()
 				.map(it->NamedQuery.PERSONAL_NAME_PREFIX+it.getName()).collect(Collectors.toSet()));
@@ -52,8 +51,21 @@ public class DefaultBuildQueryPersonalizationManager extends BaseEntityManager<B
 			if (!personalization.isNew())
 				delete(personalization);
 		} else {
-			super.save(personalization);
+			dao.persist(personalization);
 		}
 	}
 
+	@Transactional
+	@Override
+	public void create(BuildQueryPersonalization personalization) {
+		Preconditions.checkState(personalization.isNew());
+		createOrUpdate(personalization);
+	}
+
+	@Transactional
+	@Override
+	public void update(BuildQueryPersonalization personalization) {
+		Preconditions.checkState(!personalization.isNew());
+		createOrUpdate(personalization);
+	}
 }

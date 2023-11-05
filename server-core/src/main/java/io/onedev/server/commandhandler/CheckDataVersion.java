@@ -1,24 +1,21 @@
 package io.onedev.server.commandhandler;
 
-import java.sql.Connection;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.persistence.HibernateConfig;
+import io.onedev.server.data.DataManager;
+import io.onedev.server.persistence.SessionFactoryManager;
+import io.onedev.server.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.loader.AbstractPlugin;
-import io.onedev.server.OneDev;
-import io.onedev.server.persistence.ConnectionCallable;
-import io.onedev.server.persistence.DataManager;
-import io.onedev.server.persistence.HibernateConfig;
-import io.onedev.server.persistence.SessionFactoryManager;
-import io.onedev.server.security.SecurityUtils;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.sql.SQLException;
+
+import static io.onedev.server.persistence.PersistenceUtils.callWithTransaction;
 
 @Singleton
-public class CheckDataVersion extends AbstractPlugin {
+public class CheckDataVersion extends CommandHandler {
 
 	public static final String COMMAND = "check-data-version";
 	
@@ -32,7 +29,8 @@ public class CheckDataVersion extends AbstractPlugin {
 	
 	@Inject
 	public CheckDataVersion(SessionFactoryManager sessionFactoryManager, DataManager dataManager, 
-			HibernateConfig hibernateConfig) {
+							HibernateConfig hibernateConfig) {
+		super(hibernateConfig);
 		this.sessionFactoryManager = sessionFactoryManager;
 		this.dataManager = dataManager;
 		this.hibernateConfig = hibernateConfig;
@@ -41,26 +39,27 @@ public class CheckDataVersion extends AbstractPlugin {
 	@Override
 	public void start() {
 		SecurityUtils.bindAsSystem();
-		
-		if (OneDev.isServerRunning(Bootstrap.installDir) && hibernateConfig.isHSQLDialect()) {
-			logger.error("Please stop server before checking data version");
+
+		try {
+			doMaintenance(() -> {
+				sessionFactoryManager.start();
+
+				// Use system.out in case logger is suppressed by user as this output is important to 
+				// upgrade procedure
+				String dataVersion;
+				try (var conn = dataManager.openConnection()) {
+					dataVersion = callWithTransaction(conn, () -> dataManager.checkDataVersion(conn, false));
+				} catch (SQLException e) {
+					throw new RuntimeException(e);
+				}
+				System.out.println("Data version: " + dataVersion);
+				return null;
+			});
+			System.exit(0);
+		} catch (ExplicitException e) {
+			logger.error(e.getMessage());
 			System.exit(1);
 		}
-		
-		sessionFactoryManager.start();
-		
-		// Use system.out in case logger is suppressed by user as this output is important to 
-		// upgrade procedure
-		String dataVersion = dataManager.callWithConnection(new ConnectionCallable<String>() {
-
-			@Override
-			public String call(Connection conn) {
-				return dataManager.checkDataVersion(conn, false);
-			}
-			
-		});
-		System.out.println("Data version: " + dataVersion);
-		System.exit(0);
 	}
 
 	@Override

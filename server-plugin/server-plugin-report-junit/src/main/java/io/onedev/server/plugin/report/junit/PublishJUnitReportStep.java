@@ -23,16 +23,16 @@ import io.onedev.server.plugin.report.unittest.PublishUnitTestReportStep;
 import io.onedev.server.plugin.report.unittest.UnitTestReport;
 import io.onedev.server.plugin.report.unittest.UnitTestReport.TestCase;
 import io.onedev.server.util.XmlUtils;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-import io.onedev.server.web.editable.annotation.Patterns;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.annotation.Patterns;
 
 @Editable(order=7010, group=StepGroup.PUBLISH_REPORTS, name="JUnit")
 public class PublishJUnitReportStep extends PublishUnitTestReportStep {
 
 	private static final long serialVersionUID = 1L;
 
-	@Editable(order=100, description="Specify JUnit test result file in XML format under <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a>, "
+	@Editable(order=100, description="Specify JUnit test result file in XML format relative to <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a>, "
 			+ "for instance <tt>target/surefire-reports/TEST-*.xml</tt>. Use * or ? for pattern match")
 	@Interpolative(variableSuggester="suggestVariables")
 	@Patterns(path=true)
@@ -50,6 +50,11 @@ public class PublishJUnitReportStep extends PublishUnitTestReportStep {
 	@SuppressWarnings("unused")
 	private static List<InputSuggestion> suggestVariables(String matchWith) {
 		return BuildSpec.suggestVariables(matchWith, true, true, false);
+	}
+
+	@Override
+	public boolean requireCommitIndex() {
+		return true;
 	}
 
 	@Override

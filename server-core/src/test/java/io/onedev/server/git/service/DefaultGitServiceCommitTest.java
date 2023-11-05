@@ -22,8 +22,6 @@ import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.junit.Test;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -44,7 +42,6 @@ import io.onedev.server.git.exception.ObsoleteCommitException;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.support.administration.GpgSetting;
 import io.onedev.server.persistence.SessionManager;
-import io.onedev.server.storage.StorageManager;
 
 public class DefaultGitServiceCommitTest extends AbstractGitTest {
 
@@ -54,14 +51,7 @@ public class DefaultGitServiceCommitTest extends AbstractGitTest {
 	protected void setup() {
 		super.setup();
 		var projectManager = mock(ProjectManager.class);
-		when(projectManager.runOnProjectServer(any(), any())).thenAnswer(new Answer<Object>() {
-
-			@Override
-			public Object answer(InvocationOnMock invocation) throws Throwable {
-				return invocation.getArgument(1, ClusterTask.class).call();
-			}
-			
-		});
+		when(projectManager.runOnActiveServer(any(), any())).thenAnswer(invocation -> invocation.getArgument(1, ClusterTask.class).call());
 		when(projectManager.getRepository(any())).thenReturn(git.getRepository());
 		
 		var settingManager = mock(SettingManager.class);
@@ -78,11 +68,10 @@ public class DefaultGitServiceCommitTest extends AbstractGitTest {
 		
 		var sessionManager = mock(SessionManager.class);
 		var clusterManager = mock(ClusterManager.class);
-		var storageManager = mock(StorageManager.class);
 		var listenerRegistry = mock(ListenerRegistry.class);
 		
-		gitService = new DefaultGitService(projectManager, settingManager, 
-				sessionManager, clusterManager, storageManager, listenerRegistry);
+		gitService = new DefaultGitService(projectManager, settingManager, sessionManager, 
+				clusterManager, listenerRegistry);
 	}
 	
 	@Test

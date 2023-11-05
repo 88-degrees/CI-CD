@@ -19,6 +19,8 @@ import io.onedev.server.git.exception.NotTreeException;
 import io.onedev.server.git.exception.ObjectAlreadyExistsException;
 import io.onedev.server.git.exception.ObsoleteCommitException;
 import io.onedev.server.git.service.GitService;
+import io.onedev.server.job.JobAuthorizationContext;
+import io.onedev.server.job.JobAuthorizationContextAware;
 import io.onedev.server.model.CodeComment;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.PullRequest;
@@ -30,14 +32,9 @@ import io.onedev.server.search.code.query.BlobQuery;
 import io.onedev.server.search.code.query.TextQuery;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.FilenameUtils;
-import io.onedev.server.util.JobSecretAuthorizationContext;
-import io.onedev.server.util.JobSecretAuthorizationContextAware;
-import io.onedev.server.util.script.identity.JobIdentity;
-import io.onedev.server.util.script.identity.ScriptIdentity;
-import io.onedev.server.util.script.identity.ScriptIdentityAware;
 import io.onedev.server.web.ajaxlistener.ConfirmLeaveListener;
 import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
-import io.onedev.server.web.behavior.WebSocketObserver;
+import io.onedev.server.web.behavior.ChangeObserver;
 import io.onedev.server.web.component.commit.status.CommitStatusLink;
 import io.onedev.server.web.component.floating.FloatingPanel;
 import io.onedev.server.web.component.link.DropdownLink;
@@ -67,9 +64,8 @@ import io.onedev.server.web.page.project.commits.ProjectCommitsPage;
 import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
 import io.onedev.server.web.resource.RawBlobResource;
 import io.onedev.server.web.resource.RawBlobResourceReference;
+import io.onedev.server.web.upload.FileUpload;
 import io.onedev.server.web.util.EditParamsAware;
-import io.onedev.server.web.util.FileUpload;
-import io.onedev.server.web.websocket.WebSocketManager;
 import org.apache.commons.lang3.SerializationUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.NameValuePair;
@@ -117,7 +113,7 @@ import static org.apache.wicket.ajax.attributes.CallbackParameter.explicit;
 
 @SuppressWarnings("serial")
 public class ProjectBlobPage extends ProjectPage implements BlobRenderContext, 
-		ScriptIdentityAware, EditParamsAware, JobSecretAuthorizationContextAware {
+		EditParamsAware, JobAuthorizationContextAware {
 
 	private static final String PARAM_INITIAL_NEW_PATH = "initial-new-path";
 	
@@ -204,7 +200,11 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 			String path = state.blobIdent.path;
 			if (path != null && state.blobIdent.isTree())
 				path += "/";
-			if (!SecurityUtils.canModify(getProject(), state.blobIdent.revision, path))
+			
+			var revision = state.blobIdent.revision;
+			if (revision == null)
+				revision = "main";
+			if (!SecurityUtils.canModify(getProject(), revision, path))
 				unauthorized();
 		}
 		
@@ -245,19 +245,19 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 			
 		}.setOutputMarkupPlaceholderTag(true));
 		
-		revisionIndexing.add(new WebSocketObserver() {
+		revisionIndexing.add(new ChangeObserver() {
 			
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(revisionIndexing);
+			public void onObservableChanged(IPartialPageRequestHandler handler, Collection<String> changedObservables) {
+				super.onObservableChanged(handler, changedObservables);
 				resizeWindow(handler);
 			}
 			
 			@Override
-			public Collection<String> getObservables() {
+			public Collection<String> findObservables() {
 				Set<String> observables = new HashSet<>();
 				if (resolvedRevision != null) 
-					observables.add(CommitIndexed.getWebSocketObservable(getProject().getRevCommit(resolvedRevision, true).name()));
+					observables.add(CommitIndexed.getChangeObservable(getProject().getRevCommit(resolvedRevision, true).name()));
 				return observables;
 			}
 			
@@ -271,19 +271,14 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 		List<QueryHit> queryHits;
 		if (state.query != null) {
 			int maxQueryEntries = getSettingManager().getPerformanceSetting().getMaxCodeSearchEntries();
-			BlobQuery query = new TextQuery.Builder()
-					.term(state.query)
+			BlobQuery query = new TextQuery.Builder(state.query)
 					.wholeWord(true)
-					.caseSensitive(true) 
+					.caseSensitive(true)
 					.count(maxQueryEntries)
 					.build();
-			try {
-				CodeSearchManager searchManager = OneDev.getInstance(CodeSearchManager.class);
-				queryHits = searchManager.search(projectModel.getObject(), getProject().getRevCommit(resolvedRevision, true), 
-						query);
-			} catch (InterruptedException e) {
-				throw new RuntimeException(e);
-			}								
+			CodeSearchManager searchManager = OneDev.getInstance(CodeSearchManager.class);
+			queryHits = searchManager.search(projectModel.getObject(), 
+					getProject().getRevCommit(resolvedRevision, true), query);
 		} else {
 			queryHits = null;
 		}
@@ -370,25 +365,26 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 		blobOperations.setOutputMarkupId(true);
 		
 		String revision = state.blobIdent.revision;
+		if (revision == null)
+			revision = "main";
 		
 		AtomicBoolean reviewRequired = new AtomicBoolean(true);
 		try {
-			reviewRequired.set(revision!=null && getProject().isReviewRequiredForModification(getLoginUser(), revision, null)); 
+			reviewRequired.set(getProject().isReviewRequiredForModification(getLoginUser(), revision, null)); 
 		} catch (Exception e) {
 			logger.error("Error checking review requirement", e);
 		}
 		
 		AtomicBoolean buildRequired = new AtomicBoolean(true);
 		try {
-			buildRequired.set(revision!=null && getProject().isBuildRequiredForModification(getLoginUser(), revision, null));
+			buildRequired.set(getProject().isBuildRequiredForModification(getLoginUser(), revision, null));
 		} catch (Exception e) {
 			logger.error("Error checking build requirement", e);
 		}
 
 		AtomicBoolean signatureRequiredButNoSigningKey = new AtomicBoolean(true);
 		try {
-			signatureRequiredButNoSigningKey.set(revision!=null 
-					&& getProject().isCommitSignatureRequiredButNoSigningKey(getLoginUser(), revision)); 
+			signatureRequiredButNoSigningKey.set(getProject().isCommitSignatureRequiredButNoSigningKey(getLoginUser(), revision)); 
 		} catch (Exception e) {
 			logger.error("Error checking signature requirement", e);
 		}
@@ -664,7 +660,7 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 			protected void onSelect(AjaxRequestTarget target, QueryHit hit) {
 				BlobIdent selected = new BlobIdent(state.blobIdent.revision, hit.getBlobPath(), 
 						FileMode.REGULAR_FILE.getBits()); 
-				ProjectBlobPage.this.onSelect(target, selected, BlobRenderer.getSourcePosition(hit.getTokenPos()));
+				ProjectBlobPage.this.onSelect(target, selected, BlobRenderer.getSourcePosition(hit.getHitPos()));
 				modal.close();
 			}
 			
@@ -1018,7 +1014,6 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 		resolvedRevision = null;
 		resolvedRevision = getProject().getRevCommit(state.blobIdent.revision, true).copy();
 		
-		OneDev.getInstance(WebSocketManager.class).observe(this);
 		newRevisionPicker(target);
 		newCommitStatus(target);
 		target.add(revisionIndexing);
@@ -1225,7 +1220,6 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 			newBuildSupportNote(target);
 			newBlobContent(target);
 			resizeWindow(target);
-			OneDev.getInstance(WebSocketManager.class).observe(this);
 		} else if (state.position != null) {
 			if (get(BLOB_CONTENT_ID) instanceof Positionable) {
 				// This logic is added for performance reason, we do not want to 
@@ -1338,8 +1332,6 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 		public String urlBeforeEdit;
 		
 		public String urlAfterEdit;
-		
-		public boolean renderSource;
 		
 		public String query;
 		
@@ -1508,7 +1500,7 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 	}
 
 	@Override
-	public ObjectId uploadFiles(Collection<FileUpload> uploads, String directory, String commitMessage) {
+	public ObjectId uploadFiles(FileUpload upload, String directory, String commitMessage) {
 		Map<String, BlobContent> newBlobs = new HashMap<>();
 		
 		String parentPath = getDirectory();
@@ -1524,8 +1516,8 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 		BlobIdent blobIdent = getBlobIdent();
 		
 		boolean signRequired = false;
-		for (FileUpload upload: uploads) {
-			String blobPath = FilenameUtils.sanitizeFilename(upload.getFileName());
+		for (var item: upload.getItems()) {
+			String blobPath = FilenameUtils.sanitizeFilename(FileUpload.getFileName(item));
 			if (parentPath != null)
 				blobPath = parentPath + "/" + blobPath;
 			
@@ -1536,12 +1528,12 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 			else if (getProject().isCommitSignatureRequiredButNoSigningKey(user, blobIdent.revision)) 
 				signRequired = true;
 			
-			BlobContent blobContent = new BlobContent(upload.getBytes(), FileMode.REGULAR_FILE.getBits());
+			BlobContent blobContent = new BlobContent(item.get(), FileMode.REGULAR_FILE.getBits());
 			newBlobs.put(blobPath, blobContent);
 		}
 
 		BlobEdits blobEdits = new BlobEdits(Sets.newHashSet(), newBlobs);
-		String refName = blobIdent.revision!=null?GitUtils.branch2ref(blobIdent.revision):"refs/heads/main";
+		String refName = blobIdent.revision!=null? GitUtils.branch2ref(blobIdent.revision):"refs/heads/main";
 
 		ObjectId prevCommitId;
 		if (blobIdent.revision != null)
@@ -1611,14 +1603,6 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 		else
 			return state.blobIdent.path + " at " + state.blobIdent.revision + " - " + getProject().getPath();
 	}
-	
-	@Override
-	public ScriptIdentity getScriptIdentity() {
-		if (getBlobIdent().revision != null)
-			return new JobIdentity(getProject(), getCommit().copy());
-		else // when we add file to an empty project
-			return new JobIdentity(getProject(), null);
-	}
 
 	@Override
 	protected Component newProjectTitle(String componentId) {
@@ -1634,16 +1618,18 @@ public class ProjectBlobPage extends ProjectPage implements BlobRenderContext,
 	}
 
 	@Override
-	public JobSecretAuthorizationContext getJobSecretAuthorizationContext() {
-		return new JobSecretAuthorizationContext(getProject(), getCommit(), null);
+	public JobAuthorizationContext getJobAuthorizationContext() {
+		return new JobAuthorizationContext(getProject(), getCommit(), SecurityUtils.getUser(), null);
 	}
 
 	@Override
 	protected BookmarkablePageLink<Void> navToProject(String componentId, Project project) {
-		if (project.isCodeManagement() && SecurityUtils.canReadCode(project)) 
+		if (project.isCodeManagement() && SecurityUtils.canReadCode(project)) {
 			return new ViewStateAwarePageLink<Void>(componentId, ProjectBlobPage.class, ProjectBlobPage.paramsOf(project));
-		else
-			return new ViewStateAwarePageLink<Void>(componentId, ProjectDashboardPage.class, ProjectDashboardPage.paramsOf(project.getId()));
+		} else {
+			return new ViewStateAwarePageLink<Void>(componentId, ProjectDashboardPage.class, 
+					ProjectDashboardPage.paramsOf(project.getId()));
+		}
 	}
 	
 }

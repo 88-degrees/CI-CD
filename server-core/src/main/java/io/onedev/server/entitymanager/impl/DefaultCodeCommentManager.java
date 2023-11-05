@@ -1,54 +1,19 @@
 package io.onedev.server.entitymanager.impl;
 
-import static org.apache.commons.lang3.time.DateFormatUtils.ISO_8601_EXTENDED_DATE_FORMAT;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.persistence.criteria.CriteriaBuilder;
-import javax.persistence.criteria.CriteriaQuery;
-import javax.persistence.criteria.From;
-import javax.persistence.criteria.Predicate;
-import javax.persistence.criteria.Root;
-
-import org.apache.commons.lang3.time.DateUtils;
-import org.eclipse.jgit.lib.FileMode;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.hibernate.Session;
-import org.hibernate.criterion.Criterion;
-import org.hibernate.criterion.Restrictions;
-import org.hibernate.query.Query;
-
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
 import io.onedev.commons.utils.PlanarRange;
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.CodeCommentManager;
 import io.onedev.server.event.Listen;
 import io.onedev.server.event.ListenerRegistry;
-import io.onedev.server.event.project.codecomment.CodeCommentCreated;
-import io.onedev.server.event.project.codecomment.CodeCommentEvent;
-import io.onedev.server.event.project.codecomment.CodeCommentUpdated;
+import io.onedev.server.event.project.codecomment.*;
 import io.onedev.server.event.project.pullrequest.PullRequestCodeCommentCreated;
 import io.onedev.server.git.BlobIdent;
 import io.onedev.server.git.command.RevListOptions;
 import io.onedev.server.git.service.GitService;
-import io.onedev.server.infomanager.CommitInfoManager;
+import io.onedev.server.xodus.CommitInfoManager;
 import io.onedev.server.model.CodeComment;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.PullRequest;
@@ -68,6 +33,24 @@ import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.criteria.Criteria;
 import io.onedev.server.util.diff.DiffUtils;
 import io.onedev.server.util.diff.WhitespaceOption;
+import org.apache.commons.lang3.time.DateUtils;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.hibernate.Session;
+import org.hibernate.criterion.Criterion;
+import org.hibernate.criterion.Restrictions;
+import org.hibernate.query.Query;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.persistence.criteria.*;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import static org.apache.commons.lang3.time.DateFormatUtils.ISO_8601_EXTENDED_DATE_FORMAT;
 
 @Singleton
 public class DefaultCodeCommentManager extends BaseEntityManager<CodeComment> implements CodeCommentManager {
@@ -81,7 +64,8 @@ public class DefaultCodeCommentManager extends BaseEntityManager<CodeComment> im
 	private final CommitInfoManager commitInfoManager;
 	
 	@Inject
-	public DefaultCodeCommentManager(Dao dao, ListenerRegistry listenerRegistry, CommitInfoManager commitInfoManager) {
+	public DefaultCodeCommentManager(Dao dao, ListenerRegistry listenerRegistry, 
+									 CommitInfoManager commitInfoManager) {
 		super(dao);
 		this.listenerRegistry = listenerRegistry;
 		this.commitInfoManager = commitInfoManager;
@@ -89,26 +73,31 @@ public class DefaultCodeCommentManager extends BaseEntityManager<CodeComment> im
 
 	@Transactional
 	@Override
-	public void save(CodeComment comment) {
-		if (comment.isNew()) {
-			LastActivity lastActivity = new LastActivity();
-			lastActivity.setUser(comment.getUser());
-			lastActivity.setDescription("added");
-			lastActivity.setDate(comment.getCreateDate());
-			comment.setLastActivity(lastActivity);
-			dao.persist(comment);
-			
-			listenerRegistry.post(new CodeCommentCreated(comment));
-			
-			PullRequest request = comment.getCompareContext().getPullRequest();
-			if (request != null && comment.getCreateDate().after(request.getLastActivity().getDate())) 
-				listenerRegistry.post(new PullRequestCodeCommentCreated(request, comment));
-		} else {
-			dao.persist(comment);
-			listenerRegistry.post(new CodeCommentUpdated(SecurityUtils.getUser(), comment));
-		}
+	public void create(CodeComment comment) {
+		Preconditions.checkState(comment.isNew());
+		
+		LastActivity lastActivity = new LastActivity();
+		lastActivity.setUser(comment.getUser());
+		lastActivity.setDescription("added");
+		lastActivity.setDate(comment.getCreateDate());
+		comment.setLastActivity(lastActivity);
+		dao.persist(comment);
+		
+		listenerRegistry.post(new CodeCommentCreated(comment));
+		
+		PullRequest request = comment.getCompareContext().getPullRequest();
+		if (request != null && comment.getCreateDate().after(request.getLastActivity().getDate())) 
+			listenerRegistry.post(new PullRequestCodeCommentCreated(request, comment));
 	}
 
+	@Transactional
+	@Override
+	public void update(CodeComment comment) {
+ 		Preconditions.checkState(!comment.isNew());
+		dao.persist(comment);
+		listenerRegistry.post(new CodeCommentEdited(SecurityUtils.getUser(), comment));
+	}
+	
 	@Transactional
 	@Listen
 	public void on(CodeCommentEvent event) {
@@ -305,11 +294,19 @@ public class DefaultCodeCommentManager extends BaseEntityManager<CodeComment> im
 
 	@Transactional
 	@Override
-	public void delete(Collection<CodeComment> comments) {
+	public void delete(Collection<CodeComment> comments, Project project) {
 		for (CodeComment comment: comments)
-			delete(comment);
+			dao.remove(comment);
+		listenerRegistry.post(new CodeCommentsDeleted(project, comments));
 	}
 
+	@Transactional
+	@Override
+	public void delete(CodeComment comment) {
+		dao.remove(comment);
+		listenerRegistry.post(new CodeCommentDeleted(comment));
+	}
+	
 	@Override
 	public CodeComment findByUUID(String uuid) {
 		EntityCriteria<CodeComment> criteria = newCriteria();

@@ -12,7 +12,7 @@ import org.unbescape.html.HtmlEscape;
 
 import io.onedev.commons.utils.ExceptionUtils;
 import io.onedev.commons.utils.ExplicitException;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.annotation.Editable;
 
 @Editable
 public abstract class Widget implements Serializable {
@@ -74,11 +74,11 @@ public abstract class Widget implements Serializable {
 	}
 	
 	public int getDefaultWidth() {
-		return 12;
+		return 16;
 	}
 	
 	public int getDefaultHeight() {
-		return 12;
+		return 8;
 	}
 
 	public Component render(String componentId, boolean failsafe) {

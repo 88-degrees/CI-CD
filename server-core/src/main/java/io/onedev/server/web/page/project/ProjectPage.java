@@ -9,6 +9,7 @@ import io.onedev.server.model.Build;
 import io.onedev.server.model.Project;
 import io.onedev.server.search.entity.project.ProjectQuery;
 import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.timetracking.TimeTrackingManager;
 import io.onedev.server.util.facade.ProjectFacade;
 import io.onedev.server.web.WebConstants;
 import io.onedev.server.web.asset.dropdowntriangleindicator.DropdownTriangleIndicatorCssResourceReference;
@@ -16,8 +17,7 @@ import io.onedev.server.web.avatar.AvatarManager;
 import io.onedev.server.web.behavior.infinitescroll.InfiniteScrollBehavior;
 import io.onedev.server.web.component.floating.FloatingPanel;
 import io.onedev.server.web.component.link.DropdownLink;
-import io.onedev.server.web.component.link.ViewStateAwareAjaxLink;
-import io.onedev.server.web.component.project.avatar.ProjectAvatar;
+import io.onedev.server.web.component.project.ProjectAvatar;
 import io.onedev.server.web.component.project.childrentree.ProjectChildrenTree;
 import io.onedev.server.web.component.project.info.ProjectInfoPanel;
 import io.onedev.server.web.editable.EditableUtils;
@@ -52,9 +52,13 @@ import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPa
 import io.onedev.server.web.page.project.setting.ContributedProjectSetting;
 import io.onedev.server.web.page.project.setting.ProjectSettingContribution;
 import io.onedev.server.web.page.project.setting.ProjectSettingPage;
-import io.onedev.server.web.page.project.setting.authorization.ProjectAuthorizationsPage;
+import io.onedev.server.web.page.project.setting.authorization.GroupAuthorizationsPage;
+import io.onedev.server.web.page.project.setting.authorization.UserAuthorizationsPage;
 import io.onedev.server.web.page.project.setting.avatar.AvatarEditPage;
-import io.onedev.server.web.page.project.setting.build.*;
+import io.onedev.server.web.page.project.setting.build.BuildPreservationsPage;
+import io.onedev.server.web.page.project.setting.build.DefaultFixedIssueFiltersPage;
+import io.onedev.server.web.page.project.setting.build.JobPropertiesPage;
+import io.onedev.server.web.page.project.setting.build.JobSecretsPage;
 import io.onedev.server.web.page.project.setting.code.analysis.CodeAnalysisSettingPage;
 import io.onedev.server.web.page.project.setting.code.branchprotection.BranchProtectionsPage;
 import io.onedev.server.web.page.project.setting.code.git.GitPackConfigPage;
@@ -62,7 +66,7 @@ import io.onedev.server.web.page.project.setting.code.pullrequest.PullRequestSet
 import io.onedev.server.web.page.project.setting.code.tagprotection.TagProtectionsPage;
 import io.onedev.server.web.page.project.setting.general.GeneralProjectSettingPage;
 import io.onedev.server.web.page.project.setting.pluginsettings.ContributedProjectSettingPage;
-import io.onedev.server.web.page.project.setting.servicedesk.ProjectServiceDeskSettingPage;
+import io.onedev.server.web.page.project.setting.servicedesk.ServiceDeskSettingPage;
 import io.onedev.server.web.page.project.setting.webhook.WebHooksPage;
 import io.onedev.server.web.page.project.stats.ProjectContribsPage;
 import io.onedev.server.web.page.project.stats.SourceLinesPage;
@@ -154,7 +158,7 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 		if (!(this instanceof ProjectSettingPage) 
 				&& !(this instanceof ProjectChildrenPage)
 				&& !(this instanceof NoProjectStoragePage) 
-				&& getProject().getStorageServerUUID(false) == null) {
+				&& getProject().getActiveServer(false) == null) {
 			throw new RestartResponseException(NoProjectStoragePage.class, 
 					NoProjectStoragePage.paramsOf(getProject()));
 		}
@@ -197,16 +201,18 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 					ProjectBranchesPage.class, ProjectBranchesPage.paramsOf(getProject())));
 			codeMenuItems.add(new SidebarMenuItem.Page(null, "Tags", 
 					ProjectTagsPage.class, ProjectTagsPage.paramsOf(getProject())));
-			codeMenuItems.add(new SidebarMenuItem.Page(null, "Pull Requests", 
-					ProjectPullRequestsPage.class, ProjectPullRequestsPage.paramsOf(getProject(), 0), 
-					Lists.newArrayList(NewPullRequestPage.class, PullRequestDetailPage.class, InvalidPullRequestPage.class)));
 			codeMenuItems.add(new SidebarMenuItem.Page(null, "Code Comments", 
 					ProjectCodeCommentsPage.class, ProjectCodeCommentsPage.paramsOf(getProject(), 0)));
 			codeMenuItems.add(new SidebarMenuItem.Page(null, "Code Compare", 
 					RevisionComparePage.class, RevisionComparePage.paramsOf(getProject())));
 			
 			menuItems.add(new SidebarMenuItem.SubMenu("git", "Code", codeMenuItems));
-		}		
+		}
+		if (getProject().isCodeManagement() && SecurityUtils.canReadCode(getProject())) {
+			menuItems.add(new SidebarMenuItem.Page("pull-request", "Pull Requests",
+					ProjectPullRequestsPage.class, ProjectPullRequestsPage.paramsOf(getProject(), 0),
+					Lists.newArrayList(NewPullRequestPage.class, PullRequestDetailPage.class, InvalidPullRequestPage.class)));
+		}
 		if (getProject().isIssueManagement()) {
 			List<SidebarMenuItem> issueMenuItems = new ArrayList<>();
 			
@@ -218,7 +224,8 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 			issueMenuItems.add(new SidebarMenuItem.Page(null, "Milestones", 
 					MilestoneListPage.class, MilestoneListPage.paramsOf(getProject(), false, null), 
 					Lists.newArrayList(NewMilestonePage.class, MilestoneDetailPage.class, MilestoneEditPage.class)));
-			
+			if (getProject().isTimeTracking() && isSubscriptionActive()) 
+				issueMenuItems.add(OneDev.getInstance(TimeTrackingManager.class).newTimesheetsMenuItem(getProject()));
 			menuItems.add(new SidebarMenuItem.SubMenu("bug", "Issues", issueMenuItems));
 		}
 		
@@ -255,8 +262,13 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 					GeneralProjectSettingPage.class, GeneralProjectSettingPage.paramsOf(getProject())));
 			settingMenuItems.add(new SidebarMenuItem.Page(null, "Edit Avatar", 
 					AvatarEditPage.class, AvatarEditPage.paramsOf(getProject())));
-			settingMenuItems.add(new SidebarMenuItem.Page(null, "Authorizations", 
-					ProjectAuthorizationsPage.class, ProjectAuthorizationsPage.paramsOf(getProject())));
+
+			List<SidebarMenuItem> authorizationMenuItems = new ArrayList<>();
+			authorizationMenuItems.add(new SidebarMenuItem.Page(null, "By User", 
+					UserAuthorizationsPage.class, UserAuthorizationsPage.paramsOf(getProject())));
+			authorizationMenuItems.add(new SidebarMenuItem.Page(null, "By Group",
+					GroupAuthorizationsPage.class, GroupAuthorizationsPage.paramsOf(getProject())));
+			settingMenuItems.add(new SidebarMenuItem.SubMenu(null, "Authorization", authorizationMenuItems));
 
 			List<SidebarMenuItem> codeSettingMenuItems = new ArrayList<>();
 			codeSettingMenuItems.add(new SidebarMenuItem.Page(null, "Branch Protection", 
@@ -280,22 +292,17 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 					JobSecretsPage.class, JobSecretsPage.paramsOf(getProject())));
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Job Properties",
 					JobPropertiesPage.class, JobPropertiesPage.paramsOf(getProject())));
-			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Action Authorizations", 
-					ActionAuthorizationsPage.class, ActionAuthorizationsPage.paramsOf(getProject())));
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Build Preserve Rules", 
 					BuildPreservationsPage.class, BuildPreservationsPage.paramsOf(getProject())));
 			buildSettingMenuItems.add(new SidebarMenuItem.Page(null, "Default Fixed Issue Filters", 
 					DefaultFixedIssueFiltersPage.class, DefaultFixedIssueFiltersPage.paramsOf(getProject())));
 			
 			settingMenuItems.add(new SidebarMenuItem.SubMenu(null, "Build", buildSettingMenuItems));
-
+			
 			if (getSettingManager().getServiceDeskSetting() != null && getProject().isIssueManagement()) {
 				settingMenuItems.add(new SidebarMenuItem.Page(null, "Service Desk", 
-						ProjectServiceDeskSettingPage.class, ProjectServiceDeskSettingPage.paramsOf(getProject())));
+						ServiceDeskSettingPage.class, ServiceDeskSettingPage.paramsOf(getProject())));
 			}
-			
-			settingMenuItems.add(new SidebarMenuItem.Page(null, "Web Hooks", 
-					WebHooksPage.class, WebHooksPage.paramsOf(getProject())));
 			
 			List<Class<? extends ContributedProjectSetting>> contributedSettingClasses = new ArrayList<>();
 			for (ProjectSettingContribution contribution:OneDev.getExtensions(ProjectSettingContribution.class)) {
@@ -305,6 +312,7 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 			contributedSettingClasses.sort(Comparator.comparingInt(EditableUtils::getOrder));
 			
 			Map<String, List<SidebarMenuItem>> contributedSettingMenuItems = new HashMap<>();
+			
 			for (var contributedSettingClass: contributedSettingClasses) {
 				var group = EditableUtils.getGroup(contributedSettingClass);
 				if (group == null)
@@ -320,6 +328,15 @@ public abstract class ProjectPage extends LayoutPage implements ProjectAware {
 						ContributedProjectSettingPage.class,
 						ContributedProjectSettingPage.paramsOf(getProject(), contributedSettingClass)));
 			}
+
+			SidebarMenuItem webHooksItem = new SidebarMenuItem.Page(null, "Web Hooks", 
+					WebHooksPage.class, WebHooksPage.paramsOf(getProject()));			
+			var notificationItems = contributedSettingMenuItems.get("Notification");
+			if (notificationItems == null) 
+				settingMenuItems.add(webHooksItem);
+			else 
+				notificationItems.add(0, webHooksItem);
+			
 			for (var entry: contributedSettingMenuItems.entrySet()) {
 				if (entry.getKey().length() == 0) {
 					settingMenuItems.addAll(entry.getValue());

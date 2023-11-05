@@ -1,25 +1,24 @@
 package io.onedev.server.buildspec.step;
 
-import java.io.File;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Callable;
-
-import javax.validation.constraints.NotEmpty;
-
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.commons.utils.FileUtils;
 import io.onedev.commons.utils.LockUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.annotation.Patterns;
+import io.onedev.server.annotation.SafePath;
 import io.onedev.server.buildspec.BuildSpec;
+import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.model.Build;
-import io.onedev.server.storage.StorageManager;
+import io.onedev.server.StorageManager;
 import io.onedev.server.util.patternset.PatternSet;
-import io.onedev.server.util.validation.annotation.SafePath;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-import io.onedev.server.web.editable.annotation.Patterns;
+
+import javax.validation.constraints.NotEmpty;
+import java.io.File;
+import java.util.List;
+import java.util.Map;
 
 @Editable(order=1050, name="Publish Artifacts")
 public class PublishArtifactStep extends ServerSideStep {
@@ -69,15 +68,12 @@ public class PublishArtifactStep extends ServerSideStep {
 
 	@Override
 	public Map<String, byte[]> run(Build build, File inputDir, TaskLogger jobLogger) {
-		LockUtils.write(build.getArtifactsLockName(), new Callable<Void>() {
-
-			@Override
-			public Void call() throws Exception {
-				OneDev.getInstance(StorageManager.class).initArtifactsDir(build.getProject().getId(), build.getNumber());
-				FileUtils.copyDirectory(inputDir, build.getArtifactsDir());
-				return null;
-			}
-			
+		LockUtils.write(build.getArtifactsLockName(), () -> {
+			var projectId = build.getProject().getId();
+			var artifactsDir = OneDev.getInstance(StorageManager.class).initArtifactsDir(projectId, build.getNumber());
+			FileUtils.copyDirectory(inputDir, artifactsDir);
+			OneDev.getInstance(ProjectManager.class).directoryModified(projectId, artifactsDir);
+			return null;
 		});
 		return null;
 	}

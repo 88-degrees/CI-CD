@@ -3,7 +3,6 @@ package io.onedev.server.web.page.admin.buildsetting.agent;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.UUID;
 
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.attributes.AjaxRequestAttributes;
@@ -61,8 +60,7 @@ public class TokenListPanel extends GenericPanel<List<AgentToken>> {
 			@Override
 			public void onClick(AjaxRequestTarget target) {
 				AgentToken token = new AgentToken();
-				token.setValue(UUID.randomUUID().toString());
-				getTokenManager().save(token);
+				getTokenManager().create(token);
 				target.add(TokenListPanel.this);
 			}
 			

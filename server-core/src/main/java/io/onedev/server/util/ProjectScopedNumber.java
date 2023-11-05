@@ -1,15 +1,14 @@
 package io.onedev.server.util;
 
-import java.io.Serializable;
-
-import org.apache.commons.lang3.builder.EqualsBuilder;
-import org.apache.commons.lang3.builder.HashCodeBuilder;
-
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.model.Project;
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
+
+import java.io.Serializable;
 
 public class ProjectScopedNumber implements Serializable {
 
@@ -86,4 +85,5 @@ public class ProjectScopedNumber implements Serializable {
 	public String toString() {
 		return getProject().getPath() + "#" + getNumber();
 	}
+	
 }

@@ -94,7 +94,7 @@ public class ProjectBuildsPage extends ProjectPage {
 			@Override
 			protected void onSaveCommonQueries(ArrayList<NamedBuildQuery> namedQueries) {
 				getProject().getBuildSetting().setNamedQueries(namedQueries);
-				OneDev.getInstance(ProjectManager.class).save(getProject());
+				OneDev.getInstance(ProjectManager.class).update(getProject());
 			}
 
 			@Override
@@ -169,7 +169,11 @@ public class ProjectBuildsPage extends ProjectPage {
 										} else {
 											namedQuery.setQuery(query);
 										}
-										getBuildQueryPersonalizationManager().save(setting);
+										if (setting.isNew())
+											getBuildQueryPersonalizationManager().create(setting);
+										else
+											getBuildQueryPersonalizationManager().update(setting);
+											
 										target.add(savedQueries);
 										close();
 									}
@@ -188,7 +192,7 @@ public class ProjectBuildsPage extends ProjectPage {
 										} else {
 											namedQuery.setQuery(query);
 										}
-										OneDev.getInstance(ProjectManager.class).save(getProject());
+										OneDev.getInstance(ProjectManager.class).update(getProject());
 										target.add(savedQueries);
 										close();
 									}

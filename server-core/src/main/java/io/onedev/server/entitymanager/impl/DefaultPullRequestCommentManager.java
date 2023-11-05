@@ -1,20 +1,19 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.Collection;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import com.google.common.collect.Lists;
-
+import com.google.common.base.Preconditions;
 import io.onedev.server.entitymanager.PullRequestCommentManager;
 import io.onedev.server.event.ListenerRegistry;
-import io.onedev.server.event.project.pullrequest.PullRequestCommented;
-import io.onedev.server.model.PullRequest;
+import io.onedev.server.event.project.pullrequest.PullRequestCommentCreated;
+import io.onedev.server.event.project.pullrequest.PullRequestCommentDeleted;
+import io.onedev.server.event.project.pullrequest.PullRequestCommentEdited;
 import io.onedev.server.model.PullRequestComment;
 import io.onedev.server.persistence.annotation.Transactional;
 import io.onedev.server.persistence.dao.BaseEntityManager;
 import io.onedev.server.persistence.dao.Dao;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.Collection;
 
 @Singleton
 public class DefaultPullRequestCommentManager extends BaseEntityManager<PullRequestComment> 
@@ -30,29 +29,27 @@ public class DefaultPullRequestCommentManager extends BaseEntityManager<PullRequ
 
 	@Transactional
 	@Override
-	public void save(PullRequestComment comment) {
-		save(comment, Lists.newArrayList());
+	public void delete(PullRequestComment comment) {
+		super.delete(comment);
+		comment.getRequest().setCommentCount(comment.getRequest().getCommentCount()-1);
+		listenerRegistry.post(new PullRequestCommentDeleted(comment));
 	}
 
 	@Transactional
 	@Override
-	public void delete(PullRequestComment comment) {
-		super.delete(comment);
-		PullRequest request = comment.getRequest();
-		request.setCommentCount(request.getCommentCount()-1);
-	}
-
-	@Override
-	public void save(PullRequestComment comment, Collection<String> notifiedEmailAddresses) {
-		boolean isNew = comment.isNew();
+	public void create(PullRequestComment comment, Collection<String> notifiedEmailAddresses) {
+		Preconditions.checkState(comment.isNew());
 		dao.persist(comment);
-		if (isNew) {
-			PullRequestCommented event = new PullRequestCommented(comment, notifiedEmailAddresses);
-			listenerRegistry.post(event);
-			
-			PullRequest request = comment.getRequest();
-			request.setCommentCount(request.getCommentCount()+1);
-		}
+		comment.getRequest().setCommentCount(comment.getRequest().getCommentCount()+1);
+		listenerRegistry.post(new PullRequestCommentCreated(comment, notifiedEmailAddresses));
 	}
 
+	@Transactional
+	@Override
+	public void update(PullRequestComment comment) {
+		Preconditions.checkState(!comment.isNew());
+		dao.persist(comment);
+		listenerRegistry.post(new PullRequestCommentEdited(comment));
+	}
+	
 }

@@ -13,6 +13,8 @@ import io.onedev.commons.utils.LinearRange;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.WordUtils;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.Editable;
 import io.onedev.server.buildspec.job.Job;
 import io.onedev.server.buildspec.job.JobDependency;
 import io.onedev.server.buildspec.param.ParamUtils;
@@ -20,15 +22,12 @@ import io.onedev.server.buildspec.param.spec.ParamSpec;
 import io.onedev.server.buildspec.step.Step;
 import io.onedev.server.buildspec.step.StepTemplate;
 import io.onedev.server.buildspec.step.UseTemplateStep;
-import io.onedev.server.migration.VersionedYamlDoc;
-import io.onedev.server.migration.XmlBuildSpecMigrator;
-import io.onedev.server.model.Project;
+import io.onedev.server.data.migration.VersionedYamlDoc;
+import io.onedev.server.job.JobAuthorizationContext;
 import io.onedev.server.model.support.build.JobProperty;
+import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.ComponentContext;
-import io.onedev.server.util.JobSecretAuthorizationContext;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.validation.Validatable;
 import io.onedev.server.web.page.project.blob.ProjectBlobPage;
 import io.onedev.server.web.util.SuggestionUtils;
 import io.onedev.server.web.util.WicketUtils;
@@ -39,7 +38,10 @@ import org.yaml.snakeyaml.DumperOptions.FlowStyle;
 import org.yaml.snakeyaml.nodes.*;
 
 import javax.annotation.Nullable;
-import javax.validation.*;
+import javax.validation.ConstraintValidatorContext;
+import javax.validation.ConstraintViolation;
+import javax.validation.ValidationException;
+import javax.validation.Validator;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -57,8 +59,6 @@ public class BuildSpec implements Serializable, Validatable {
 		@Override
         public byte[] load(String key) {
 			String buildSpecString = key;
-			if (buildSpecString.trim().startsWith("<?xml")) 
-				buildSpecString = XmlBuildSpecMigrator.migrate(buildSpecString);
 			try {
 				return SerializationUtils.serialize(VersionedYamlDoc.fromYaml(buildSpecString).toBean(BuildSpec.class));
 			} catch (Exception e) {
@@ -101,7 +101,6 @@ public class BuildSpec implements Serializable, Validatable {
 	private transient Map<String, JobProperty> propertyMap;
 	
 	@Editable
-	@Valid
 	public List<Job> getJobs() {
 		return jobs;
 	}
@@ -112,7 +111,6 @@ public class BuildSpec implements Serializable, Validatable {
 	}
 	
 	@Editable
-	@Valid
 	public List<StepTemplate> getStepTemplates() {
 		return stepTemplates;
 	}
@@ -123,7 +121,6 @@ public class BuildSpec implements Serializable, Validatable {
 	}
 
 	@Editable
-	@Valid
 	public List<Service> getServices() {
 		return services;
 	}
@@ -144,7 +141,6 @@ public class BuildSpec implements Serializable, Validatable {
 	}
 
 	@Editable
-	@Valid
 	public List<Import> getImports() {
 		return imports;
 	}
@@ -154,27 +150,28 @@ public class BuildSpec implements Serializable, Validatable {
 		importedBuildSpecs = null;
 	}
 	
-	private List<BuildSpec> getImportedBuildSpecs(Collection<String> projectChain) {
+	private List<BuildSpec> getImportedBuildSpecs(Collection<String> commitChain) {
 		if (importedBuildSpecs == null) {
 			importedBuildSpecs = new ArrayList<>();
-			for (Import aImport: getImports()) { 
-				if (!projectChain.contains(aImport.getProjectPath())) {
-					Collection<String> newProjectChain = new HashSet<>(projectChain);
-					newProjectChain.add(aImport.getProjectPath());
-					try {
+			for (Import aImport: getImports()) {
+				try {
+					var importCommit = aImport.getCommit();
+					if (!commitChain.contains(importCommit.name())) {
+						Collection<String> newCommitChain = new HashSet<>(commitChain);
+						newCommitChain.add(importCommit.name());
 						BuildSpec importedBuildSpec = aImport.getBuildSpec();
-						RevCommit commit = aImport.getProject().getRevCommit(aImport.getRevision(), true);
-						JobSecretAuthorizationContext.push(new JobSecretAuthorizationContext(aImport.getProject(), commit, null));
+						JobAuthorizationContext.push(new JobAuthorizationContext(
+								aImport.getProject(), importCommit, SecurityUtils.getUser(), null));
 						try {
-							importedBuildSpecs.addAll(importedBuildSpec.getImportedBuildSpecs(newProjectChain));
+							importedBuildSpecs.addAll(importedBuildSpec.getImportedBuildSpecs(newCommitChain));
 						} finally {
-							JobSecretAuthorizationContext.pop();
+							JobAuthorizationContext.pop();
 						}
 						importedBuildSpecs.add(importedBuildSpec);
-					} catch (Exception e) {
-						// Ignore here as we rely on this method to show viewer/editor 
-						// Errors relating to this will be shown when validated
 					}
+				} catch (Exception e) {
+					// Ignore here as we rely on this method to show viewer/editor 
+					// Errors relating to this will be shown when validated
 				}
 			}
 		}
@@ -197,10 +194,6 @@ public class BuildSpec implements Serializable, Validatable {
 	public Map<String, JobProperty> getPropertyMap() {
 		if (propertyMap == null) { 
 			propertyMap = new LinkedHashMap<>();
-			if (Project.get() != null) {
-				for (JobProperty property : Project.get().getHierarchyJobProperties())
-					propertyMap.put(property.getName(), property);
-			}
 			for (BuildSpec buildSpec: getImportedBuildSpecs(new HashSet<>())) { 
 				for (JobProperty property : buildSpec.getProperties())
 					propertyMap.put(property.getName(), property);
@@ -274,19 +267,27 @@ public class BuildSpec implements Serializable, Validatable {
 		return isValid;
 	}
 	
+	private Validator getValidator() {
+		return OneDev.getInstance(Validator.class);
+	}
+	
 	@Override
 	public boolean isValid(ConstraintValidatorContext context) {
 		boolean isValid = true;
 
-		if (!validateImportedElements(context, jobs, it->it.getJobMap(), "job"))
-			isValid = false;
-		if (!validateImportedElements(context, services, it->it.getServiceMap(), "service"))
-			isValid = false;
-		if (!validateImportedElements(context, stepTemplates, it->it.getStepTemplateMap(), "step template"))
-			isValid = false;
-		if (!validateImportedElements(context, properties, it->it.getPropertyMap(), "property"))
-			isValid = false;
-
+		int index = 0;
+		for (Job job: jobs) {
+			for (ConstraintViolation<Job> violation: getValidator().validate(job)) {
+				context.buildConstraintViolationWithTemplate(violation.getMessage())
+						.addPropertyNode(PROP_JOBS)
+						.addBeanNode()
+						.inIterable().atIndex(index)
+						.addConstraintViolation();
+				isValid = false;
+			}
+			index++;
+		}
+		
 		Set<String> jobNames = new HashSet<>();
 		for (Job job: jobs) {
 			if (!jobNames.add(job.getName())) {
@@ -295,6 +296,20 @@ public class BuildSpec implements Serializable, Validatable {
 				isValid = false;
 			}
 		}
+
+		index = 0;
+		for (Service service: services) {
+			for (ConstraintViolation<Service> violation: getValidator().validate(service)) {
+				context.buildConstraintViolationWithTemplate(violation.getMessage())
+						.addPropertyNode(PROP_SERVICES)
+						.addBeanNode()
+						.inIterable().atIndex(index)
+						.addConstraintViolation();
+				isValid = false;
+			}
+			index++;
+		}
+		
 		Set<String> serviceNames = new HashSet<>();
 		for (Service service: services) {
 			if (!serviceNames.add(service.getName())) {
@@ -303,6 +318,20 @@ public class BuildSpec implements Serializable, Validatable {
 				isValid = false;
 			}
 		}
+
+		index = 0;
+		for (StepTemplate stepTemplate: stepTemplates) {
+			for (ConstraintViolation<StepTemplate> violation: getValidator().validate(stepTemplate)) {
+				context.buildConstraintViolationWithTemplate(violation.getMessage())
+						.addPropertyNode(PROP_STEP_TEMPLATES)
+						.addBeanNode()
+						.inIterable().atIndex(index)
+						.addConstraintViolation();
+				isValid = false;
+			}
+			index++;
+		}
+		
 		Set<String> stepTemplateNames = new HashSet<>();
 		for (StepTemplate template: stepTemplates) {
 			if (!stepTemplateNames.add(template.getName())) {
@@ -311,21 +340,61 @@ public class BuildSpec implements Serializable, Validatable {
 				isValid = false;
 			}
 		}
+
+		index = 0;
+		for (JobProperty property: properties) {
+			for (ConstraintViolation<JobProperty> violation: getValidator().validate(property)) {
+				context.buildConstraintViolationWithTemplate(violation.getMessage())
+						.addPropertyNode(PROP_PROPERTIES)
+						.addBeanNode()
+						.inIterable().atIndex(index)
+						.addConstraintViolation();
+				isValid = false;
+			}
+			index++;
+		}
+		
 		Set<String> propertyNames = new HashSet<>();
 		for (JobProperty property : properties) {
 			if (!propertyNames.add(property.getName())) {
 				context.buildConstraintViolationWithTemplate("Duplicate property name (" + property.getName() + ")")
-							.addPropertyNode(PROP_PROPERTIES).addConstraintViolation();
+						.addPropertyNode(PROP_PROPERTIES).addConstraintViolation();
 				isValid = false;
 			}
 		}
-		Set<String> importProjectNames = new HashSet<>();
+
+		index = 0;
+		for (Import aImport: getImports()) {
+			Validator validator = OneDev.getInstance(Validator.class);
+			for (ConstraintViolation<Import> violation: validator.validate(aImport)) {
+				context.buildConstraintViolationWithTemplate(violation.getMessage())
+						.addPropertyNode(PROP_IMPORTS)
+						.addBeanNode()
+						.inIterable().atIndex(index)
+						.addConstraintViolation();
+				isValid = false;
+			}
+			index++;
+		}
+		
+		Set<String> importProjectAndRevisions = new HashSet<>();
 		for (Import aImport: imports) {
-			if (!importProjectNames.add(aImport.getProjectPath())) {
-				context.buildConstraintViolationWithTemplate("Duplicate import (" + aImport.getProjectPath() + ")")
+			if (!importProjectAndRevisions.add(aImport.getProjectPath() + ":" + aImport.getRevision())) {
+				context.buildConstraintViolationWithTemplate(String.format("Duplicate import (project: %s, revision: %s)", aImport.getProjectPath(), aImport.getRevision()))
 						.addPropertyNode(PROP_IMPORTS).addConstraintViolation();
 				isValid = false;
 			}
+		}
+		
+		if (isValid) {
+			if (!validateImportedElements(context, jobs, it -> it.getJobMap(), "job"))
+				isValid = false;
+			if (!validateImportedElements(context, services, it -> it.getServiceMap(), "service"))
+				isValid = false;
+			if (!validateImportedElements(context, stepTemplates, it -> it.getStepTemplateMap(), "step template"))
+				isValid = false;
+			if (!validateImportedElements(context, properties, it -> it.getPropertyMap(), "property"))
+				isValid = false;
 		}
 		
 		if (isValid) {
@@ -1456,5 +1525,202 @@ public class BuildSpec implements Serializable, Validatable {
 				}
 			}
 		}
-	}	
+	}
+
+	private void migrate21_steps(SequenceNode stepsNode) {
+		for (var itStepNode = stepsNode.getValue().iterator(); itStepNode.hasNext();) {
+			MappingNode stepNode = (MappingNode) itStepNode.next();
+			if (stepNode.getTag().getValue().equals("!PublishHtmlReportStep")) {
+				itStepNode.remove();
+			} else if (stepNode.getTag().getValue().equals("!PushRepository")) {
+				for (var itStepNodeTuple = stepNode.getValue().iterator(); itStepNodeTuple.hasNext();) {
+					String stepNodeTupleKey = ((ScalarNode)itStepNodeTuple.next().getKeyNode()).getValue();
+					if (stepNodeTupleKey.equals("withLfs"))
+						itStepNodeTuple.remove();
+				}
+			}
+		}
+	}
+	
+	private void migrate21(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specObjectKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specObjectKey.equals("jobs")) {
+				SequenceNode jobsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node jobsNodeItem: jobsNode.getValue()) {
+					MappingNode jobNode = (MappingNode) jobsNodeItem;
+					for (NodeTuple jobTuple: jobNode.getValue()) {
+						String jobTupleKey = ((ScalarNode)jobTuple.getKeyNode()).getValue();
+						if (jobTupleKey.equals("steps")) 
+							migrate21_steps((SequenceNode) jobTuple.getValueNode());
+					}
+				}
+			} else if (specObjectKey.equals("stepTemplates")) {
+				SequenceNode stepTemplatesNode = (SequenceNode) specTuple.getValueNode();
+				for (Node stepTemplatesNodeItem: stepTemplatesNode.getValue()) {
+					MappingNode stepTemplateNode = (MappingNode) stepTemplatesNodeItem;
+					for (NodeTuple stepTemplateTuple: stepTemplateNode.getValue()) {
+						String stepTemplateTupleKey = ((ScalarNode)stepTemplateTuple.getKeyNode()).getValue();
+						if (stepTemplateTupleKey.equals("steps")) 
+							migrate21_steps((SequenceNode)stepTemplateTuple.getValueNode());
+					}
+				}
+			}
+		}
+	}
+
+	private void migrate22_steps(SequenceNode stepsNode) {
+		for (var itStepNode = stepsNode.getValue().iterator(); itStepNode.hasNext();) {
+			MappingNode stepNode = (MappingNode) itStepNode.next();
+			if (stepNode.getTag().getValue().equals("!BuildImageStep")) {
+				for (var itStepNodeTuple = stepNode.getValue().iterator(); itStepNodeTuple.hasNext();) {
+					String stepNodeTupleKey = ((ScalarNode)itStepNodeTuple.next().getKeyNode()).getValue();
+					if (stepNodeTupleKey.equals("publish"))
+						itStepNodeTuple.remove();
+				}
+			}
+		}
+	}
+
+	private void migrate22(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specObjectKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specObjectKey.equals("jobs")) {
+				SequenceNode jobsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node jobsNodeItem: jobsNode.getValue()) {
+					MappingNode jobNode = (MappingNode) jobsNodeItem;
+					for (NodeTuple jobTuple: jobNode.getValue()) {
+						String jobTupleKey = ((ScalarNode)jobTuple.getKeyNode()).getValue();
+						if (jobTupleKey.equals("steps"))
+							migrate22_steps((SequenceNode) jobTuple.getValueNode());
+					}
+				}
+			} else if (specObjectKey.equals("stepTemplates")) {
+				SequenceNode stepTemplatesNode = (SequenceNode) specTuple.getValueNode();
+				for (Node stepTemplatesNodeItem: stepTemplatesNode.getValue()) {
+					MappingNode stepTemplateNode = (MappingNode) stepTemplatesNodeItem;
+					for (NodeTuple stepTemplateTuple: stepTemplateNode.getValue()) {
+						String stepTemplateTupleKey = ((ScalarNode)stepTemplateTuple.getKeyNode()).getValue();
+						if (stepTemplateTupleKey.equals("steps"))
+							migrate22_steps((SequenceNode)stepTemplateTuple.getValueNode());
+					}
+				}
+			}
+		}
+	}
+
+	private void migrate23_steps(SequenceNode stepsNode) {
+		for (var itStepNode = stepsNode.getValue().iterator(); itStepNode.hasNext();) {
+			MappingNode stepNode = (MappingNode) itStepNode.next();
+			if (stepNode.getTag().getValue().equals("!BuildImageStep")) {
+				stepNode.getValue().add(new NodeTuple(
+						new ScalarNode(Tag.STR, "publish"), new ScalarNode(Tag.STR, "true")));
+			}
+		}
+	}
+
+	private void migrate23(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specObjectKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specObjectKey.equals("jobs")) {
+				SequenceNode jobsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node jobsNodeItem: jobsNode.getValue()) {
+					MappingNode jobNode = (MappingNode) jobsNodeItem;
+					for (NodeTuple jobTuple: jobNode.getValue()) {
+						String jobTupleKey = ((ScalarNode)jobTuple.getKeyNode()).getValue();
+						if (jobTupleKey.equals("steps"))
+							migrate23_steps((SequenceNode) jobTuple.getValueNode());
+					}
+				}
+			} else if (specObjectKey.equals("stepTemplates")) {
+				SequenceNode stepTemplatesNode = (SequenceNode) specTuple.getValueNode();
+				for (Node stepTemplatesNodeItem: stepTemplatesNode.getValue()) {
+					MappingNode stepTemplateNode = (MappingNode) stepTemplatesNodeItem;
+					for (NodeTuple stepTemplateTuple: stepTemplateNode.getValue()) {
+						String stepTemplateTupleKey = ((ScalarNode)stepTemplateTuple.getKeyNode()).getValue();
+						if (stepTemplateTupleKey.equals("steps"))
+							migrate23_steps((SequenceNode)stepTemplateTuple.getValueNode());
+					}
+				}
+			}
+		}
+	}
+
+	private void migrate24_steps(SequenceNode stepsNode) {
+		for (var itStepNode = stepsNode.getValue().iterator(); itStepNode.hasNext();) {
+			MappingNode stepNode = (MappingNode) itStepNode.next();
+			if (stepNode.getTag().getValue().equals("!RunContainerStep")) {
+				for (var itStepNodeTuple = stepNode.getValue().iterator(); itStepNodeTuple.hasNext();) {
+					String stepNodeTupleKey = ((ScalarNode)itStepNodeTuple.next().getKeyNode()).getValue();
+					if (stepNodeTupleKey.equals("opts"))
+						itStepNodeTuple.remove();
+				}
+			}
+		}
+	}
+
+	private void migrate24(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specObjectKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specObjectKey.equals("jobs")) {
+				SequenceNode jobsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node jobsNodeItem: jobsNode.getValue()) {
+					MappingNode jobNode = (MappingNode) jobsNodeItem;
+					for (NodeTuple jobTuple: jobNode.getValue()) {
+						String jobTupleKey = ((ScalarNode)jobTuple.getKeyNode()).getValue();
+						if (jobTupleKey.equals("steps"))
+							migrate24_steps((SequenceNode) jobTuple.getValueNode());
+					}
+				}
+			} else if (specObjectKey.equals("stepTemplates")) {
+				SequenceNode stepTemplatesNode = (SequenceNode) specTuple.getValueNode();
+				for (Node stepTemplatesNodeItem: stepTemplatesNode.getValue()) {
+					MappingNode stepTemplateNode = (MappingNode) stepTemplatesNodeItem;
+					for (NodeTuple stepTemplateTuple: stepTemplateNode.getValue()) {
+						String stepTemplateTupleKey = ((ScalarNode)stepTemplateTuple.getKeyNode()).getValue();
+						if (stepTemplateTupleKey.equals("steps"))
+							migrate24_steps((SequenceNode)stepTemplateTuple.getValueNode());
+					}
+				}
+			}
+		}
+	}
+
+	private void migrate25_steps(SequenceNode stepsNode) {
+		for (var itStepNode = stepsNode.getValue().iterator(); itStepNode.hasNext();) {
+			MappingNode stepNode = (MappingNode) itStepNode.next();
+			if (stepNode.getTag().getValue().equals("!BuildImageStep")) {
+				stepNode.getValue().add(new NodeTuple(
+						new ScalarNode(Tag.STR, "removeDanglingImages"), new ScalarNode(Tag.STR, "true")));
+			}
+		}
+	}
+
+	private void migrate25(VersionedYamlDoc doc, Stack<Integer> versions) {
+		for (NodeTuple specTuple: doc.getValue()) {
+			String specObjectKey = ((ScalarNode)specTuple.getKeyNode()).getValue();
+			if (specObjectKey.equals("jobs")) {
+				SequenceNode jobsNode = (SequenceNode) specTuple.getValueNode();
+				for (Node jobsNodeItem: jobsNode.getValue()) {
+					MappingNode jobNode = (MappingNode) jobsNodeItem;
+					for (NodeTuple jobTuple: jobNode.getValue()) {
+						String jobTupleKey = ((ScalarNode)jobTuple.getKeyNode()).getValue();
+						if (jobTupleKey.equals("steps"))
+							migrate25_steps((SequenceNode) jobTuple.getValueNode());
+					}
+				}
+			} else if (specObjectKey.equals("stepTemplates")) {
+				SequenceNode stepTemplatesNode = (SequenceNode) specTuple.getValueNode();
+				for (Node stepTemplatesNodeItem: stepTemplatesNode.getValue()) {
+					MappingNode stepTemplateNode = (MappingNode) stepTemplatesNodeItem;
+					for (NodeTuple stepTemplateTuple: stepTemplateNode.getValue()) {
+						String stepTemplateTupleKey = ((ScalarNode)stepTemplateTuple.getKeyNode()).getValue();
+						if (stepTemplateTupleKey.equals("steps"))
+							migrate25_steps((SequenceNode)stepTemplateTuple.getValueNode());
+					}
+				}
+			}
+		}
+	}
+	
 }

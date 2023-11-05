@@ -7,16 +7,20 @@ import javax.validation.constraints.NotEmpty;
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.k8shelper.BuildImageFacade;
 import io.onedev.k8shelper.StepFacade;
+import io.onedev.server.annotation.ReservedOptions;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.buildspec.param.ParamCombination;
 import io.onedev.server.model.Build;
-import io.onedev.server.util.validation.annotation.SafePath;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
+import io.onedev.server.annotation.SafePath;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.model.support.administration.jobexecutor.JobExecutor;
 
-@Editable(order=160, name="Build Docker Image", description="Build and optionally publish docker image. "
-		+ "<span class='text-danger'>Registry logins should be specified</span> in the job executor executing this step if registry authentication "
-		+ "is required for build or publish")
+@Editable(order=160, name="Build Docker Image", description="Build and publish docker image with docker daemon. " +
+		"This step can only be executed by server docker executor or remote docker executor, and " +
+		"<code>mount docker sock</code> option needs to be enabled on the executor. To build image with " +
+		"Kubernetes executor, please use kaniko step. <b class='text-danger'>NOTE: </b> registry logins " +
+		"should be configured in the job executor if authentication is required for build or publish")
 public class BuildImageStep extends Step {
 
 	private static final long serialVersionUID = 1L;
@@ -26,8 +30,12 @@ public class BuildImageStep extends Step {
 	private String dockerfile;
 	
 	private String tags;
+
+	private boolean publish = true;
 	
-	private boolean publish;
+	private boolean removeDanglingImages = true;
+	
+	private String moreOptions;
 	
 	@Editable(order=100, description="Optionally specify build path relative to <a href='https://docs.onedev.io/concepts#job-workspace' target='_blank'>job workspace</a>. "
 			+ "Leave empty to use job workspace itself")
@@ -66,7 +74,7 @@ public class BuildImageStep extends Step {
 		this.tags = tags;
 	}
 
-	@Editable(order=400, name="Publish After Build", description="Whether or not to publish built image to docker registry")
+	@Editable(order=330, name="Publish After Build", description="Whether or not to publish built image to docker registry")
 	public boolean isPublish() {
 		return publish;
 	}
@@ -75,13 +83,35 @@ public class BuildImageStep extends Step {
 		this.publish = publish;
 	}
 
+	@Editable(order=340, name="Remove Dangling Images After Build")
+	public boolean isRemoveDanglingImages() {
+		return removeDanglingImages;
+	}
+
+	public void setRemoveDanglingImages(boolean removeDanglingImages) {
+		this.removeDanglingImages = removeDanglingImages;
+	}
+
+	@Editable(order=350, description="Optionally specify additional options to build image, " +
+			"separated by spaces")
+	@Interpolative(variableSuggester="suggestVariables")
+	@ReservedOptions({"-f", "(--file)=.*", "-t", "(--tag)=.*"})
+	public String getMoreOptions() {
+		return moreOptions;
+	}
+
+	public void setMoreOptions(String moreOptions) {
+		this.moreOptions = moreOptions;
+	}
+
+
 	static List<InputSuggestion> suggestVariables(String matchWith) {
 		return BuildSpec.suggestVariables(matchWith, true, true, false);
 	}
 	
 	@Override
-	public StepFacade getFacade(Build build, String jobToken, ParamCombination paramCombination) {
-		return new BuildImageFacade(getBuildPath(), getDockerfile(), getTags(), isPublish());
+	public StepFacade getFacade(Build build, JobExecutor jobExecutor, String jobToken, ParamCombination paramCombination) {
+		return new BuildImageFacade(getBuildPath(), getDockerfile(), getTags(), isPublish(), isRemoveDanglingImages(), getMoreOptions());
 	}
 
 }

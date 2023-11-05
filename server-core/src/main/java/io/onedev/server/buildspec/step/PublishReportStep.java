@@ -8,10 +8,10 @@ import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.k8shelper.ExecuteCondition;
 import io.onedev.server.buildspec.BuildSpec;
 import io.onedev.server.util.patternset.PatternSet;
-import io.onedev.server.util.validation.annotation.PathSegment;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-import io.onedev.server.web.editable.annotation.Patterns;
+import io.onedev.server.annotation.PathSegment;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.annotation.Patterns;
 
 @Editable
 public abstract class PublishReportStep extends ServerSideStep {
@@ -44,7 +44,7 @@ public abstract class PublishReportStep extends ServerSideStep {
 		return PatternSet.parse(getFilePatterns());
 	}
 	
-	@Editable(order=100, description="Specify files under <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a> to be published. "
+	@Editable(order=100, description="Specify files relative to <a href='https://docs.onedev.io/concepts#job-workspace'>job workspace</a> to be published. "
 			+ "Use * or ? for pattern match")
 	@Interpolative(variableSuggester="suggestVariables")
 	@Patterns(path=true)

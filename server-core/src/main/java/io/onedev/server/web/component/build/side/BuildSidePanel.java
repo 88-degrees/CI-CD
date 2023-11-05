@@ -1,11 +1,40 @@
 package io.onedev.server.web.component.build.side;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-
+import com.google.common.collect.Sets;
+import io.onedev.server.OneDev;
+import io.onedev.server.buildspec.BuildSpec;
+import io.onedev.server.buildspec.job.Job;
+import io.onedev.server.entitymanager.BuildLabelManager;
+import io.onedev.server.entityreference.Referenceable;
+import io.onedev.server.git.BlobIdent;
+import io.onedev.server.git.GitUtils;
+import io.onedev.server.model.Build;
+import io.onedev.server.model.BuildLabel;
+import io.onedev.server.model.Project;
+import io.onedev.server.model.PullRequest;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.DateUtils;
+import io.onedev.server.util.Input;
+import io.onedev.server.util.criteria.Criteria;
+import io.onedev.server.web.asset.emoji.Emojis;
+import io.onedev.server.web.behavior.ChangeObserver;
+import io.onedev.server.web.component.build.ParamValuesLabel;
+import io.onedev.server.web.component.entity.labels.EntityLabelsPanel;
+import io.onedev.server.web.component.entity.reference.ReferencePanel;
+import io.onedev.server.web.component.job.JobDefLink;
+import io.onedev.server.web.component.link.ViewStateAwarePageLink;
+import io.onedev.server.web.component.pullrequest.RequestStatusBadge;
+import io.onedev.server.web.component.user.ident.Mode;
+import io.onedev.server.web.component.user.ident.UserIdentPanel;
+import io.onedev.server.web.editable.InplacePropertyEditLink;
+import io.onedev.server.web.page.admin.buildsetting.agent.AgentOverviewPage;
+import io.onedev.server.web.page.builds.BuildListPage;
+import io.onedev.server.web.page.project.blob.ProjectBlobPage;
+import io.onedev.server.web.page.project.blob.render.BlobRenderContext;
+import io.onedev.server.web.page.project.blob.render.renderers.buildspec.BuildSpecRenderer;
+import io.onedev.server.web.page.project.commits.CommitDetailPage;
+import io.onedev.server.web.page.project.pullrequests.detail.activities.PullRequestActivitiesPage;
+import io.onedev.server.web.util.editablebean.LabelsBean;
 import org.apache.wicket.Component;
 import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
 import org.apache.wicket.markup.ComponentTag;
@@ -25,42 +54,11 @@ import org.apache.wicket.model.Model;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 import org.eclipse.jgit.lib.FileMode;
 
-import com.google.common.collect.Sets;
-
-import io.onedev.server.OneDev;
-import io.onedev.server.buildspec.BuildSpec;
-import io.onedev.server.buildspec.job.Job;
-import io.onedev.server.entitymanager.BuildLabelManager;
-import io.onedev.server.entityreference.Referenceable;
-import io.onedev.server.git.BlobIdent;
-import io.onedev.server.git.GitUtils;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.BuildLabel;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.DateUtils;
-import io.onedev.server.util.Input;
-import io.onedev.server.util.criteria.Criteria;
-import io.onedev.server.web.asset.emoji.Emojis;
-import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.component.build.ParamValuesLabel;
-import io.onedev.server.web.component.entity.labels.EntityLabelsPanel;
-import io.onedev.server.web.component.entity.reference.ReferencePanel;
-import io.onedev.server.web.component.job.JobDefLink;
-import io.onedev.server.web.component.link.ViewStateAwarePageLink;
-import io.onedev.server.web.component.pullrequest.RequestStatusBadge;
-import io.onedev.server.web.component.user.ident.Mode;
-import io.onedev.server.web.component.user.ident.UserIdentPanel;
-import io.onedev.server.web.editable.InplacePropertyEditLink;
-import io.onedev.server.web.page.admin.buildsetting.agent.AgentOverviewPage;
-import io.onedev.server.web.page.builds.BuildListPage;
-import io.onedev.server.web.page.project.blob.ProjectBlobPage;
-import io.onedev.server.web.page.project.blob.render.BlobRenderContext;
-import io.onedev.server.web.page.project.blob.render.renderers.buildspec.BuildSpecRenderer;
-import io.onedev.server.web.page.project.commits.CommitDetailPage;
-import io.onedev.server.web.page.project.pullrequests.detail.activities.PullRequestActivitiesPage;
-import io.onedev.server.web.util.editablebean.LabelsBean;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 
 @SuppressWarnings("serial")
 public abstract class BuildSidePanel extends Panel {
@@ -120,7 +118,12 @@ public abstract class BuildSidePanel extends Panel {
 		String branch = getBuild().getBranch();
 		
 		ProjectBlobPage.State state = new ProjectBlobPage.State();
-		state.blobIdent = new BlobIdent(branch, null, FileMode.TREE.getBits());
+		
+		var revision = branch;
+		if (revision != null && getProject().getTagRef(revision) != null)
+			revision = GitUtils.branch2ref(revision);
+		
+		state.blobIdent = new BlobIdent(revision, null, FileMode.TREE.getBits());
 		PageParameters params = ProjectBlobPage.paramsOf(getProject(), state);
 		
 		Link<Void> branchLink = new BookmarkablePageLink<Void>("branch", ProjectBlobPage.class, params) {
@@ -135,13 +138,18 @@ public abstract class BuildSidePanel extends Panel {
 		};
 		branchLink.add(new Label("label", branch));
 		branchLink.setVisible(branch != null);
-		branchLink.setEnabled(SecurityUtils.canReadCode(getProject()));
+		branchLink.setEnabled(SecurityUtils.canReadCode(getProject()) 
+				&& getProject().getObjectId(getBuild().getRefName(), false) != null);
 		general.add(branchLink);
 		
 		String tag = getBuild().getTag();
+
+		revision = tag;
+		if (revision != null && getProject().getBranchRef(revision) != null)
+			revision = GitUtils.tag2ref(revision);
 		
 		state = new ProjectBlobPage.State();
-		state.blobIdent = new BlobIdent(tag, null, FileMode.TREE.getBits());
+		state.blobIdent = new BlobIdent(revision, null, FileMode.TREE.getBits());
 		params = ProjectBlobPage.paramsOf(getProject(), state);
 		
 		Link<Void> tagLink = new BookmarkablePageLink<Void>("tag", ProjectBlobPage.class, params) {
@@ -156,7 +164,8 @@ public abstract class BuildSidePanel extends Panel {
 		};
 		tagLink.add(new Label("label", tag));
 		tagLink.setVisible(tag != null);
-		tagLink.setEnabled(SecurityUtils.canReadCode(getProject()));
+		tagLink.setEnabled(SecurityUtils.canReadCode(getProject())
+				&& getProject().getObjectId(getBuild().getRefName(), false) != null);
 		general.add(tagLink);
 		
 		CommitDetailPage.State commitState = new CommitDetailPage.State();
@@ -312,16 +321,11 @@ public abstract class BuildSidePanel extends Panel {
 			
 		});
 
-		general.add(new WebSocketObserver() {
+		general.add(new ChangeObserver() {
 				
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(component);
-			}
-			
-			@Override
-			public Collection<String> getObservables() {
-				return Sets.newHashSet(Build.getWebSocketObservable(getBuild().getId()));
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(Build.getDetailChangeObservable(getBuild().getId()));
 			}
 			
 		});

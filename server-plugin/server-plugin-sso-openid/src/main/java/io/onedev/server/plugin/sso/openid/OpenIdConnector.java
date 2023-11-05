@@ -22,9 +22,9 @@ import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.support.administration.sso.SsoAuthenticated;
 import io.onedev.server.model.support.administration.sso.SsoConnector;
 import io.onedev.server.util.OAuthUtils;
-import io.onedev.server.util.validation.annotation.UrlSegment;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Password;
+import io.onedev.server.annotation.UrlSegment;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Password;
 import io.onedev.server.web.page.admin.ssosetting.SsoProcessPage;
 import net.minidev.json.JSONArray;
 import net.minidev.json.JSONObject;
@@ -46,7 +46,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-@Editable(name="OpenID", order=10000, description="Refer to this <a href='https://docs.onedev.io/tutorials/security/sso-with-okta/' target='_blank'>tutorial</a> for an example setup")
+@Editable(name="OpenID", order=10000, description="Refer to this <a href='https://docs.onedev.io/tutorials/security/sso-with-okta' target='_blank'>tutorial</a> for an example setup")
 public class OpenIdConnector extends SsoConnector {
 
 	private static final long serialVersionUID = 1L;
@@ -167,13 +167,14 @@ public class OpenIdConnector extends SsoConnector {
 
 				ClientID clientID = new ClientID(getClientId());
 				Secret clientSecret = new Secret(getClientSecret());
-				ClientAuthentication clientAuth = new ClientSecretBasic(clientID, clientSecret);
+				ClientAuthentication clientAuth = createTokenRequestAuthentication(clientID, clientSecret);
 				TokenRequest tokenRequest = new TokenRequest(
 						new URI(getCachedProviderMetadata().getTokenEndpoint()), clientAuth, codeGrant);
 				
 				HTTPRequest httpRequest = tokenRequest.toHTTPRequest();
 				httpRequest.setAccept(ContentType.APPLICATION_JSON.toString());
-				TokenResponse tokenResponse = OIDCTokenResponseParser.parse(httpRequest.send());
+				HTTPResponse httpResponse = httpRequest.send();
+				TokenResponse tokenResponse = parseOIDCTokenResponse(httpResponse);
 				
 				if (tokenResponse.indicatesSuccess()) 
 					return processTokenResponse((OIDCTokenResponse)tokenResponse.toSuccessResponse());
@@ -184,7 +185,15 @@ public class OpenIdConnector extends SsoConnector {
 			throw new RuntimeException(e);
 		}
 	}
-	
+
+	protected TokenResponse parseOIDCTokenResponse(HTTPResponse response) throws ParseException {
+		return OIDCTokenResponseParser.parse(response);
+	}
+
+	protected ClientAuthentication createTokenRequestAuthentication(ClientID id, Secret secret) {
+		return new ClientSecretBasic(id, secret);
+	}
+
 	@Nullable
 	private String getStringValue(Object jsonValue) {
 		if (jsonValue instanceof String) {
@@ -274,7 +283,7 @@ public class OpenIdConnector extends SsoConnector {
 			Session.get().setAttribute(SESSION_ATTR_STATE, state.getValue());
 			Session.get().setAttribute(SESSION_ATTR_PROVIDER_METADATA, discoverProviderMetadata());
 			
-			String scopes = "openid email profile";
+			String scopes = getBaseScope();
 			if (getGroupsClaim() != null)
 				scopes = scopes + " " + getGroupsClaim();
 			
@@ -288,6 +297,10 @@ public class OpenIdConnector extends SsoConnector {
 		}		
 	}
 	
+	protected String getBaseScope() {
+		return "openid email profile";
+	}
+
 	protected ProviderMetadata discoverProviderMetadata() {
 		try {
 			JsonNode json = OneDev.getInstance(ObjectMapper.class).readTree(
