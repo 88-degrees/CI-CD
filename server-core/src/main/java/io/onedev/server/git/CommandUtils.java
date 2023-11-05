@@ -1,20 +1,5 @@
 package io.onedev.server.git;
 
-import java.io.File;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
-import java.util.StringTokenizer;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import javax.ws.rs.core.HttpHeaders;
-
-import org.apache.commons.lang3.SystemUtils;
-import org.eclipse.jgit.util.QuotedString;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import io.onedev.agent.Agent;
 import io.onedev.commons.bootstrap.SensitiveMasker;
 import io.onedev.commons.utils.FileUtils;
@@ -30,6 +15,19 @@ import io.onedev.server.git.command.FileChange;
 import io.onedev.server.git.command.ReceivePackCommand;
 import io.onedev.server.git.command.UploadPackCommand;
 import io.onedev.server.git.location.GitLocation;
+import org.apache.commons.lang3.SystemUtils;
+import org.eclipse.jgit.util.QuotedString;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.StringTokenizer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CommandUtils {
 
@@ -50,19 +48,12 @@ public class CommandUtils {
 		File homeDir = FileUtils.createTempDir("githome"); 
 		
 		ClusterManager clusterManager = OneDev.getInstance(ClusterManager.class);
-		SensitiveMasker.push(new SensitiveMasker() {
-
-			@Override
-			public String mask(String text) {
-				return StringUtils.replace(text, clusterManager.getCredentialValue(), "******");
-			}
-			
-		});
+		SensitiveMasker.push(text -> StringUtils.replace(text, clusterManager.getCredential(), "******"));
 		try {
 			Commandline git = newGit();
 			git.environments().put("HOME", homeDir.getAbsolutePath());
-			String extraHeader = HttpHeaders.AUTHORIZATION + ": " 
-					+ KubernetesHelper.BEARER + " " + clusterManager.getCredentialValue();
+			String extraHeader = KubernetesHelper.AUTHORIZATION + ": " 
+					+ KubernetesHelper.BEARER + " " + clusterManager.getCredential();
 			git.addArgs("config", "--global", "http.extraHeader", extraHeader);
 			git.execute(new LineConsumer() {
 
@@ -83,6 +74,8 @@ public class CommandUtils {
 			git.clearArgs();
 			
 			return task.call(git);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
 		} finally {
 			SensitiveMasker.pop();
 			FileUtils.deleteDir(homeDir);

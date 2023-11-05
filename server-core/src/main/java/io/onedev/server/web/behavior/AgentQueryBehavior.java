@@ -3,6 +3,7 @@ package io.onedev.server.web.behavior;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import io.onedev.commons.codeassist.FenceAware;
+import io.onedev.commons.codeassist.InputCompletion;
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.commons.codeassist.grammar.LexerRuleRefElementSpec;
 import io.onedev.commons.codeassist.parser.Element;
@@ -23,19 +24,26 @@ import io.onedev.server.web.util.SuggestionUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+
+import static java.util.Collections.sort;
 
 @SuppressWarnings("serial")
 public class AgentQueryBehavior extends ANTLRAssistBehavior {
 
+	private static final String FUZZY_SUGGESTION_DESCRIPTION_PREFIX = "surround with ~";
+	
 	private final boolean forExecutor;
 	
-	public AgentQueryBehavior(boolean forExecutor) {
-		super(AgentQueryParser.class, "query", false);
+	public AgentQueryBehavior(boolean forExecutor, boolean hideIfBlank) {
+		super(AgentQueryParser.class, "query", false, hideIfBlank);
 		this.forExecutor = forExecutor;
 	}
 
+	public AgentQueryBehavior(boolean forExecutor) {
+		this(forExecutor, false);
+	}
+	
 	@Override
 	protected List<InputSuggestion> suggest(TerminalExpect terminalExpect) {
 		if (terminalExpect.getElementSpec() instanceof LexerRuleRefElementSpec) {
@@ -48,8 +56,9 @@ public class AgentQueryBehavior extends ANTLRAssistBehavior {
 						AgentManager agentManager = OneDev.getInstance(AgentManager.class);
 						AgentAttributeManager attributeManager = OneDev.getInstance(AgentAttributeManager.class);
 						if ("criteriaField".equals(spec.getLabel())) {
-							List<String> fields = new ArrayList<>(Agent.QUERY_FIELDS);
-							List<String> attributeNames = attributeManager.getAttributeNames();
+							var fields = new ArrayList<>(Agent.QUERY_FIELDS);
+							var attributeNames = new ArrayList<>(attributeManager.getAttributeNames());
+							sort(attributeNames);
 							fields.addAll(attributeNames);
 							return SuggestionUtils.suggest(fields, matchWith);
 						} else if ("orderField".equals(spec.getLabel())) {
@@ -65,7 +74,9 @@ public class AgentQueryBehavior extends ANTLRAssistBehavior {
 								if (operator == AgentQueryLexer.EverUsedSince || operator == AgentQueryLexer.NotUsedSince) {
 									return SuggestionUtils.suggest(DateUtils.RELAX_DATE_EXAMPLES, matchWith);
 								} else if (operator == AgentQueryLexer.HasAttribute) {
-									return SuggestionUtils.suggest(attributeManager.getAttributeNames(), matchWith);
+									var attributeNames = new ArrayList<>(attributeManager.getAttributeNames());									
+									sort(attributeNames);
+									return SuggestionUtils.suggest(attributeNames, matchWith);
 								} else if (operator == AgentQueryLexer.RanBuild) { 
 									return SuggestionUtils.suggestBuilds(null, matchWith, InputAssistBehavior.MAX_SUGGESTIONS);
 								}
@@ -75,13 +86,13 @@ public class AgentQueryBehavior extends ANTLRAssistBehavior {
 									AgentQuery.checkField(fieldName, operator);
 									if (fieldName.equals(Agent.NAME_OS_NAME)) {
 										var osNames = new ArrayList<>(agentManager.getOsNames());
-										Collections.sort(osNames);
+										sort(osNames);
 										return SuggestionUtils.suggest(osNames, matchWith);
 									} else if (fieldName.equals(Agent.NAME_NAME)) {
 										return SuggestionUtils.suggestAgents(matchWith);
 									} else if (fieldName.equals(Agent.NAME_OS_ARCH)) {
 										var osArchs = new ArrayList<>(agentManager.getOsArchs());
-										Collections.sort(osArchs);
+										sort(osArchs);
 										return SuggestionUtils.suggest(osArchs, matchWith);
 									} else {
 										return null;
@@ -98,6 +109,20 @@ public class AgentQueryBehavior extends ANTLRAssistBehavior {
 						return "value should be quoted";
 					}
 					
+				}.suggest(terminalExpect);
+			} else if (spec.getRuleName().equals("Fuzzy")) {
+				return new FenceAware(codeAssist.getGrammar(), '~', '~') {
+
+					@Override
+					protected List<InputSuggestion> match(String matchWith) {
+						return null;
+					}
+
+					@Override
+					protected String getFencingDescription() {
+						return FUZZY_SUGGESTION_DESCRIPTION_PREFIX + " to query name/ip/os";
+					}
+
 				}.suggest(terminalExpect);
 			}
 		} 
@@ -145,6 +170,7 @@ public class AgentQueryBehavior extends ANTLRAssistBehavior {
 				if (!fieldElements.isEmpty()) {
 					String fieldName = AgentQuery.getValue(fieldElements.get(0).getMatchedText());
 					if (fieldName.equals(Agent.NAME_NAME) 
+							|| fieldName.equals(Agent.NAME_OS_NAME)
 							|| fieldName.equals(Agent.NAME_OS_ARCH)
 							|| fieldName.equals(Agent.NAME_OS_VERSION) 
 							|| fieldName.equals(Agent.NAME_IP_ADDRESS)) {
@@ -155,5 +181,11 @@ public class AgentQueryBehavior extends ANTLRAssistBehavior {
 		} 
 		return hints;
 	}
-	
+
+	@Override
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return suggestion.getDescription() != null 
+				&& suggestion.getDescription().startsWith(FUZZY_SUGGESTION_DESCRIPTION_PREFIX);
+	}
+
 }

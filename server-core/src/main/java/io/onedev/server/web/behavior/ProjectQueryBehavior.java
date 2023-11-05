@@ -1,12 +1,15 @@
 package io.onedev.server.web.behavior;
 
 import static io.onedev.server.search.entity.project.ProjectQuery.getRuleName;
+import static io.onedev.server.search.entity.project.ProjectQueryParser.*;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import io.onedev.commons.codeassist.InputCompletion;
+import io.onedev.server.cluster.ClusterManager;
 import org.apache.commons.lang3.StringUtils;
 
 import com.google.common.base.Optional;
@@ -35,13 +38,19 @@ import io.onedev.server.web.util.SuggestionUtils;
 @SuppressWarnings("serial")
 public class ProjectQueryBehavior extends ANTLRAssistBehavior {
 
+	private static final String FUZZY_SUGGESTION_DESCRIPTION_PREFIX = "surround with ~";
+	
 	private final boolean childQuery;
 	
-	public ProjectQueryBehavior(boolean childQuery) {
-		super(ProjectQueryParser.class, "query", false);
+	public ProjectQueryBehavior(boolean childQuery, boolean hideIfBlank) {
+		super(ProjectQueryParser.class, "query", false, hideIfBlank);
 		this.childQuery = childQuery;
 	}
 
+	public ProjectQueryBehavior(boolean childQuery) {
+		this(childQuery, false);
+	}
+	
 	@Override
 	protected List<InputSuggestion> suggest(TerminalExpect terminalExpect) {
 		if (terminalExpect.getElementSpec() instanceof LexerRuleRefElementSpec) {
@@ -127,6 +136,20 @@ public class ProjectQueryBehavior extends ANTLRAssistBehavior {
 					}
 					
 				}.suggest(terminalExpect);
+			} else if (spec.getRuleName().equals("Fuzzy")) {
+				return new FenceAware(codeAssist.getGrammar(), '~', '~') {
+
+					@Override
+					protected List<InputSuggestion> match(String matchWith) {
+						return null;
+					}
+
+					@Override
+					protected String getFencingDescription() {
+						return FUZZY_SUGGESTION_DESCRIPTION_PREFIX + " to query name/path";
+					}
+
+				}.suggest(terminalExpect);
 			}
 		} 
 		return null;
@@ -134,9 +157,13 @@ public class ProjectQueryBehavior extends ANTLRAssistBehavior {
 	
 	@Override
 	protected Optional<String> describe(ParseExpect parseExpect, String suggestedLiteral) {
+		if (!OneDev.getInstance(ClusterManager.class).isClusteringSupported() 
+				&& (suggestedLiteral.equals(getRuleName(WithoutEnoughReplicas)) || suggestedLiteral.equals(getRuleName(HasOutdatedReplicas)))) {
+			return null;
+		}
 		if (childQuery) {
-			if (suggestedLiteral.equals(getRuleName(ProjectQueryParser.ChildrenOf))
-					|| suggestedLiteral.equals(getRuleName(ProjectQueryParser.Roots))) { 
+			if (suggestedLiteral.equals(getRuleName(ChildrenOf))
+					|| suggestedLiteral.equals(getRuleName(Roots))) { 
 				return null;
 			}
 		}
@@ -186,4 +213,10 @@ public class ProjectQueryBehavior extends ANTLRAssistBehavior {
 		return hints;
 	}
 
+	@Override
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return suggestion.getDescription() != null 
+				&& suggestion.getDescription().startsWith(FUZZY_SUGGESTION_DESCRIPTION_PREFIX);
+	}
+	
 }

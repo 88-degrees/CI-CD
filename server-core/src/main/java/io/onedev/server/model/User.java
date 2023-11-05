@@ -5,9 +5,13 @@ import com.google.common.base.MoreObjects;
 import edu.emory.mathcs.backport.java.util.Collections;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Password;
+import io.onedev.server.annotation.UserName;
 import io.onedev.server.entitymanager.EmailAddressManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.model.support.AccessToken;
 import io.onedev.server.model.support.NamedProjectQuery;
 import io.onedev.server.model.support.QueryPersonalization;
 import io.onedev.server.model.support.TwoFactorAuthentication;
@@ -17,13 +21,9 @@ import io.onedev.server.model.support.build.NamedBuildQuery;
 import io.onedev.server.model.support.issue.NamedIssueQuery;
 import io.onedev.server.model.support.pullrequest.NamedPullRequestQuery;
 import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.CryptoUtils;
 import io.onedev.server.util.facade.UserFacade;
-import io.onedev.server.util.validation.annotation.UserName;
 import io.onedev.server.util.watch.QuerySubscriptionSupport;
 import io.onedev.server.util.watch.QueryWatchSupport;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Password;
 import org.apache.shiro.authc.AuthenticationInfo;
 import org.apache.shiro.subject.PrincipalCollection;
 import org.apache.shiro.subject.SimplePrincipalCollection;
@@ -43,7 +43,7 @@ import static io.onedev.server.model.User.*;
 @Entity
 @Table(
 		indexes={@Index(columnList=PROP_NAME), @Index(columnList=PROP_FULL_NAME), 
-				@Index(columnList=PROP_SSO_CONNECTOR), @Index(columnList=PROP_ACCESS_TOKEN)})
+				@Index(columnList=PROP_SSO_CONNECTOR)})
 @Cache(usage=CacheConcurrencyStrategy.READ_WRITE)
 @Editable
 public class User extends AbstractEntity implements AuthenticationInfo {
@@ -58,7 +58,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 	
 	public static final String SYSTEM_NAME = "OneDev";
 	
-	public static final String SYSTEM_EMAIL_ADDRESS = "noreply@onedev.io";
+	public static final String SYSTEM_EMAIL_ADDRESS = "system@onedev";
 	
 	public static final String UNKNOWN_NAME = "Unknown";
 	
@@ -72,7 +72,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 	
 	public static final String PROP_SSO_CONNECTOR = "ssoConnector";
 	
-	public static final String PROP_ACCESS_TOKEN = "accessToken";
+	public static final String PROP_GUEST = "guest";
 	
 	private static ThreadLocal<Stack<User>> stack =  new ThreadLocal<Stack<User>>() {
 
@@ -85,6 +85,8 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 	
 	@Column(unique=true, nullable=false)
     private String name;
+	
+	private String passwordResetCode;
 
     @Column(length=1024, nullable=false)
     @JsonIgnore
@@ -95,9 +97,12 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 	@JsonIgnore
 	private String ssoConnector;
 	
-	@Column(unique=true, nullable=false)
+	private boolean guest;
+
 	@JsonIgnore
-	private String accessToken = CryptoUtils.generateSecret();
+	@Lob
+	@Column(length=65535)
+	private ArrayList<AccessToken> accessTokens = new ArrayList<>();
 	
 	@JsonIgnore
 	@Lob
@@ -142,7 +147,14 @@ public class User extends AbstractEntity implements AuthenticationInfo {
     
     @OneToMany(mappedBy="user", cascade=CascadeType.REMOVE)
     private Collection<IssueVote> issueVotes = new ArrayList<>();
-    
+
+	@OneToMany(mappedBy="user", cascade=CascadeType.REMOVE)
+	private Collection<IssueWork> issueWorks = new ArrayList<>();
+
+	@OneToMany(mappedBy="user", cascade=CascadeType.REMOVE)
+	@Cache(usage=CacheConcurrencyStrategy.READ_WRITE)
+	private Collection<Stopwatch> stopwatches = new ArrayList<>();
+	
     @OneToMany(mappedBy="user", cascade=CascadeType.REMOVE)
     private Collection<IssueQueryPersonalization> issueQueryPersonalizations = new ArrayList<>();
     
@@ -263,7 +275,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 			
 			@Override
 			public void onUpdated() {
-				OneDev.getInstance(UserManager.class).save(User.this);
+				OneDev.getInstance(UserManager.class).update(User.this, null);
 			}
 			
 		};
@@ -311,7 +323,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 
 			@Override
 			public void onUpdated() {
-				OneDev.getInstance(UserManager.class).save(User.this);
+				OneDev.getInstance(UserManager.class).update(User.this, null);
 			}
 			
 		};
@@ -359,7 +371,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 
 			@Override
 			public void onUpdated() {
-				OneDev.getInstance(UserManager.class).save(User.this);
+				OneDev.getInstance(UserManager.class).update(User.this, null);
 			}
 			
 		};
@@ -407,7 +419,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 
 			@Override
 			public void onUpdated() {
-				OneDev.getInstance(UserManager.class).save(User.this);
+				OneDev.getInstance(UserManager.class).update(User.this, null);
 			}
 			
 		};
@@ -455,7 +467,15 @@ public class User extends AbstractEntity implements AuthenticationInfo {
     	this.password = password;
     }
 
-    public boolean isExternalManaged() {
+	public String getPasswordResetCode() {
+		return passwordResetCode;
+	}
+
+	public void setPasswordResetCode(String passwordResetCode) {
+		this.passwordResetCode = passwordResetCode;
+	}
+
+	public boolean isExternalManaged() {
     	return getPassword().equals(EXTERNAL_MANAGED);
     }
     
@@ -477,12 +497,25 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 		this.ssoConnector = ssoConnector;
 	}
 
-	public String getAccessToken() {
-		return accessToken;
+	@Editable(order=300, description = "Whether or not to create the user as <a href='https://docs.onedev.io/concepts#guest-user' target='_blank'>guest</a>")
+	public boolean isGuest() {
+		return guest;
 	}
 
-	public void setAccessToken(String accessToken) {
-		this.accessToken = accessToken;
+	public void setGuest(boolean guest) {
+		this.guest = guest;
+	}
+
+	public boolean isEffectiveGuest() {
+		return guest && !isRoot() && !isSystem();
+	}
+	
+	public ArrayList<AccessToken> getAccessTokens() {
+		return accessTokens;
+	}
+
+	public void setAccessTokens(ArrayList<AccessToken> accessTokens) {
+		this.accessTokens = accessTokens;
 	}
 
 	@Nullable
@@ -620,19 +653,6 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 		this.gpgKeys = gpgKeys;
 	}
 
-	public boolean isSshKeyExternalManaged() {
-    	if (isExternalManaged()) {
-    		if (getSsoConnector() != null) {
-    			return false;
-    		} else {
-	    		Authenticator authenticator = OneDev.getInstance(SettingManager.class).getAuthenticator();
-	    		return authenticator != null && authenticator.isManagingSshKeys();
-    		}
-    	} else {
-    		return false;
-    	}
-    }
-    
     public boolean isMembershipExternalManaged() {
     	if (isExternalManaged()) {
     		SettingManager settingManager = OneDev.getInstance(SettingManager.class);
@@ -732,6 +752,22 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 
 	public void setIssueVotes(Collection<IssueVote> issueVotes) {
 		this.issueVotes = issueVotes;
+	}
+
+	public Collection<IssueWork> getIssueWorks() {
+		return issueWorks;
+	}
+
+	public void setIssueWorks(Collection<IssueWork> issueWorks) {
+		this.issueWorks = issueWorks;
+	}
+
+	public Collection<Stopwatch> getStopwatches() {
+		return stopwatches;
+	}
+
+	public void setStopwatches(Collection<Stopwatch> stopwatches) {
+		this.stopwatches = stopwatches;
 	}
 
 	public Collection<IssueQueryPersonalization> getIssueQueryPersonalizations() {
@@ -863,7 +899,7 @@ public class User extends AbstractEntity implements AuthenticationInfo {
 	
 	@Override
 	public UserFacade getFacade() {
-		return new UserFacade(getId(), getName(), getFullName(), getAccessToken());
+		return new UserFacade(getId(), getName(), getFullName(), isGuest(), getAccessTokens());
 	}
 	
 }

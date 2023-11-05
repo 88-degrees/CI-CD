@@ -1,12 +1,6 @@
 package io.onedev.server.search.code.query;
 
-import static io.onedev.server.search.code.FieldConstants.BLOB_PATH;
-
-import java.io.Serializable;
-import java.util.List;
-
-import javax.annotation.Nullable;
-
+import io.onedev.server.search.code.hit.QueryHit;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
@@ -14,7 +8,11 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.WildcardQuery;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
-import io.onedev.server.search.code.hit.QueryHit;
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.List;
+
+import static io.onedev.server.search.code.FieldConstants.BLOB_PATH;
 
 public abstract class BlobQuery implements Serializable {
 
@@ -46,7 +44,7 @@ public abstract class BlobQuery implements Serializable {
 	 * @return 
 	 * 			lucene query
 	 * @throws 
-	 * 			TooGeneralQueryException if supplied query term is too general to possibly cause query slow
+	 *            TooGeneralQueryException if supplied query term is too general to possibly cause query slow
 	 */
 	public Query asLuceneQuery() throws TooGeneralQueryException {
 		BooleanQuery.Builder luceneQueryBuilder = new BooleanQuery.Builder();

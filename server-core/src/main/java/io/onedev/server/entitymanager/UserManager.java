@@ -1,22 +1,23 @@
 package io.onedev.server.entitymanager;
 
-import java.util.Collection;
-import java.util.List;
-
-import javax.annotation.Nullable;
-
-import org.apache.shiro.authz.Permission;
-
 import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
 import io.onedev.server.persistence.dao.EntityManager;
+import io.onedev.server.security.permission.BasePermission;
 import io.onedev.server.util.facade.UserCache;
 import io.onedev.server.util.facade.UserFacade;
 
+import javax.annotation.Nullable;
+import javax.validation.constraints.Null;
+import java.util.Collection;
+import java.util.List;
+
 public interface UserManager extends EntityManager<User> {
 	
+	void create(User user);
+	
 	/**
-	 * Save specified user
+	 * Update specified user
 	 * 
 	 * @param user
 	 * 			user to save
@@ -26,11 +27,19 @@ public interface UserManager extends EntityManager<User> {
 	 * 			integrity. Use <tt>null</tt> if original name does not exist, 
 	 * 			or the name is not changed
 	 */
-	void save(User user, @Nullable String oldName);
+	void update(User user, @Nullable String oldName);
 	
 	void replicate(User user);
 	
 	void delete(User user);
+	
+	void delete(Collection<User> users);
+	
+	void useInternalAuthentication(Collection<User> users);
+	
+	void useExternalAuthentication(Collection<User> users);
+
+	void setAsGuest(Collection<User> users, boolean guest);
 	
 	/**
 	 * Find root user in the system. 
@@ -74,7 +83,12 @@ public interface UserManager extends EntityManager<User> {
 	User findByFullName(String fullName);
 
 	@Nullable
-	User findByAccessToken(String accessToken);
+	User findByAccessToken(String accessTokenValue);
+	
+	@Nullable
+	User findByPasswordResetCode(String passwordResetCode);
+
+	String createTemporalAccessToken(Long userId, long secondsToExpire);
 	
 	@Nullable
 	User findByVerifiedEmailAddress(String emailAddress);
@@ -83,11 +97,13 @@ public interface UserManager extends EntityManager<User> {
 	
 	int count(String term);
 	
+	int countNonGuests();
+	
 	void onRenameSsoConnector(String oldName, String newName);
 	 
 	void onDeleteSsoConnector(String name);
 
-	Collection<User> getAuthorizedUsers(Project project, Permission permission);
+	Collection<User> getAuthorizedUsers(Project project, BasePermission permission);
 	
 	UserCache cloneCache();
 	

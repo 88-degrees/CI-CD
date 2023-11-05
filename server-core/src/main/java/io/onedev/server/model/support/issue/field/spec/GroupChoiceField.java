@@ -6,13 +6,16 @@ import java.util.Map;
 import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 
-import io.onedev.server.model.support.inputspec.groupchoiceinput.GroupChoiceInput;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.choiceprovider.AllGroups;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.choiceprovider.ChoiceProvider;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.defaultvalueprovider.DefaultValueProvider;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.defaultvalueprovider.SpecifiedDefaultValue;
+import io.onedev.server.OneDev;
+import io.onedev.server.SubscriptionManager;
+import io.onedev.server.annotation.ShowCondition;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.GroupChoiceInput;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.choiceprovider.AllGroups;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.choiceprovider.ChoiceProvider;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.defaultvalueprovider.DefaultValueProvider;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.defaultvalueprovider.SpecifiedDefaultValue;
 import io.onedev.server.util.usage.Usage;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.annotation.Editable;
 
 @Editable(order=160, name=FieldSpec.GROUP)
 public class GroupChoiceField extends FieldSpec {
@@ -22,6 +25,8 @@ public class GroupChoiceField extends FieldSpec {
 	private ChoiceProvider choiceProvider = new AllGroups();
 
 	private DefaultValueProvider defaultValueProvider;
+	
+	private boolean editEstimatedTime = true;
 	
 	@Editable(order=1000, name="Available Choices")
 	@NotNull(message="may not be empty")
@@ -49,6 +54,21 @@ public class GroupChoiceField extends FieldSpec {
 		return GroupChoiceInput.getPossibleValues(choiceProvider);
 	}
 
+	@Editable(order=1200, name="Can Edit Estimated Time", description = "If ticked, group indicated by this " +
+			"field will be able to edit estimated time of corresponding issues if time tracking is enabled")
+	@ShowCondition("isSubscriptionActive")
+	public boolean isEditEstimatedTime() {
+		return editEstimatedTime;
+	}
+
+	public void setEditEstimatedTime(boolean editEstimatedTime) {
+		this.editEstimatedTime = editEstimatedTime;
+	}
+
+	private static boolean isSubscriptionActive() {
+		return OneDev.getInstance(SubscriptionManager.class).isSubscriptionActive();
+	}
+	
 	@Override
 	public String getPropertyDef(Map<String, Integer> indexes) {
 		return GroupChoiceInput.getPropertyDef(this, indexes, choiceProvider, defaultValueProvider);
@@ -70,7 +90,8 @@ public class GroupChoiceField extends FieldSpec {
 		return GroupChoiceInput.convertToStrings(value);
 	}
 
-	public void onRenameGroup(DefaultValueProvider defaultValueProvider, String oldName, String newName) {
+	@Override
+	public void onRenameGroup(String oldName, String newName) {
 		if (defaultValueProvider instanceof SpecifiedDefaultValue) {
 			SpecifiedDefaultValue specifiedDefaultValue = (SpecifiedDefaultValue) defaultValueProvider;
 			if (specifiedDefaultValue.getValue().equals(oldName))
@@ -78,13 +99,15 @@ public class GroupChoiceField extends FieldSpec {
 		}
 	}
 
-	public Usage onDeleteGroup(DefaultValueProvider defaultValueProvider, String groupName) {
+	@Override
+	public Usage onDeleteGroup(String groupName) {
+		Usage usage = new Usage();
 		if (defaultValueProvider instanceof SpecifiedDefaultValue) {
 			SpecifiedDefaultValue specifiedDefaultValue = (SpecifiedDefaultValue) defaultValueProvider;
 			if (specifiedDefaultValue.getValue().equals(groupName))
-				defaultValueProvider = null;
+				usage.add("default value");
 		}
-		return new Usage();
+		return usage.prefix("custom fields: " + getName());
 	}
 
 	@Override

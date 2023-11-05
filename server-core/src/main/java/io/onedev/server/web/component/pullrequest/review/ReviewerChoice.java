@@ -1,5 +1,6 @@
 package io.onedev.server.web.component.pullrequest.review;
 
+import io.onedev.server.web.page.base.BasePage;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.markup.head.IHeaderResponse;
 import org.apache.wicket.markup.head.JavaScriptHeaderItem;
@@ -55,14 +56,19 @@ public abstract class ReviewerChoice extends SelectToAddChoice<User> {
 			review = new PullRequestReview();
 			review.setRequest(getPullRequest());
 			review.setUser(user);
+			getPullRequest().getReviews().add(review);
 		} else {
 			review.setStatus(Status.PENDING);
 		}
 		
-		if (!getPullRequest().isNew()) 
-			OneDev.getInstance(PullRequestReviewManager.class).save(review);
-		else
-			getPullRequest().getReviews().add(review);
+		if (!getPullRequest().isNew()) {
+			if (review.isNew())
+				OneDev.getInstance(PullRequestReviewManager.class).create(review);
+			else
+				OneDev.getInstance(PullRequestReviewManager.class).update(review);
+			((BasePage)getPage()).notifyObservableChange(target,
+					PullRequest.getChangeObservable(getPullRequest().getId()));
+		}
 	};
 	
 }

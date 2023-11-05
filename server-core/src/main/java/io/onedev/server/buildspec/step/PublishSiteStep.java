@@ -3,7 +3,6 @@ package io.onedev.server.buildspec.step;
 import java.io.File;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 
 import javax.validation.constraints.NotEmpty;
 
@@ -23,13 +22,12 @@ import io.onedev.server.job.JobContext;
 import io.onedev.server.job.JobManager;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.Project;
-import io.onedev.server.storage.StorageManager;
 import io.onedev.server.util.patternset.PatternSet;
-import io.onedev.server.util.validation.annotation.SafePath;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-import io.onedev.server.web.editable.annotation.Patterns;
-import io.onedev.server.web.editable.annotation.ProjectChoice;
+import io.onedev.server.annotation.SafePath;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
+import io.onedev.server.annotation.Patterns;
+import io.onedev.server.annotation.ProjectChoice;
 
 @Editable(order=1060, name="Publish Site", description="This step publishes specified files to be served as project web site. "
 		+ "Project web site can be accessed publicly via <code>http://&lt;onedev base url&gt;/path/to/project/~site</code>")
@@ -104,16 +102,13 @@ public class PublishSiteStep extends ServerSideStep {
 			} else {
 				project = build.getProject();
 			}
-			LockUtils.write(project.getSiteLockName(), new Callable<Void>() {
-
-				@Override
-				public Void call() throws Exception {
-					File projectSiteDir = OneDev.getInstance(StorageManager.class).getProjectSiteDir(project.getId());
-					FileUtils.cleanDir(projectSiteDir);
-					FileUtils.copyDirectory(inputDir, projectSiteDir);
-					return null;
-				}
-
+			var projectId = project.getId();
+			LockUtils.write(project.getSiteLockName(), () -> {
+				File projectSiteDir = OneDev.getInstance(ProjectManager.class).getSiteDir(projectId);
+				FileUtils.cleanDir(projectSiteDir);
+				FileUtils.copyDirectory(inputDir, projectSiteDir);
+				OneDev.getInstance(ProjectManager.class).directoryModified(projectId, projectSiteDir);
+				return null;
 			});
 			String serverUrl = OneDev.getInstance(SettingManager.class).getSystemSetting().getServerUrl();
 			jobLogger.log("Site published as " 

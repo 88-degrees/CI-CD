@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import io.onedev.server.web.page.base.BasePage;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.markup.html.AjaxLink;
 import org.apache.wicket.ajax.markup.html.form.AjaxButton;
@@ -16,8 +17,8 @@ import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.IssueChangeManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.Issue;
-import io.onedev.server.model.support.inputspec.InputContext;
-import io.onedev.server.model.support.inputspec.InputSpec;
+import io.onedev.server.buildspecmodel.inputspec.InputContext;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.TransitionSpec;
 import io.onedev.server.model.support.issue.field.FieldUtils;
 import io.onedev.server.model.support.issue.transitiontrigger.PressButtonTrigger;
@@ -63,6 +64,7 @@ abstract class StateTransitionPanel extends Panel implements InputContext {
 						editor.newComponentContext(), fieldBean, editableFields);
 				OneDev.getInstance(IssueChangeManager.class).changeState(getIssue(), 
 						getTransition().getToState(), fieldValues, getTransition().getRemoveFields(), null);
+				((BasePage)getPage()).notifyObservablesChange(target, getIssue().getChangeObservables(true));
 				onSaved(target);
 			}
 

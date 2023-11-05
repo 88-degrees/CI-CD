@@ -3,8 +3,8 @@ package io.onedev.server.model.support.issue.field.spec;
 import java.util.List;
 import java.util.Map;
 
-import io.onedev.server.model.support.inputspec.SecretInput;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.buildspecmodel.inputspec.SecretInput;
+import io.onedev.server.annotation.Editable;
 
 @Editable(order=500, name=FieldSpec.SECRET)
 public class SecretField extends FieldSpec {

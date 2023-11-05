@@ -1,37 +1,6 @@
 package io.onedev.server.web.page.project.compare;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import javax.annotation.Nullable;
-
-import org.apache.wicket.Component;
-import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.ajax.form.OnChangeAjaxBehavior;
-import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.markup.head.CssHeaderItem;
-import org.apache.wicket.markup.head.IHeaderResponse;
-import org.apache.wicket.markup.html.WebMarkupContainer;
-import org.apache.wicket.markup.html.basic.Label;
-import org.apache.wicket.markup.html.form.CheckBox;
-import org.apache.wicket.markup.html.link.BookmarkablePageLink;
-import org.apache.wicket.markup.html.link.Link;
-import org.apache.wicket.model.AbstractReadOnlyModel;
-import org.apache.wicket.model.IModel;
-import org.apache.wicket.model.LoadableDetachableModel;
-import org.apache.wicket.model.Model;
-import org.apache.wicket.request.cycle.RequestCycle;
-import org.apache.wicket.request.mapper.parameter.PageParameters;
-import org.eclipse.jgit.lib.ObjectId;
-
 import com.google.common.collect.Lists;
-
 import io.onedev.commons.utils.PlanarRange;
 import io.onedev.server.OneDev;
 import io.onedev.server.codequality.CodeProblem;
@@ -42,13 +11,9 @@ import io.onedev.server.entitymanager.CodeCommentManager;
 import io.onedev.server.entitymanager.CodeCommentReplyManager;
 import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
 import io.onedev.server.entitymanager.PullRequestManager;
+import io.onedev.server.git.GitUtils;
 import io.onedev.server.git.service.GitService;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.CodeCommentReply;
-import io.onedev.server.model.CodeCommentStatusChange;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
+import io.onedev.server.model.*;
 import io.onedev.server.model.support.CompareContext;
 import io.onedev.server.model.support.Mark;
 import io.onedev.server.search.commit.CommitQuery;
@@ -73,6 +38,28 @@ import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPa
 import io.onedev.server.web.page.project.pullrequests.detail.activities.PullRequestActivitiesPage;
 import io.onedev.server.web.util.EditParamsAware;
 import io.onedev.server.web.util.RevisionDiff;
+import org.apache.wicket.Component;
+import org.apache.wicket.ajax.AjaxRequestTarget;
+import org.apache.wicket.ajax.form.OnChangeAjaxBehavior;
+import org.apache.wicket.behavior.AttributeAppender;
+import org.apache.wicket.markup.head.CssHeaderItem;
+import org.apache.wicket.markup.head.IHeaderResponse;
+import org.apache.wicket.markup.html.WebMarkupContainer;
+import org.apache.wicket.markup.html.basic.Label;
+import org.apache.wicket.markup.html.form.CheckBox;
+import org.apache.wicket.markup.html.link.BookmarkablePageLink;
+import org.apache.wicket.markup.html.link.Link;
+import org.apache.wicket.model.AbstractReadOnlyModel;
+import org.apache.wicket.model.IModel;
+import org.apache.wicket.model.LoadableDetachableModel;
+import org.apache.wicket.model.Model;
+import org.apache.wicket.request.cycle.RequestCycle;
+import org.apache.wicket.request.mapper.parameter.PageParameters;
+import org.eclipse.jgit.lib.ObjectId;
+
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.*;
 
 @SuppressWarnings("serial")
 public class RevisionComparePage extends ProjectPage implements RevisionDiff.AnnotationSupport, EditParamsAware {
@@ -192,12 +179,16 @@ public class RevisionComparePage extends ProjectPage implements RevisionDiff.Ann
 
 	public RevisionComparePage(PageParameters params) {
 		super(params);
+
+		var defaultRevision = getProject().getDefaultBranch();
+		if (defaultRevision != null && getProject().getTagRef(defaultRevision) != null)
+			defaultRevision = GitUtils.branch2ref(defaultRevision);
 		
 		String str = params.get(PARAM_LEFT).toString();
 		if (str != null) 
 			state.leftSide = new ProjectAndRevision(str);
-		else if (getProject().getDefaultBranch() != null) 
-			state.leftSide = new ProjectAndRevision(getProject(), getProject().getDefaultBranch());
+		else if (defaultRevision != null) 
+			state.leftSide = new ProjectAndRevision(getProject(), defaultRevision);
 		else
 			state.leftSide = new ProjectAndRevision(getProject(), null);
 		
@@ -207,8 +198,8 @@ public class RevisionComparePage extends ProjectPage implements RevisionDiff.Ann
 		str = params.get(PARAM_RIGHT).toString();
 		if (str != null) 
 			state.rightSide = new ProjectAndRevision(str);
-		else if (getProject().getDefaultBranch() != null) 
-			state.rightSide = new ProjectAndRevision(getProject(), getProject().getDefaultBranch());
+		else if (defaultRevision != null) 
+			state.rightSide = new ProjectAndRevision(getProject(), defaultRevision);
 		else
 			state.rightSide = new ProjectAndRevision(getProject(), null);
 		
@@ -422,6 +413,7 @@ public class RevisionComparePage extends ProjectPage implements RevisionDiff.Ann
 				
 				if (mergeBase != null 
 						&& getLoginUser() != null 
+						&& !getLoginUser().isEffectiveGuest()
 						&& state.leftSide.getBranch()!=null 
 						&& state.rightSide.getBranch()!=null) {
 					PullRequest request = requestModel.getObject();
@@ -860,17 +852,23 @@ public class RevisionComparePage extends ProjectPage implements RevisionDiff.Ann
 
 	@Override
 	public void onSaveComment(CodeComment comment) {
-		OneDev.getInstance(CodeCommentManager.class).save(comment);
+		if (comment.isNew())
+			OneDev.getInstance(CodeCommentManager.class).create(comment);
+		else
+			OneDev.getInstance(CodeCommentManager.class).update(comment);			
 	}
 	
 	@Override
 	public void onSaveCommentReply(CodeCommentReply reply) {
-		OneDev.getInstance(CodeCommentReplyManager.class).save(reply);
+		if (reply.isNew())
+			OneDev.getInstance(CodeCommentReplyManager.class).create(reply);
+		else
+			OneDev.getInstance(CodeCommentReplyManager.class).update(reply);			
 	}
 
 	@Override
 	public void onSaveCommentStatusChange(CodeCommentStatusChange change, String note) {
-		OneDev.getInstance(CodeCommentStatusChangeManager.class).save(change, note);
+		OneDev.getInstance(CodeCommentStatusChangeManager.class).create(change, note);
 	}
 	
 	@Override

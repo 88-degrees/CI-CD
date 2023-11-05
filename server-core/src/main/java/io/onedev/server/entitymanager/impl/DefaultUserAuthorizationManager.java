@@ -7,6 +7,7 @@ import java.util.List;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
+import com.google.common.base.Preconditions;
 import io.onedev.server.entitymanager.UserAuthorizationManager;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
@@ -34,7 +35,7 @@ public class DefaultUserAuthorizationManager extends BaseEntityManager<UserAutho
 				if (newAuthorization.getProject().equals(authorization.getProject())) {
 					found = true;
 					authorization.setRole(newAuthorization.getRole());
-					save(authorization);
+					dao.persist(authorization);
 				}
 			}
 			if (!found) {
@@ -53,7 +54,7 @@ public class DefaultUserAuthorizationManager extends BaseEntityManager<UserAutho
 			}
 			if (!found) {
 				user.getProjectAuthorizations().add(newAuthorization);
-				save(newAuthorization);
+				dao.persist(newAuthorization);
 			}
 		}
 	}
@@ -78,7 +79,7 @@ public class DefaultUserAuthorizationManager extends BaseEntityManager<UserAutho
 				if (newAuthorization.getUser().equals(authorization.getUser())) {
 					found = true;
 					authorization.setRole(newAuthorization.getRole());
-					save(authorization);
+					dao.persist(authorization);
 				}
 			}
 			if (!found) {
@@ -97,9 +98,23 @@ public class DefaultUserAuthorizationManager extends BaseEntityManager<UserAutho
 			}
 			if (!found) {
 				project.getUserAuthorizations().add(newAuthorization);
-				save(newAuthorization);
+				dao.persist(newAuthorization);
 			}
 		}
+	}
+
+	@Transactional
+	@Override
+	public void create(UserAuthorization authorization) {
+		Preconditions.checkState(authorization.isNew());
+		dao.persist(authorization);
+	}
+
+	@Transactional
+	@Override
+	public void update(UserAuthorization authorization) {
+		Preconditions.checkState(!authorization.isNew());
+		dao.persist(authorization);
 	}
 	
 }

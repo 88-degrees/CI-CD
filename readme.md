@@ -1,9 +1,9 @@
 ## Git Server with Kanban and CI/CD
 
 <h2>
-<a href="https://docs.onedev.io/">Quickstart</a> 
+<a href="https://docs.onedev.io">Quickstart</a> 
 | <a href="https://docs.onedev.io/category/installation-guide">Installation Guide</a> 
-| <a href="https://docs.onedev.io/concepts/">All Documentation</a> 
+| <a href="https://docs.onedev.io">All Documentation</a> 
 </h2>
 
 <p style="margin-bottom: 20px;">
@@ -11,11 +11,13 @@
 
 ### Out-of-box Symbol Search and Navigation
 
-Of course IDE is good at doing this, but often we need to search in old commits (investigate issues in release versions etc), and switching commits in IDE can be troublesome and slow. 
+Just push code and you will be able to perform symbol search and navigation in arbitrary commit without any extra setup. You can also jump to symbol definition in diff while reviewing commits or pull requests. 
 
 It works by analyzing source code with [**ANTLR**](https://www.antlr.org/), extracting symbols for storage incrementally, fast and space efficient. Now supports Java, JavaScript, C, C++, CSharp, Go, PHP, Python, CSS, SCSS, LESS and R. GitHub adds this feature several years ago, but seems that it only works for main branch, and GitLab has to configure CI job to generate and upload LSIF which is troublesome and can occupy considerable space if you do it for each commit.
 
 You can also jump to symbol definition in diff while reviewing commits or pull requests.
+
+It works by analyzing source code with ANTLR, extracting symbols for storage incrementally, fast and space efficient. Supports Java, JavaScript, C, C++, CSharp, Go, PHP, Python, CSS, SCSS, LESS and R. 
 
 > **Demo site: [OneDev](https://code.onedev.io/)**
 
@@ -66,7 +68,7 @@ Service desk allows your users to submit tickets via email without the need to h
 
 ![service-desk.png](doc/images/service-desk.png)
 
-### Powerful and Intuitive Query Language
+### A Powerful and Intuitive Query Language
 
 Thanks to ANTLR again, OneDev ships sophisticated query languages for projects, commits, issues, builds, and pull requests, with intuitive auto-completions and hints. For instance, it enables our customers finding fixed issues between their running release and latest release, and enables us to find all commits submitted by someone touching specified modules, etc. 
 
@@ -74,7 +76,7 @@ Queries can be saved and subscribed, so that you won't miss anything interested.
 
 ![query](doc/images/query.gif)
 
-### Full-fledge CI/CD Engine without Writing Yaml
+### A Full-fledge CI/CD Engine without Writing Yaml
 
 OneDev ships with GUI to generate CI/CD Yaml. No need to google around for Yaml grammars. A one-liner docker command to start OneDev server and you have a local CI/CD runner automatically. Concerns about server capability to run massive jobs? Another one-liner to connect self-updating agent from any machine. Want auto-scale CI/CD farm? A helm one-liner to deploy OneDev into k8s cluster. 
 
@@ -124,10 +126,47 @@ OneDev inspects git history of main branch to calculate trend of source lines of
 
 ## Project Hierarchy to Facilitate Setting Inheritance
 
-Organization is ideal for public service. However for self-hosted internal use, we feel that a hierarchical structure is more practical to organize projects. Child projects can inherit settings from parent project and can selectively override some of them if necessary. This reduces a lot of overhead to manage a lot of projects in the company.
+Organization is ideal for public service. However, for self-hosted internal use, we feel that a hierarchical structure is more practical to organize projects. Child projects can inherit settings from parent project and can selectively override some of them if necessary. This reduces a lot of overhead to manage a lot of projects in the company.
+
+## Effortless High Availability and Scalability (Enterprise Edition)
+
+Just connect multiple OneDev instances to same database, and you will get a cluster to distribute project load to multiple 
+servers, as well as the ability to sync projects with its replicas in real time. If one server goes down, project replicas 
+on other servers will become active immediately without data loss and service interruption. 
+
+![replication](doc/images/replication.png)
+
+## Customizable Dashboard (Enterprise Edition)
+
+Arrange gadgets in custom dashboard to get important information at a glance. Share dashboard with other users or groups, 
+or make it public for everyone. 
+
+![dashboard](doc/images/dashboard.png)
+
+## Time Tracking and Reporting (Enterprise Edition)
+
+Track issue, milestone and project progress with estimated time and spent time. Log works directly, 
+or start stopwatch while working. Aggregate estimate/spent time from subtasks to parent task 
+automatically. Generate timesheets for work statistics and billing.
+
+![timetrack](doc/images/timetrack.png)
+
+## Cross Project Fast Code Search (Enterprise Edition)
+
+Cross project fast code search to find information scattered in multiple projects. Support to search by symbol and regular
+expression. Works out of box without extra setup. 
+
+![xsearch](doc/images/xcode-search.png)
+
+## Web Terminal to Diagnose CI/CD Job (Enterprise Edition) 
+
+A web terminal to access environment of running CI/CD job. Used together with pause instruction, one can check 
+live environment of the job to help diagnostics, and resume the job afterwards.   
+
+![webterminal](doc/images/web-terminal.gif)
 
 ## Fast and Reliable with Moderate Resource Usage
 
-OneDev is carefully designed with performance in mind. With a 2 core 2GB box, you will get all features above for medium sized projects. 
+OneDev is carefully designed with performance in mind. With a 2 core 2GB box, you will get all features above for medium-sized projects. 
 It has been intensively used for more than 5 years, with battle-proven reliability. Fixing bugs is our highest priority, and there is 
 normally few to no known bugs in the wild.

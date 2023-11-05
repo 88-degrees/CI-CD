@@ -19,8 +19,6 @@ import org.apache.wicket.markup.html.form.Form;
 import org.apache.wicket.markup.html.link.BookmarkablePageLink;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 
-import java.util.UUID;
-
 @SuppressWarnings("serial")
 public class GitPackConfigPage extends ProjectSettingPage {
 
@@ -43,13 +41,13 @@ public class GitPackConfigPage extends ProjectSettingPage {
 				getProject().setGitPackConfig(bean);
 				var projectManager = OneDev.getInstance(ProjectManager.class);
 				var clusterManager = OneDev.getInstance(ClusterManager.class);
-				projectManager.save(getProject());
+				projectManager.update(getProject());
 
 				Long projectId = getProject().getId();
 				GitPackConfig gitPackConfig = getProject().getGitPackConfig();
-				UUID storageServerUUID = projectManager.getStorageServerUUID(projectId, false);
-				if (storageServerUUID != null) {
-					clusterManager.runOnServer(storageServerUUID, new ClusterTask<Void>() {
+				String activeServer = projectManager.getActiveServer(projectId, false);
+				if (activeServer != null) {
+					clusterManager.runOnServer(activeServer, new ClusterTask<Void>() {
 
 						@Override
 						public Void call() throws Exception {

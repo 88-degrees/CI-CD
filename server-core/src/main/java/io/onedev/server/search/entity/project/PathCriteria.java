@@ -1,9 +1,6 @@
 package io.onedev.server.search.entity.project;
 
-import javax.persistence.criteria.CriteriaBuilder;
-import javax.persistence.criteria.CriteriaQuery;
-import javax.persistence.criteria.From;
-import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.*;
 
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.ProjectManager;

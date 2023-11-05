@@ -2,31 +2,30 @@ package io.onedev.server;
 
 import com.google.inject.Provider;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.cp.IAtomicLong;
+import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.loader.AbstractPlugin;
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.commons.loader.ManagedSerializedForm;
 import io.onedev.commons.utils.FileUtils;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.commons.utils.command.LineConsumer;
+import io.onedev.k8shelper.KubernetesHelper;
 import io.onedev.server.cluster.ClusterManager;
-import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.data.DataManager;
 import io.onedev.server.event.ListenerRegistry;
 import io.onedev.server.event.system.SystemStarted;
 import io.onedev.server.event.system.SystemStarting;
 import io.onedev.server.event.system.SystemStopped;
 import io.onedev.server.event.system.SystemStopping;
-import io.onedev.server.exception.SystemNotReadyException;
+import io.onedev.server.exception.ServerNotReadyException;
 import io.onedev.server.jetty.JettyLauncher;
-import io.onedev.server.persistence.*;
+import io.onedev.server.persistence.IdManager;
+import io.onedev.server.persistence.SessionFactoryManager;
+import io.onedev.server.persistence.SessionManager;
 import io.onedev.server.persistence.annotation.Sessional;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.UrlUtils;
 import io.onedev.server.util.init.InitStage;
 import io.onedev.server.util.init.ManualConfig;
-import io.onedev.server.util.schedule.TaskScheduler;
-import org.apache.commons.lang.math.RandomUtils;
-import org.apache.commons.lang3.StringUtils;
+import io.onedev.server.taskschedule.TaskScheduler;
 import org.apache.wicket.request.Url;
 import org.eclipse.jgit.util.FS.FileStoreAttributes;
 import org.slf4j.Logger;
@@ -34,23 +33,27 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
-import java.io.File;
-import java.io.IOException;
-import java.io.ObjectStreamException;
-import java.io.Serializable;
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.ClientBuilder;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.Response;
+import java.io.*;
+import java.lang.reflect.Method;
 import java.net.ServerSocket;
-import java.nio.charset.Charset;
-import java.sql.Connection;
+import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.Date;
 import java.util.List;
-import java.util.Properties;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicReference;
 
-public class OneDev extends AbstractPlugin implements Serializable {
+import static io.onedev.k8shelper.KubernetesHelper.BEARER;
+import static io.onedev.server.persistence.PersistenceUtils.callWithTransaction;
+import static javax.ws.rs.core.HttpHeaders.AUTHORIZATION;
 
+public class OneDev extends AbstractPlugin implements Serializable, Runnable {
+	
 	private static final Logger logger = LoggerFactory.getLogger(OneDev.class);
 	
 	private final Provider<JettyLauncher> jettyLauncherProvider;
@@ -59,8 +62,6 @@ public class OneDev extends AbstractPlugin implements Serializable {
 	
 	private final DataManager dataManager;
 	
-	private final SettingManager settingManager;
-			
 	private final Provider<ServerConfig> serverConfigProvider;
 	
 	private final ListenerRegistry listenerRegistry;
@@ -79,14 +80,17 @@ public class OneDev extends AbstractPlugin implements Serializable {
 	
 	private volatile InitStage initStage;
 	
+	private Class<?> wrapperManagerClass;	
+	
+	private volatile Thread thread;
+	
 	// Some are injected via provider as instantiation might encounter problem during upgrade 
 	@Inject
-	public OneDev(Provider<JettyLauncher> jettyLauncherProvider, TaskScheduler taskScheduler, 
-			SessionManager sessionManager, Provider<ServerConfig> serverConfigProvider, 
-			DataManager dataManager, ExecutorService executorService, 
-			SettingManager settingManager, ListenerRegistry listenerRegistry, 
-			ClusterManager clusterManager, IdManager idManager, 
-			SessionFactoryManager sessionFactoryManager) {
+	public OneDev(Provider<JettyLauncher> jettyLauncherProvider, TaskScheduler taskScheduler,
+                  SessionManager sessionManager, Provider<ServerConfig> serverConfigProvider,
+                  DataManager dataManager, ExecutorService executorService,
+                  ListenerRegistry listenerRegistry, ClusterManager clusterManager,
+                  IdManager idManager, SessionFactoryManager sessionFactoryManager) {
 		this.jettyLauncherProvider = jettyLauncherProvider;
 		this.taskScheduler = taskScheduler;
 		this.sessionManager = sessionManager;
@@ -96,94 +100,179 @@ public class OneDev extends AbstractPlugin implements Serializable {
 		this.listenerRegistry = listenerRegistry;
 		this.clusterManager = clusterManager;
 		this.idManager = idManager;
-		this.settingManager = settingManager;
 		this.sessionFactoryManager = sessionFactoryManager;
+		
+		try {
+			wrapperManagerClass = Class.forName("org.tanukisoftware.wrapper.WrapperManager");
+		} catch (ClassNotFoundException e) {
+		}
+		thread = new Thread(this);
 
 		initStage = new InitStage("Server is Starting...");
 	}
 	
 	@Override
 	public void start() {
+		var maintenanceFile = getMaintenanceFile(Bootstrap.installDir);
+		while (maintenanceFile.exists()) {
+			logger.info("Maintenance in progress, waiting...");
+			try {
+				Thread.sleep(5000);
+			} catch (InterruptedException e) {
+				throw new RuntimeException(e);
+			}
+		}
+		
 		SecurityUtils.bindAsSystem();
 		
 		System.setProperty("hsqldb.reconfig_logging", "false");
 		System.setProperty("hsqldb.method_class_names", "java.lang.Math");
-		
-		jettyLauncherProvider.get().start();
-		taskScheduler.start();
-		
+
+		clusterManager.start();
 		sessionFactoryManager.start();
 		
-		dataManager.callWithConnection(new ConnectionCallable<Void>() {
-
-			@Override
-			public Void call(Connection conn) {
-				while (true) {
-					try {
-						dataManager.populateDatabase(conn);
-						break;
-					} catch (Exception e) {
-						logger.warn("Error initializing data, will retry later...", e);
-						try {
-							Thread.sleep((RandomUtils.nextInt(5)+1)*1000L);
-						} catch (InterruptedException e2) {
-						}
-					}
-				}
-				return null;
-			}
-			
+		var databasePopulated = clusterManager.getHazelcastInstance().getCPSubsystem().getAtomicLong("databasePopulated");
+		// Do not use database lock as schema update will commit transaction immediately 
+		// in MySQL 
+		clusterManager.init(databasePopulated, () -> {
+			try (var conn = dataManager.openConnection()) {
+				callWithTransaction(conn, () -> {
+					dataManager.populateDatabase(conn);
+					return null;
+				});
+			} catch (SQLException e) {
+				throw new RuntimeException(e);
+			};
+			return 1L;
 		});
 		
-		clusterManager.start();
 		idManager.init();
 
-		// restart session factory to pick up Hazelcast 2nd level cache 
-		sessionFactoryManager.stop();
-		sessionFactoryManager.start();
-		
-		settingManager.init();
+		sessionManager.run(() -> listenerRegistry.post(new SystemStarting()));
+		jettyLauncherProvider.get().start();
 
-		HazelcastInstance hazelcastInstance = clusterManager.getHazelcastInstance();
-		IAtomicLong dataChecked = hazelcastInstance.getCPSubsystem().getAtomicLong("dataInited");
-		clusterManager.init(dataChecked, new Callable<Long>() {
-
-			@Override
-			public Long call() throws Exception {
-				List<ManualConfig> manualConfigs = dataManager.checkData();
-				if (!manualConfigs.isEmpty()) {
-					if (getIngressUrl() != null)
-						logger.warn("Please set up the server at " + getIngressUrl());
-					else
-						logger.warn("Please set up the server at " + guessServerUrl());
-					initStage = new InitStage("Server Setup", manualConfigs);
-					
-					initStage.waitForFinish();
+		var manualConfigs = checkData();
+		if (!manualConfigs.isEmpty()) {
+			if (getIngressUrl() != null)
+				logger.warn("Please set up the server at " + getIngressUrl());
+			else
+				logger.warn("Please set up the server at " + guessServerUrl());
+			initStage = new InitStage("Server Setup", manualConfigs);
+			var localServer = clusterManager.getLocalServerAddress();
+			while (true) {
+				if (maintenanceFile.exists()) {
+					logger.info("Maintenance requested, trying to stop all servers...");
+					clusterManager.submitToAllServers(() -> {
+						if (!localServer.equals(clusterManager.getLocalServerAddress()))
+							restart();
+						return null;
+					});
+					while (thread != null && clusterManager.getServerAddresses().size() != 1) {
+						try {
+							Thread.sleep(1000);
+						} catch (InterruptedException ignored) {
+						}
+					}
+					restart();
+					return;
 				}
-				return 1L;
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+					throw new RuntimeException(e);
+				}
+				if (thread == null)
+					return;
+				
+				manualConfigs = checkData();
+				if (manualConfigs.isEmpty()) {
+					initStage = new InitStage("Please wait...");
+					break;
+				} else {
+					initStage = new InitStage("Server Setup", manualConfigs);
+				}
 			}
-			
-		});
+		}
 		
-		sessionManager.openSession();
-		try {
-			listenerRegistry.post(new SystemStarting());
-		} finally {
-			sessionManager.closeSession();
+		var leadServer = clusterManager.getLeaderServerAddress();
+		if (!leadServer.equals(clusterManager.getLocalServerAddress())) {
+			logger.info("Syncing assets...");
+			Client client = ClientBuilder.newClient();
+			try {
+				String fromServerUrl = clusterManager.getServerUrl(leadServer);
+				WebTarget target = client.target(fromServerUrl).path("/~api/cluster/assets");
+				Invocation.Builder builder = target.request();
+				builder.header(AUTHORIZATION,
+						BEARER + " " + clusterManager.getCredential());
+
+				try (Response response = builder.get()) {
+					KubernetesHelper.checkStatus(response);
+					try (InputStream is = response.readEntity(InputStream.class)) {							
+						FileUtils.untar(is, getAssetsDir(), false);
+					} catch (IOException e) {
+						throw new RuntimeException(e);
+					}
+				}
+			} finally {
+				client.close();
+			}
 		}
 		
 		// workaround for issue https://bugs.eclipse.org/bugs/show_bug.cgi?id=566170
 		FileStoreAttributes.setBackground(true);
+		taskScheduler.start();
 	}
 	
 	@Sessional
 	@Override
 	public void postStart() {
+		if (thread == null) 
+			return;
 		SecurityUtils.bindAsSystem();
-		
-		listenerRegistry.post(new SystemStarted());
-        logger.info("Server is ready at " + guessServerUrl() + ".");
 		initStage = null;
+		listenerRegistry.post(new SystemStarted());
+		clusterManager.postStart();
+		thread.start();
+		logger.info("Server is ready at " + guessServerUrl());
+	}
+
+	@Override
+	public void preStop() {
+		thread = null;
+		clusterManager.preStop();
+		SecurityUtils.bindAsSystem();
+		try {
+			sessionManager.run(() -> listenerRegistry.post(new SystemStopping()));
+		} catch (ServerNotReadyException ignore) {
+		}
+	}
+	
+	private List<ManualConfig> checkData() {
+		HazelcastInstance hazelcastInstance = clusterManager.getHazelcastInstance();
+		var lock = hazelcastInstance.getCPSubsystem().getLock("checkData");
+		lock.lock();
+		try {
+			return dataManager.checkData();
+		} finally {
+			lock.unlock();
+		}
+	}
+
+	@Override
+	public void stop() {
+		SecurityUtils.bindAsSystem();
+
+		try {
+			taskScheduler.stop();
+
+			jettyLauncherProvider.get().stop();
+			sessionManager.run(() -> listenerRegistry.post(new SystemStopped()));
+
+			sessionFactoryManager.stop();
+			clusterManager.stop();
+			executorService.shutdown();
+		} catch (ServerNotReadyException ignore) {
+		}
 	}
 
 	@Nullable
@@ -205,47 +294,18 @@ public class OneDev extends AbstractPlugin implements Serializable {
 	}
 	
 	public String guessServerUrl() {
-	    Url serverUrl = null;
-	    
-		String k8sService = getK8sService();
-		if (k8sService != null) { // we are running inside Kubernetes  
-			Commandline kubectl = new Commandline("kubectl");
-			kubectl.addArgs("get", "service", k8sService, "-o", 
-					"jsonpath={.status.loadBalancer.ingress[0].ip}");
-			AtomicReference<String> externalIpRef = new AtomicReference<>(null);
-			kubectl.execute(new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					if (StringUtils.isNotBlank(line))
-						externalIpRef.set(line);
-				}
-				
-			}, new LineConsumer() {
-
-				@Override
-				public void consume(String line) {
-					logger.warn(line);
-				}
-				
-			}).checkReturnCode();
-			
-			String externalIp = externalIpRef.get();
-			
-			if (externalIp != null) 
-				serverUrl = buildServerUrl(externalIp, "http", 80);
-		} 
-		
-		if (serverUrl == null) {
+		String serviceHost = System.getenv("ONEDEV_SERVICE_HOST");
+		if (serviceHost != null) {
+			return "http://" + serviceHost;
+		} else {
 			ServerConfig serverConfig = serverConfigProvider.get();
-            serverUrl = buildServerUrl("localhost", "http", serverConfig.getHttpPort());
+			var serverUrl = buildServerUrl("localhost", "http", serverConfig.getHttpPort());
+			return UrlUtils.toString(serverUrl);
 		}
-		
-		return UrlUtils.toString(serverUrl);
 	}
 	
 	private Url buildServerUrl(String host, String protocol, int port) {
-        Url serverUrl = new Url(Charset.forName("UTF8"));
+        Url serverUrl = new Url(StandardCharsets.UTF_8);
 
         serverUrl.setHost(host);
         serverUrl.setProtocol(protocol);
@@ -285,54 +345,13 @@ public class OneDev extends AbstractPlugin implements Serializable {
 		return bootDate;
 	}
 
-	@Override
-	public void preStop() {
-		SecurityUtils.bindAsSystem();
-		
-		try {
-			sessionManager.run(new Runnable() {
-				@Override
-				public void run() {
-					listenerRegistry.post(new SystemStopping());
-				}
-
-			});
-		} catch (SystemNotReadyException ignore) {
-		}
-	}
-
-	@Override
-	public void stop() {
-		SecurityUtils.bindAsSystem();
-
-		try {
-			sessionManager.run(new Runnable() {
-
-				@Override
-				public void run() {
-					listenerRegistry.post(new SystemStopped());
-				}
-
-			});
-
-			// stop cluster manager first as it depends on metadata of session factory
-			clusterManager.stop();
-			sessionFactoryManager.stop();
-			taskScheduler.stop();
-			executorService.shutdown();
-			jettyLauncherProvider.get().stop();
-		} catch (SystemNotReadyException ignore) {
-		}
-	}
-	
 	public Object writeReplace() throws ObjectStreamException {
 		return new ManagedSerializedForm(OneDev.class);
 	}	
 	
 	public static boolean isServerRunning(File installDir) {
-		Properties props = FileUtils.loadProperties(new File(installDir, "conf/server.properties"));
-		int sshPort = Integer.parseInt(props.get("ssh_port").toString());
-		try (ServerSocket serverSocket = new ServerSocket(sshPort)) {
+		var serverConfig = new ServerConfig(installDir);
+		try (ServerSocket ignored = new ServerSocket(serverConfig.getClusterPort())) {
 			return false;
 		} catch (IOException e) {
 			if (e.getMessage() != null && e.getMessage().contains("Address already in use"))
@@ -342,4 +361,58 @@ public class OneDev extends AbstractPlugin implements Serializable {
 		}		
 	}
 
+	public static File getIndexDir() {
+		File indexDir = new File(Bootstrap.getSiteDir(), "index");
+		FileUtils.createDir(indexDir);
+		return indexDir;
+	}
+	
+	public static File getAssetsDir() {
+		return new File(Bootstrap.getSiteDir(), "assets");
+	}
+	
+	public static File getMaintenanceFile(File installDir) {
+		return new File(installDir, "maintenance");
+	}
+	
+	private void restart() {
+		if (wrapperManagerClass != null) {
+			try {
+				Method method = wrapperManagerClass.getDeclaredMethod("restartAndReturn");
+				method.invoke(null, new Object[0]);
+			} catch (Exception e) {
+				logger.error("Error restarting server", e);
+			}
+		} else {
+			logger.warn("Restart request ignored as there is no wrapper manager available");
+		}
+	}
+
+	@Override
+	public void run() {
+		var localServer = clusterManager.getLocalServerAddress();
+		var maintenanceFile = getMaintenanceFile(Bootstrap.installDir);
+		while (thread != null) {
+			if (maintenanceFile.exists()) {
+				logger.info("Maintenance requested, trying to stop all servers...");
+				clusterManager.submitToAllServers(() -> {
+					if (!localServer.equals(clusterManager.getLocalServerAddress())) 
+						restart();
+					return null;
+				});
+				while (thread != null && clusterManager.getServerAddresses().size() != 1) {
+					try {
+						Thread.sleep(1000);
+					} catch (InterruptedException ignored) {
+					}
+				}
+				restart();
+				break;
+			} 
+			try {
+				Thread.sleep(1000);
+			} catch (InterruptedException ignored) {
+			}
+		}
+	}
 }

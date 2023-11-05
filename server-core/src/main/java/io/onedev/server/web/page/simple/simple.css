@@ -29,10 +29,12 @@
 	text-align: left !important;
 }
 .SimplePage .main .brand-logo {
-	color: var(--primary);
 	margin-bottom: 3rem;
 	width: 100px;
 	height: 100px;
+}
+.dark-mode.SimplePage .main .brand-logo {
+	color: white;
 }
 .SimplePage .main .title {
 	margin-bottom: 5rem;
@@ -97,6 +99,9 @@
 	right: 1.2rem;
 	top: 1rem;
 	background: var(--light);
+}
+.SimplePage.dark-mode .main .error-detail+.copy {
+	background: #323248;
 }
 
 .PageNotFoundErrorPage h3 {

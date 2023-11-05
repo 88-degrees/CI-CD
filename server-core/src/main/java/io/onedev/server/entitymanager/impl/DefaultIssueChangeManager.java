@@ -1,14 +1,45 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.*;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
+import com.google.common.base.Preconditions;
 import io.onedev.commons.utils.ExplicitException;
+import io.onedev.server.OneDev;
+import io.onedev.server.cluster.ClusterManager;
+import io.onedev.server.entitymanager.*;
 import io.onedev.server.entityreference.EntityReferenceManager;
+import io.onedev.server.event.Listen;
+import io.onedev.server.event.ListenerRegistry;
+import io.onedev.server.event.project.RefUpdated;
+import io.onedev.server.event.project.build.BuildFinished;
+import io.onedev.server.event.project.issue.IssueChanged;
+import io.onedev.server.event.project.pullrequest.PullRequestChanged;
+import io.onedev.server.event.project.pullrequest.PullRequestOpened;
+import io.onedev.server.event.system.SystemStarted;
+import io.onedev.server.event.system.SystemStopping;
+import io.onedev.server.git.GitUtils;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.issue.TransitionSpec;
 import io.onedev.server.model.support.issue.changedata.*;
+import io.onedev.server.model.support.issue.transitiontrigger.*;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestDiscardData;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestMergeData;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestReopenData;
+import io.onedev.server.persistence.annotation.Sessional;
+import io.onedev.server.persistence.annotation.Transactional;
+import io.onedev.server.persistence.dao.BaseEntityManager;
+import io.onedev.server.persistence.dao.Dao;
+import io.onedev.server.persistence.dao.EntityCriteria;
+import io.onedev.server.search.entity.issue.*;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.Input;
+import io.onedev.server.util.ProjectScope;
+import io.onedev.server.util.ProjectScopedCommit;
+import io.onedev.server.util.criteria.Criteria;
+import io.onedev.server.util.match.Matcher;
+import io.onedev.server.util.match.PathMatcher;
+import io.onedev.server.util.match.StringMatcher;
+import io.onedev.server.util.patternset.PatternSet;
+import io.onedev.server.taskschedule.SchedulableTask;
+import io.onedev.server.taskschedule.TaskScheduler;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -23,67 +54,10 @@ import org.quartz.ScheduleBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.onedev.server.OneDev;
-import io.onedev.server.cluster.ClusterManager;
-import io.onedev.server.entitymanager.IssueChangeManager;
-import io.onedev.server.entitymanager.IssueFieldManager;
-import io.onedev.server.entitymanager.IssueLinkManager;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.IssueScheduleManager;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.event.Listen;
-import io.onedev.server.event.ListenerRegistry;
-import io.onedev.server.event.project.RefUpdated;
-import io.onedev.server.event.project.build.BuildFinished;
-import io.onedev.server.event.project.issue.IssueChanged;
-import io.onedev.server.event.project.pullrequest.PullRequestChanged;
-import io.onedev.server.event.project.pullrequest.PullRequestOpened;
-import io.onedev.server.event.system.SystemStarted;
-import io.onedev.server.event.system.SystemStopping;
-import io.onedev.server.git.GitUtils;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueChange;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.IssueSchedule;
-import io.onedev.server.model.LinkSpec;
-import io.onedev.server.model.Milestone;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.support.issue.TransitionSpec;
-import io.onedev.server.model.support.issue.transitiontrigger.BranchUpdateTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.BuildSuccessfulTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.DiscardPullRequestTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.MergePullRequestTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.NoActivityTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.OpenPullRequestTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.PullRequestTrigger;
-import io.onedev.server.model.support.issue.transitiontrigger.StateTransitionTrigger;
-import io.onedev.server.model.support.pullrequest.changedata.PullRequestDiscardData;
-import io.onedev.server.model.support.pullrequest.changedata.PullRequestMergeData;
-import io.onedev.server.model.support.pullrequest.changedata.PullRequestReopenData;
-import io.onedev.server.persistence.annotation.Sessional;
-import io.onedev.server.persistence.annotation.Transactional;
-import io.onedev.server.persistence.dao.BaseEntityManager;
-import io.onedev.server.persistence.dao.Dao;
-import io.onedev.server.persistence.dao.EntityCriteria;
-import io.onedev.server.search.entity.issue.IssueQuery;
-import io.onedev.server.search.entity.issue.IssueQueryLexer;
-import io.onedev.server.search.entity.issue.IssueQueryParseOption;
-import io.onedev.server.search.entity.issue.StateCriteria;
-import io.onedev.server.search.entity.issue.LastActivityDateCriteria;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.Input;
-import io.onedev.server.util.ProjectScope;
-import io.onedev.server.util.ProjectScopedCommit;
-import io.onedev.server.util.criteria.Criteria;
-import io.onedev.server.util.match.Matcher;
-import io.onedev.server.util.match.PathMatcher;
-import io.onedev.server.util.match.StringMatcher;
-import io.onedev.server.util.patternset.PatternSet;
-import io.onedev.server.util.schedule.SchedulableTask;
-import io.onedev.server.util.schedule.TaskScheduler;
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.*;
 
 @Singleton
 public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
@@ -134,8 +108,10 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 	@Transactional
 	@Override
 	public void create(IssueChange change, @Nullable String note) {
+		Preconditions.checkState(change.isNew());
+		change.getIssue().getChanges().add(change);
 		dao.persist(change);
-		if (note != null) {
+		if (note != null && change.getUser() != null) {
 			IssueComment comment = new IssueComment();
 			comment.setContent(note);
 			comment.setUser(change.getUser());
@@ -164,6 +140,71 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 		}
 	}
 
+	@Transactional
+	@Override
+	public void changeOwnEstimatedTime(Issue issue, int ownEstimatedTime) {
+		int prevOwnEstimatedTime = issue.getOwnEstimatedTime();
+		if (ownEstimatedTime != prevOwnEstimatedTime) {
+			issue.setOwnEstimatedTime(ownEstimatedTime);
+
+			IssueChange change = new IssueChange();
+			change.setIssue(issue);
+			change.setUser(SecurityUtils.getUser());
+			change.setData(new IssueOwnEstimatedTimeChangeData(prevOwnEstimatedTime, issue.getOwnEstimatedTime()));
+			create(change, null);
+			dao.persist(issue);
+		}
+	}
+
+	@Transactional
+	@Override
+	public void changeOwnSpentTime(Issue issue, int ownSpentTime) {
+		int prevOwnSpentTime = issue.getOwnSpentTime();
+		if (ownSpentTime != prevOwnSpentTime) {
+			issue.setOwnSpentTime(ownSpentTime);
+
+			IssueChange change = new IssueChange();
+			change.setIssue(issue);
+			change.setUser(SecurityUtils.getUser());
+			change.setData(new IssueOwnSpentTimeChangeData(prevOwnSpentTime, issue.getOwnSpentTime()));
+			create(change, null);
+			dao.persist(issue);
+		}
+	}
+	
+	@Transactional
+	@Override
+	public void changeTotalEstimatedTime(Issue issue, int totalEstimatedTime) {
+		int prevTotalEstimatedTime = issue.getTotalEstimatedTime();
+		if (totalEstimatedTime != prevTotalEstimatedTime) {
+			issue.setTotalEstimatedTime(totalEstimatedTime);
+
+			IssueChange change = new IssueChange();
+			change.setIssue(issue);
+			change.setUser(SecurityUtils.getUser());
+			change.setData(new IssueTotalEstimatedTimeChangeData(prevTotalEstimatedTime, issue.getTotalEstimatedTime()));
+			create(change, null);
+			dao.persist(issue);
+		}
+	}
+
+	@Transactional
+	@Override
+	public void changeTotalSpentTime(Issue issue, int totalSpentTime) {
+		int prevTotalSpentTime = issue.getTotalSpentTime();
+		if (totalSpentTime != prevTotalSpentTime) {
+			issue.setTotalSpentTime(totalSpentTime);
+
+			IssueChange change = new IssueChange();
+			change.setIssue(issue);
+			change.setUser(SecurityUtils.getUser());
+			change.setData(new IssueTotalSpentTimeChangeData(prevTotalSpentTime, issue.getTotalSpentTime()));
+			create(change, null);
+			dao.persist(issue);
+		}
+	}
+	
+	@Transactional
 	@Override
 	public void changeDescription(Issue issue, @Nullable String description) {
 		String prevDescription = issue.getDescription();
@@ -171,7 +212,7 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 			if (description != null && description.length() > Issue.MAX_DESCRIPTION_LEN)
 				throw new ExplicitException("Description too long");
 			issue.setDescription(description);
-			entityReferenceManager.addReferenceChange(issue, description);
+			entityReferenceManager.addReferenceChange(SecurityUtils.getUser(), issue, description);
 
 			IssueChange change = new IssueChange();
 			change.setIssue(issue);
@@ -201,7 +242,7 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 	@Transactional
 	@Override
 	public void addSchedule(Issue issue, Milestone milestone) {
-		issueScheduleManager.save(issue.addSchedule(milestone));
+		issueScheduleManager.create(issue.addSchedule(milestone));
 		
 		IssueChange change = new IssueChange();
 		change.setIssue(issue);
@@ -371,7 +412,7 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 					ObjectId commitId = ObjectId.fromString(build.getCommitHash());
 					if ((trigger.getJobNames() == null || PatternSet.parse(trigger.getJobNames()).matches(new StringMatcher(), build.getJobName())) 
 							&& build.getStatus() == Build.Status.SUCCESSFUL
-							&& (branches == null || project.isCommitOnBranches(commitId, branches))) {
+							&& (branches == null || project.isCommitOnBranches(commitId, PatternSet.parse(branches)))) {
 						IssueQuery query = IssueQuery.parse(project, trigger.getIssueQuery(), option, true);
 						List<Criteria<Issue>> criterias = new ArrayList<>();
 						
@@ -479,7 +520,7 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 			try {
 				SecurityUtils.bindAsSystem();
 				ProjectScope projectScope = new ProjectScope(project, true, true);
-				Set<Long> fixedIssueIds = new HashSet<>();
+				Map<Long, RevCommit> fixedIssueIds = new HashMap<>();
 				Repository repository = projectManager.getRepository(projectId);
 				try (RevWalk revWalk = new RevWalk(repository)) {
 					revWalk.markStart(revWalk.lookupCommit(newCommitId));
@@ -498,7 +539,8 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 					}
 					RevCommit commit;
 					while ((commit = revWalk.next()) != null) {
-						fixedIssueIds.addAll(project.parseFixedIssueIds(commit.getFullMessage()));
+						for (Long issueId: project.parseFixedIssueIds(commit.getFullMessage())) 
+							fixedIssueIds.put(issueId, commit);							
 						if (fixedIssueIds.size() > MAX_FIXED_ISSUES)
 							break;
 					}
@@ -524,18 +566,23 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 							query = new IssueQuery(Criteria.andCriterias(criterias), new ArrayList<>());
 							ProjectScopedCommit.push(new ProjectScopedCommit(project, newCommitId) {
 
-								private static final long serialVersionUID = 1L;
-
 								@Override
 								public Collection<Long> getFixedIssueIds() {
-									return fixedIssueIds;
+									return fixedIssueIds.keySet();
 								}
 								
 							});
 							try {
 								for (Issue issue: issueManager.query(projectScope, query, true, 0, Integer.MAX_VALUE)) {
-									changeState(issue, transition.getToState(), new HashMap<>(), 
-											transition.getRemoveFields(), "State changed as code fixing the issue is committed");
+									var commit = fixedIssueIds.get(issue.getId());
+									if (commit != null) {
+										String commitFQN = commit.name();
+										if (!project.equals(issue.getProject()))
+											commitFQN = project.getPath() + ":" + commitFQN;
+										changeState(issue, transition.getToState(), new HashMap<>(),
+												transition.getRemoveFields(),
+												"State changed as code fixing the issue is committed (" + commitFQN + ")");
+									}
 								}
 							} finally {
 								ProjectScopedCommit.pop();
@@ -628,77 +675,38 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 		}
 		
 	}
-
-	@Transactional
-	@Override
-	public void changeLink(LinkSpec spec, Issue issue, Issue linkedIssue, boolean opposite) {
-		Issue prevLinkedIssue = issue.findLinkedIssue(spec, opposite);
-		
-		List<Issue> linkedIssues = new ArrayList<>();
-		if (linkedIssue != null)
-			linkedIssues.add(linkedIssue);
-		issueLinkManager.syncLinks(spec, issue, linkedIssues, opposite);
-		
-		IssueChange change = new IssueChange();
-		change.setIssue(issue);
-		change.setUser(SecurityUtils.getUser());
-		
-		IssueLinkChangeData data = new IssueLinkChangeData(spec.getName(opposite), 
-				getLinkedIssueInfo(issue, prevLinkedIssue), 
-				getLinkedIssueInfo(issue, linkedIssue));
-		change.setData(data);
-		create(change, null);
-		
-		logLinkedSideChange(spec, issue, prevLinkedIssue, linkedIssue, opposite);
-	}
 	
 	private void logLinkedSideChange(LinkSpec spec, Issue issue, @Nullable Issue prevLinkedIssue, 
 			@Nullable Issue linkedIssue, boolean opposite) {
 		String linkName;
-		boolean multiple;
-		if (spec.getOpposite() != null) {
+		if (spec.getOpposite() != null) 
 			linkName = opposite?spec.getName():spec.getOpposite().getName();
-			multiple = opposite?spec.isMultiple():spec.getOpposite().isMultiple(); 
-		} else {
+		else 
 			linkName = spec.getName();
-			multiple = spec.isMultiple();
-		}
 		if (prevLinkedIssue != null) {
 			IssueChange change = new IssueChange();
 			change.setIssue(prevLinkedIssue);
 			change.setUser(SecurityUtils.getUser());
-			String prevIssueSummary = getLinkedIssueInfo(prevLinkedIssue, issue);
-			if (multiple)
-				change.setData(new IssueLinkRemoveData(linkName, prevIssueSummary));
-			else
-				change.setData(new IssueLinkChangeData(linkName, prevIssueSummary, null));
+			change.setData(new IssueLinkRemoveData(linkName, !opposite, getLinkedIssueNumber(prevLinkedIssue, issue)));
 			create(change, null);
 		} 
 		if (linkedIssue != null) {
 			IssueChange change = new IssueChange();
 			change.setIssue(linkedIssue);
 			change.setUser(SecurityUtils.getUser());
-			String issueSummary = getLinkedIssueInfo(linkedIssue, issue);
-			if (multiple)
-				change.setData(new IssueLinkAddData(linkName, issueSummary));
-			else
-				change.setData(new IssueLinkChangeData(linkName, null, issueSummary));
+			change.setData(new IssueLinkAddData(linkName, !opposite, getLinkedIssueNumber(linkedIssue, issue)));
 			create(change, null);
 		}
 	}
-	
-	@Nullable
-	private String getLinkedIssueInfo(Issue issue, @Nullable Issue linkedIssue) {
-		if (linkedIssue != null) {
-			if (linkedIssue.getNumberScope().equals(issue.getNumberScope()))
-				return "#" + linkedIssue.getNumber();
-			else
-				return linkedIssue.getProject() + "#" + linkedIssue.getNumber();
-		} else {
-			return null;
-		}
-	}
 
+	@Nullable
+	private String getLinkedIssueNumber(Issue issue, Issue linkedIssue) {
+		if (linkedIssue.getNumberScope().equals(issue.getNumberScope()))
+			return "#" + linkedIssue.getNumber();
+		else
+			return linkedIssue.getProject() + "#" + linkedIssue.getNumber();
+	}
+	
 	@Transactional
 	@Override
 	public void addLink(LinkSpec spec, Issue issue, Issue linkedIssue, boolean opposite) {
@@ -711,7 +719,7 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 		change.setUser(SecurityUtils.getUser());
 	
 		String linkName = spec.getName(opposite);
-		IssueLinkAddData data = new IssueLinkAddData(linkName, getLinkedIssueInfo(issue, linkedIssue));
+		IssueLinkAddData data = new IssueLinkAddData(linkName, opposite, getLinkedIssueNumber(issue, linkedIssue));
 		change.setData(data);
 		create(change, null);
 		
@@ -730,11 +738,19 @@ public class DefaultIssueChangeManager extends BaseEntityManager<IssueChange>
 		change.setUser(SecurityUtils.getUser());
 		
 		String linkName = spec.getName(opposite);
-		IssueLinkRemoveData data = new IssueLinkRemoveData(linkName, getLinkedIssueInfo(issue, linkedIssue));
+		IssueLinkRemoveData data = new IssueLinkRemoveData(linkName, opposite, getLinkedIssueNumber(issue, linkedIssue));
 		change.setData(data);
 		create(change, null);
 		
 		logLinkedSideChange(spec, issue, linkedIssue, null, opposite);
 	}
-	
+
+	@Transactional
+	@Override
+	public void changeLink(LinkSpec spec, Issue issue, @Nullable Issue prevLinkedIssue, @Nullable Issue linkedIssue, boolean opposite) {
+		if (prevLinkedIssue != null)
+			removeLink(spec, issue, prevLinkedIssue, opposite);
+		if (linkedIssue != null)
+			addLink(spec, issue, linkedIssue, opposite);
+	}
 }

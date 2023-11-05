@@ -10,26 +10,29 @@ import io.onedev.commons.utils.LinearRange;
 import io.onedev.commons.utils.PathUtils;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.OneDev;
+import io.onedev.server.web.UrlManager;
+import io.onedev.server.annotation.*;
 import io.onedev.server.buildspec.BuildSpec;
-import io.onedev.server.entitymanager.*;
 import io.onedev.server.git.*;
 import io.onedev.server.git.exception.ObjectNotFoundException;
+import io.onedev.server.git.service.CommitMessageError;
 import io.onedev.server.git.service.GitService;
 import io.onedev.server.git.service.RefFacade;
-import io.onedev.server.git.signature.SignatureVerificationKeyLoader;
-import io.onedev.server.git.signature.SignatureVerified;
-import io.onedev.server.infomanager.CommitInfoManager;
+import io.onedev.server.git.signatureverification.SignatureVerificationManager;
+import io.onedev.server.git.signatureverification.VerificationSuccessful;
+import io.onedev.server.SubscriptionManager;
+import io.onedev.server.xodus.CommitInfoManager;
+import io.onedev.server.entitymanager.*;
 import io.onedev.server.model.Build.Status;
 import io.onedev.server.model.support.*;
 import io.onedev.server.model.support.build.*;
-import io.onedev.server.model.support.build.actionauthorization.ActionAuthorization;
 import io.onedev.server.model.support.code.BranchProtection;
-import io.onedev.server.model.support.code.FileProtection;
 import io.onedev.server.model.support.code.GitPackConfig;
 import io.onedev.server.model.support.code.TagProtection;
 import io.onedev.server.model.support.issue.BoardSpec;
 import io.onedev.server.model.support.issue.NamedIssueQuery;
 import io.onedev.server.model.support.issue.ProjectIssueSetting;
+import io.onedev.server.model.support.issue.TimesheetSetting;
 import io.onedev.server.model.support.pullrequest.MergeStrategy;
 import io.onedev.server.model.support.pullrequest.NamedPullRequestQuery;
 import io.onedev.server.model.support.pullrequest.ProjectPullRequestSetting;
@@ -37,6 +40,7 @@ import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.CollectionUtils;
 import io.onedev.server.util.ComponentContext;
+import io.onedev.server.util.EditContext;
 import io.onedev.server.util.StatusInfo;
 import io.onedev.server.util.diff.WhitespaceOption;
 import io.onedev.server.util.facade.ProjectFacade;
@@ -44,11 +48,7 @@ import io.onedev.server.util.match.Matcher;
 import io.onedev.server.util.match.PathMatcher;
 import io.onedev.server.util.match.StringMatcher;
 import io.onedev.server.util.patternset.PatternSet;
-import io.onedev.server.util.reviewrequirement.ReviewRequirement;
 import io.onedev.server.util.usermatch.UserMatch;
-import io.onedev.server.util.validation.annotation.ProjectName;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Markdown;
 import io.onedev.server.web.page.project.setting.ContributedProjectSetting;
 import io.onedev.server.web.util.ProjectAware;
 import io.onedev.server.web.util.WicketUtils;
@@ -78,12 +78,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static io.onedev.server.model.Project.PROP_NAME;
+import static io.onedev.server.util.match.WildcardUtils.matchPath;
 
 @Entity
 @Table(
 		indexes={
 				@Index(columnList="o_parent_id"), @Index(columnList="o_forkedFrom_id"),
-				@Index(columnList="o_dynamics_id"), @Index(columnList=PROP_NAME)
+				@Index(columnList="o_lastEventDate_id"), @Index(columnList=PROP_NAME)
 		}, 
 		uniqueConstraints={@UniqueConstraint(columnNames={"o_parent_id", PROP_NAME})}
 )
@@ -94,6 +95,14 @@ import static io.onedev.server.model.Project.PROP_NAME;
 public class Project extends AbstractEntity implements LabelSupport<ProjectLabel> {
 
 	private static final long serialVersionUID = 1L;
+
+	public static String BUILDS_DIR = "builds";
+
+	public static String ATTACHMENT_DIR = "attachment";
+
+	public static String SITE_DIR = "site";
+	
+	public static String SHARE_TEST_DIR = ".onedev-share-test";
 	
 	public static final int MAX_DESCRIPTION_LEN = 15000;
 	
@@ -115,7 +124,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 
 	public static final String NAME_LAST_COMMIT_DATE = "Last Commit Date";
 	
-	public static final String PROP_DYNAMICS = "dynamics";
+	public static final String PROP_LAST_EVENT_DATE = "lastEventDate";
 	
 	public static final String NAME_LABEL = "Label";
 	
@@ -128,6 +137,8 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	public static final String PROP_CODE_MANAGEMENT = "codeManagement";
 	
 	public static final String PROP_ISSUE_MANAGEMENT = "issueManagement";
+
+	public static final String PROP_TIME_TRACKING = "timeTracking";
 	
 	public static final String NAME_SERVICE_DESK_NAME = "Service Desk Name";
 	
@@ -142,8 +153,8 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			NAME_PATH, PROP_PATH,
 			NAME_NAME, PROP_NAME, 
 			NAME_SERVICE_DESK_NAME, PROP_SERVICE_DESK_NAME,
-			NAME_LAST_ACTIVITY_DATE, PROP_DYNAMICS + "." + ProjectDynamics.PROP_LAST_ACTIVITY_DATE,
-			NAME_LAST_COMMIT_DATE, PROP_DYNAMICS + "." + ProjectDynamics.PROP_LAST_COMMIT_DATE);
+			NAME_LAST_ACTIVITY_DATE, PROP_LAST_EVENT_DATE + "." + ProjectLastEventDate.PROP_ACTIVITY,
+			NAME_LAST_COMMIT_DATE, PROP_LAST_EVENT_DATE + "." + ProjectLastEventDate.PROP_COMMIT);
 	
 	static ThreadLocal<Stack<Project>> stack =  new ThreadLocal<Stack<Project>>() {
 
@@ -162,7 +173,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		stack.get().pop();
 	}
 	
-	private static final ReferenceMap<ObjectId, Optional<byte[]>> buildSpecBytesCache = 
+	private static final ReferenceMap<ObjectId, byte[]> buildSpecBytesCache = 
 			new ReferenceMap<>(ReferenceStrength.HARD, ReferenceStrength.SOFT);
 
 	private transient Map<ObjectId, Optional<BuildSpec>> buildSpecCache;
@@ -182,7 +193,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	@JsonIgnore
 	@OneToOne(fetch = FetchType.LAZY)
 	@JoinColumn(unique=true, nullable=false)
-	private ProjectDynamics dynamics;
+	private ProjectLastEventDate lastEventDate;
 
 	@Column(nullable=false)
 	private String name;
@@ -225,6 +236,9 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	
 	@OneToMany(mappedBy="project", cascade=CascadeType.REMOVE)
 	private Collection<Issue> issues = new ArrayList<>();
+
+	@OneToMany(mappedBy="project", cascade=CascadeType.REMOVE)
+	private Collection<IssueTouch> issueTouches = new ArrayList<>();
 	
 	@OneToMany(mappedBy="project", cascade=CascadeType.REMOVE)
 	@Cache(usage=CacheConcurrencyStrategy.READ_WRITE)
@@ -254,7 +268,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	
 	@OneToMany(mappedBy="project", cascade=CascadeType.REMOVE)
 	private Collection<CodeComment> codeComments = new ArrayList<>();
-	
+
 	@OneToMany(mappedBy="project", cascade=CascadeType.REMOVE)
 	private Collection<IssueQueryPersonalization> issueQueryPersonalizations = new ArrayList<>();
 	
@@ -275,9 +289,10 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	private Collection<Milestone> milestones = new ArrayList<>();
 	
 	private boolean codeManagement = true;
-	
+
 	private boolean issueManagement = true;
 
+	private boolean timeTracking = false;
 	@Lob
 	@Column(length=65535)
 	private GitPackConfig gitPackConfig = new GitPackConfig();
@@ -346,9 +361,11 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
     
 	private transient List<Milestone> sortedMilestones;
 	
-	private transient Optional<UUID> storageServerUUID;
+	private transient Optional<String> activeServer;
 
 	private transient Map<ObjectId, Collection<Build>> buildsCache;
+	
+	private transient Map<ObjectId, Collection<String>> reachableBranchesCache;
 	
 	@Editable(order=100)
 	@ProjectName
@@ -417,12 +434,12 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		this.createDate = createDate;
 	}
 
-	public ProjectDynamics getDynamics() {
-		return dynamics;
+	public ProjectLastEventDate getLastEventDate() {
+		return lastEventDate;
 	}
 
-	public void setDynamics(ProjectDynamics dynamics) {
-		this.dynamics = dynamics;
+	public void setLastEventDate(ProjectLastEventDate lastEventDate) {
+		this.lastEventDate = lastEventDate;
 	}
 
 	public Collection<PullRequest> getIncomingRequests() {
@@ -525,7 +542,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	}
 	
 	public List<RefFacade> getBranchRefs() {
-		List<RefFacade> refs = getRefs(Constants.R_HEADS);
+		List<RefFacade> refs = getCommitRefs(Constants.R_HEADS);
 		for (Iterator<RefFacade> it = refs.iterator(); it.hasNext();) {
 			RefFacade ref = it.next();
 			if (ref.getName().equals(GitUtils.branch2ref(getDefaultBranch()))) {
@@ -539,11 +556,11 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
     }
 	
 	public List<RefFacade> getTagRefs() {
-		return getRefs(Constants.R_TAGS);
+		return getCommitRefs(Constants.R_TAGS);
     }
 	
-	public List<RefFacade> getRefs(String prefix) {
-		return getGitService().getRefs(this, prefix);
+	public List<RefFacade> getCommitRefs(String prefix) {
+		return getGitService().getCommitRefs(this, prefix);
     }
 
 	/**
@@ -625,7 +642,8 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	@Override
 	public ProjectFacade getFacade() {
 		return new ProjectFacade(getId(), getName(), getPath(), getServiceDeskName(), 
-				isIssueManagement(), Role.idOf(getDefaultRole()), Project.idOf(getParent()));
+				isCodeManagement(), isIssueManagement(), getGitPackConfig(), 
+				lastEventDate.getId(), idOf(getDefaultRole()), idOf(getParent()));
 	}
 	
 	/**
@@ -664,6 +682,10 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			return blobOptional.orNull();
 	}
 	
+	public BlobIdent findBlobIdent(ObjectId revId, String path) {
+		return getGitService().getBlobIdent(this, revId, path);
+	}
+	
 	/**
 	 * Get cached object id of specified revision.
 	 * 
@@ -698,27 +720,27 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		objectIdCache.put(revision, Optional.fromNullable(objectId));
 	}
 
-	public Map<String, Status> getCommitStatus(ObjectId commitId, 
-			@Nullable String pipeline, @Nullable PullRequest request, @Nullable String refName) {
+	public Map<String, Status> getCommitStatuses(ObjectId commitId,
+												 @Nullable String pipeline, @Nullable PullRequest request, @Nullable String refName) {
 		Map<String, Collection<StatusInfo>> commitStatusInfos = getCommitStatusCache().get(commitId);
 		if (commitStatusInfos == null) {
 			BuildManager buildManager = OneDev.getInstance(BuildManager.class);
 			commitStatusInfos = buildManager.queryStatus(this, Sets.newHashSet(commitId)).get(commitId);
 			getCommitStatusCache().put(commitId, Preconditions.checkNotNull(commitStatusInfos));
 		}
-		Map<String, Status> commitStatus = new HashMap<>();
+		Map<String, Status> commitStatuses = new HashMap<>();
 		for (Map.Entry<String, Collection<StatusInfo>> entry: commitStatusInfos.entrySet()) {
 			Collection<Status> statuses = new ArrayList<>();
 			for (StatusInfo statusInfo: entry.getValue()) {
 				if ((pipeline == null || pipeline.equals(statusInfo.getPipeline()))
 						&& (refName == null || refName.equals(statusInfo.getRefName())) 
-						&& Objects.equals(PullRequest.idOf(request), statusInfo.getRequestId())) {
+						&& Objects.equals(idOf(request), statusInfo.getRequestId())) {
 					statuses.add(statusInfo.getStatus());
 				}
 			}
-			commitStatus.put(entry.getKey(), Status.getOverallStatus(statuses));
+			commitStatuses.put(entry.getKey(), Status.getOverallStatus(statuses));
 		}
-		return commitStatus;
+		return commitStatuses;
 	}
 	
 	private Map<ObjectId, Map<String, Collection<StatusInfo>>> getCommitStatusCache() {
@@ -727,7 +749,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		return commitStatusCache;
 	}
 	
-	public void cacheCommitStatus(Map<ObjectId, Map<String, Collection<StatusInfo>>> commitStatuses) {
+	public void cacheCommitStatuses(Map<ObjectId, Map<String, Collection<StatusInfo>>> commitStatuses) {
 		getCommitStatusCache().putAll(commitStatuses);
 	}
 	
@@ -742,7 +764,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	 */
 	@Nullable
 	private BuildSpec loadBuildSpec(ObjectId commitId) {
-		Optional<byte[]> buildSpecBytes;
+		byte[] buildSpecBytes;
 		synchronized (buildSpecBytesCache) {
 			buildSpecBytes = buildSpecBytesCache.get(commitId);
 		}
@@ -758,18 +780,15 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 				else
 					buildSpec = null;
 			}
-			if (buildSpec != null)
-				buildSpecBytes = Optional.of(SerializationUtils.serialize(buildSpec));
-			else
-				buildSpecBytes = Optional.absent();
-			synchronized (buildSpecBytesCache) {
-				buildSpecBytesCache.put(commitId, buildSpecBytes);
+			if (buildSpec != null) {
+				buildSpecBytes = SerializationUtils.serialize(buildSpec);
+				synchronized (buildSpecBytesCache) {
+					buildSpecBytesCache.put(commitId, buildSpecBytes);
+				}
 			}
 			return buildSpec;
-		} else if (buildSpecBytes.isPresent()) {
-			return SerializationUtils.deserialize(buildSpecBytes.get());
 		} else {
-			return null;
+			return SerializationUtils.deserialize(buildSpecBytes);
 		}
 	}
 	
@@ -819,21 +838,21 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	}
 	
 	@Nullable
-	public RefFacade getBranchRef(String revision) {
-		RefFacade ref = getRef(revision);
-		if (ref != null && ref.getName().startsWith(Constants.R_HEADS))
-			return ref;
-		else
+	public RefFacade getBranchRef(@Nullable String revision) {
+		if (revision == null)
 			return null;
+		if (!revision.startsWith(Constants.R_HEADS))
+			revision = GitUtils.branch2ref(revision);
+		return getRef(revision);
 	}
 	
 	@Nullable
-	public RefFacade getTagRef(String revision) {
-		RefFacade ref = getRef(revision);
-		if (ref != null && ref.getName().startsWith(Constants.R_TAGS))
-			return ref;
-		else
+	public RefFacade getTagRef(@Nullable String revision) {
+		if (revision == null)
 			return null;
+		if (!revision.startsWith(Constants.R_TAGS))
+			revision = GitUtils.tag2ref(revision);
+		return getRef(revision);
 	}
 	
 	@Nullable
@@ -885,6 +904,35 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	
 	public void setIssueManagement(boolean issueManagement) {
 		this.issueManagement = issueManagement;
+	}
+
+	@Editable(order=350, descriptionProvider = "getTimeTrackingDescription")
+	@ShowCondition("isIssueManagementEnabled")
+	@SubscriptionRequired
+	public boolean isTimeTracking() {
+		return timeTracking;
+	}
+
+	public void setTimeTracking(boolean timeTracking) {
+		this.timeTracking = timeTracking;
+	}
+	
+	private static String getTimeTrackingDescription() {
+		if (!WicketUtils.isSubscriptionActive()) {
+			return "<b class='text-danger'>NOTE: </b><a href='https://docs.onedev.io/tutorials/issue/time-tracking' target='_blank'>Time tracking</a> is an enterprise feature. " +
+					"<a href='https://onedev.io/pricing' target='_blank'>Try free</a> for 30 days";
+		} else {
+			return "Enable <a href='https://docs.onedev.io/tutorials/issue/time-tracking' target='_blank'>time tracking</a> for this " +
+					"project to track progress and generate timesheets";
+		}
+	}
+
+	private static boolean isIssueManagementEnabled() {
+		return (boolean) EditContext.get().getInputValue(PROP_ISSUE_MANAGEMENT);	
+	}
+
+	private static boolean isSubscriptionActiveAndIssueManagementEnabled() {
+		return isIssueManagementEnabled() && OneDev.getInstance(SubscriptionManager.class).isSubscriptionActive();
 	}
 	
 	@Nullable
@@ -956,13 +1004,6 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 			}
 		}
 		return jobProperties;
-	}
-	
-	public List<ActionAuthorization> getHierarchyActionAuthorizations() {
-		List<ActionAuthorization> actionAuthorizations = new ArrayList<>(getBuildSetting().getActionAuthorizations());
-		if (getParent() != null)
-			actionAuthorizations.addAll(getParent().getHierarchyActionAuthorizations());
-		return actionAuthorizations;
 	}
 	
 	public List<DefaultFixedIssueFilter> getHierarchyDefaultFixedIssueFilters() {
@@ -1135,62 +1176,38 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		this.webHooks = webHooks;
 	}
 
-	public TagProtection getHierarchyTagProtection(String tagName, User user) {
-		boolean noCreation = false;
-		boolean noDeletion = false;
-		boolean noUpdate = false;
-		boolean signatureRequired = false;
+	public TagProtection getTagProtection(String tagName, User user) {
 		for (TagProtection protection: getHierarchyTagProtections()) {
 			if (protection.isEnabled() 
 					&& UserMatch.parse(protection.getUserMatch()).matches(this, user)
 					&& PatternSet.parse(protection.getTags()).matches(new PathMatcher(), tagName)) {
-				noCreation = noCreation || protection.isPreventCreation();
-				noDeletion = noDeletion || protection.isPreventDeletion();
-				noUpdate = noUpdate || protection.isPreventUpdate();
-				signatureRequired = signatureRequired || protection.isSignatureRequired();
+				return protection;
 			}
 		}
 		
 		TagProtection protection = new TagProtection();
-		protection.setPreventCreation(noCreation);
-		protection.setPreventDeletion(noDeletion);
-		protection.setPreventUpdate(noUpdate);
-		protection.setSignatureRequired(signatureRequired);
+		protection.setPreventCreation(false);
+		protection.setPreventDeletion(false);
+		protection.setPreventUpdate(false);
 		
 		return protection;
 	}
 	
-	public BranchProtection getHierarchyBranchProtection(String branchName, @Nullable User user) {
-		boolean noCreation = false;
-		boolean noDeletion = false;
-		boolean noForcedPush = false;
-		boolean signatureRequired = false;
-		
-		Set<String> jobNames = new HashSet<>();
-		List<FileProtection> fileProtections = new ArrayList<>();
-		ReviewRequirement reviewRequirement = ReviewRequirement.parse(null, true);
+	public BranchProtection getBranchProtection(@Nullable String branchName, @Nullable User user) {
+		if (branchName == null)
+			branchName = "main";
 		for (BranchProtection protection: getHierarchyBranchProtections()) {
 			if (protection.isEnabled() 
 					&& UserMatch.parse(protection.getUserMatch()).matches(this, user) 
 					&& PatternSet.parse(protection.getBranches()).matches(new PathMatcher(), branchName)) {
-				noCreation = noCreation || protection.isPreventCreation();
-				noDeletion = noDeletion || protection.isPreventDeletion();
-				noForcedPush = noForcedPush || protection.isPreventForcedPush();
-				signatureRequired = signatureRequired || protection.isSignatureRequired();
-				jobNames.addAll(protection.getJobNames());
-				fileProtections.addAll(protection.getFileProtections());
-				reviewRequirement.mergeWith(protection.getParsedReviewRequirement());
+				return protection;
 			}
 		}
 		
 		BranchProtection protection = new BranchProtection();
-		protection.setFileProtections(fileProtections);
-		protection.setJobNames(new ArrayList<>(jobNames));
-		protection.setPreventCreation(noCreation);
-		protection.setPreventDeletion(noDeletion);
-		protection.setPreventForcedPush(noForcedPush);
-		protection.setSignatureRequired(signatureRequired);
-		protection.setParsedReviewRequirement(reviewRequirement);
+		protection.setPreventCreation(false);
+		protection.setPreventDeletion(false);
+		protection.setPreventForcedPush(false);
 		
 		return protection;
 	}
@@ -1328,60 +1345,80 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		return null;
 	}
 	
-	public boolean isCommitOnBranches(@Nullable ObjectId commitId, String branches) {
-		Matcher matcher = new PathMatcher();
-		if (commitId != null) {
+	private Collection<String> getReachableBranches(ObjectId commitId) {
+		if (reachableBranchesCache == null) 
+			reachableBranchesCache = new HashMap<>();
+		Collection<String> reachableBranches = reachableBranchesCache.get(commitId);
+		if (reachableBranches == null) {
+			reachableBranches = new HashSet<>();
+			
 			CommitInfoManager commitInfoManager = OneDev.getInstance(CommitInfoManager.class);
 			Collection<ObjectId> descendants = commitInfoManager.getDescendants(
 					getId(), Sets.newHashSet(commitId));
 			descendants.add(commitId);
-		
-			PatternSet branchPatterns = PatternSet.parse(branches);
-			for (RefFacade ref: getBranchRefs()) {
-				String branchName = Preconditions.checkNotNull(GitUtils.ref2branch(ref.getName()));
-				if (descendants.contains(ref.getPeeledObj()) && branchPatterns.matches(matcher, branchName))
-					return true;
+
+			for (RefFacade ref : getBranchRefs()) {
+				if (descendants.contains(ref.getPeeledObj()))
+					reachableBranches.add(Preconditions.checkNotNull(GitUtils.ref2branch(ref.getName())));
 			}
-			return false;
-		} else {
-			return PatternSet.parse(branches).matches(matcher, "main");
+			reachableBranchesCache.put(commitId, reachableBranches);
 		}
+		return reachableBranches;
+	}
+
+	public boolean isCommitOnBranches(@Nullable ObjectId commitId, PatternSet branches) {
+		Matcher matcher = new PathMatcher();
+		if (commitId != null) 
+			return getReachableBranches(commitId).stream().anyMatch(it->branches.matches(matcher, it));
+		else 
+			return branches.matches(matcher, "main");
+		
+	}
+	
+	public boolean isCommitOnBranch(ObjectId commitId, String branch) {
+		return getReachableBranches(commitId).stream().anyMatch(it->matchPath(branch, it));
 	}
 	
 	public boolean isReviewRequiredForModification(User user, String branch, @Nullable String file) {
-		return getHierarchyBranchProtection(branch, user).isReviewRequiredForModification(user, this, branch, file);
+		return getBranchProtection(branch, user).isReviewRequiredForModification(user, this, branch, file);
 	}
 
 	public boolean isCommitSignatureRequiredButNoSigningKey(User user, String branch) {
-		return getHierarchyBranchProtection(branch, user).isSignatureRequired()
+		return getBranchProtection(branch, user).isCommitSignatureRequired()
 				&& getSettingManager().getGpgSetting().getSigningKey() == null;
 	}
 	
 	public boolean isCommitSignatureRequired(User user, String branch) {
-		return getHierarchyBranchProtection(branch, user).isSignatureRequired();
+		return getBranchProtection(branch, user).isCommitSignatureRequired();
 	}
 	
 	public boolean isTagSignatureRequired(User user, String tag) {
-		return getHierarchyTagProtection(tag, user).isSignatureRequired();
+		return getTagProtection(tag, user).isCommitSignatureRequired();
 	}
 	
 	public boolean isTagSignatureRequiredButNoSigningKey(User user, String tag) {
-		return getHierarchyTagProtection(tag, user).isSignatureRequired()
+		return getTagProtection(tag, user).isCommitSignatureRequired()
 				&& getSettingManager().getGpgSetting().getSigningKey() == null;
 	}
 	
 	public boolean isReviewRequiredForPush(User user, String branch, ObjectId oldObjectId, 
 			ObjectId newObjectId, Map<String, String> gitEnvs) {
-		return getHierarchyBranchProtection(branch, user).isReviewRequiredForPush(user, this, branch, oldObjectId, newObjectId, gitEnvs);
+		return getBranchProtection(branch, user).isReviewRequiredForPush(user, this, branch, oldObjectId, newObjectId, gitEnvs);
 	}
 	
 	public boolean isBuildRequiredForModification(User user, String branch, @Nullable String file) {
-		return getHierarchyBranchProtection(branch, user).isBuildRequiredForModification(this, branch, file);
+		return getBranchProtection(branch, user).isBuildRequiredForModification(this, branch, file);
 	}
 	
 	public boolean isBuildRequiredForPush(User user, String branch, ObjectId oldObjectId, ObjectId newObjectId, 
 			Map<String, String> gitEnvs) {
-		return getHierarchyBranchProtection(branch, user).isBuildRequiredForPush(this, oldObjectId, newObjectId, gitEnvs);
+		return getBranchProtection(branch, user).isBuildRequiredForPush(this, oldObjectId, newObjectId, gitEnvs);
+	}
+	
+	@Nullable
+	public CommitMessageError checkCommitMessages(String branch, User user, ObjectId oldCommitId, ObjectId newCommitId,
+												  @Nullable Map<String, String> gitEnvs) {
+		return getGitService().checkCommitMessages(this, branch, user, oldCommitId, newCommitId, gitEnvs);
 	}
 	
 	@Nullable
@@ -1494,25 +1531,26 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	}
 	
 	public boolean hasValidCommitSignature(RevCommit commit) {
-		SignatureVerificationKeyLoader keyLoader = 
-				OneDev.getInstance(SignatureVerificationKeyLoader.class);
-		return GitUtils.verifySignature(commit, keyLoader) instanceof SignatureVerified;
+		return getSignatureVerificationManager().verifySignature(commit) instanceof VerificationSuccessful;
 	}
 	
 	public boolean hasValidCommitSignature(ObjectId commitId, Map<String, String> gitEnvs) {
-		byte[] commitRawData = getGitService().getRawCommit(this, commitId, gitEnvs);
-		SignatureVerificationKeyLoader keyLoader = OneDev.getInstance(SignatureVerificationKeyLoader.class);
-		return GitUtils.verifyCommitSignature(commitRawData, keyLoader) instanceof SignatureVerified;
+		byte[] rawCommit = getGitService().getRawCommit(this, commitId, gitEnvs);
+		return getSignatureVerificationManager().verifyCommitSignature(rawCommit) 
+				instanceof VerificationSuccessful;
 	}
 	
 	public boolean hasValidTagSignature(ObjectId tagId, Map<String, String> gitEnvs) {
-		byte[] tagRawData = getGitService().getRawTag(this, tagId, gitEnvs);
-		SignatureVerificationKeyLoader keyLoader = OneDev.getInstance(SignatureVerificationKeyLoader.class);
-		return tagRawData != null && GitUtils.verifyTagSignature(tagRawData, keyLoader) instanceof SignatureVerified;
+		byte[] rawTag = getGitService().getRawTag(this, tagId, gitEnvs);
+		return rawTag != null && getSignatureVerificationManager().verifyTagSignature(rawTag) instanceof VerificationSuccessful;
 	}
 	
 	public boolean isCommitSignatureRequirementSatisfied(User user, String branch, RevCommit commit) {
 		return !isCommitSignatureRequired(user, branch) || hasValidCommitSignature(commit);
+	}
+	
+	private SignatureVerificationManager getSignatureVerificationManager() {
+		return OneDev.getInstance(SignatureVerificationManager.class);
 	}
 	
 	public static boolean containsPath(@Nullable String patterns, String path) {
@@ -1553,11 +1591,11 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		do {
 			List<NamedIssueQuery> namedQueries = current.getIssueSetting().getNamedQueries();
 			if (namedQueries != null)
-				return (ArrayList<NamedIssueQuery>) namedQueries;
+				return namedQueries;
 			current = current.getParent();
 		} while (current != null); 
 		
-		return (ArrayList<NamedIssueQuery>) getSettingManager().getIssueSetting().getNamedQueries();
+		return getSettingManager().getIssueSetting().getNamedQueries();
 	}
 	
 	public List<NamedBuildQuery> getNamedBuildQueries() {
@@ -1565,11 +1603,11 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		do {
 			List<NamedBuildQuery> namedQueries = current.getBuildSetting().getNamedQueries();
 			if (namedQueries != null)
-				return (ArrayList<NamedBuildQuery>) namedQueries;
+				return namedQueries;
 			current = current.getParent();
 		} while (current != null); 
 		
-		return (ArrayList<NamedBuildQuery>) getSettingManager().getBuildSetting().getNamedQueries();
+		return getSettingManager().getBuildSetting().getNamedQueries();
 	}
 	
 	public List<NamedPullRequestQuery> getNamedPullRequestQueries() {
@@ -1577,15 +1615,26 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		do {
 			List<NamedPullRequestQuery> namedQueries = current.getPullRequestSetting().getNamedQueries();
 			if (namedQueries != null)
-				return (ArrayList<NamedPullRequestQuery>) namedQueries;
+				return namedQueries;
 			current = current.getParent();
 		} while (current != null); 
 		
-		return (ArrayList<NamedPullRequestQuery>) getSettingManager().getPullRequestSetting().getNamedQueries();
+		return getSettingManager().getPullRequestSetting().getNamedQueries();
 	}
-
+	
+	public Map<String, TimesheetSetting> getHierarchyTimesheetSettings() {
+		Map<String, TimesheetSetting> timesheetSettings = new LinkedHashMap<>();
+		Project current = this;
+		do {
+			for (var entry: current.getIssueSetting().getTimesheetSettings().entrySet()) 
+				timesheetSettings.putIfAbsent(entry.getKey(), entry.getValue());
+			current = current.getParent();
+		} while (current != null);
+		return timesheetSettings;
+	}
+	
 	public List<BoardSpec> getHierarchyBoards() {
-		List<BoardSpec> boards = null;
+		List<BoardSpec> boards;
 		
 		Project current = this;
 		do {
@@ -1622,28 +1671,28 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 	}
 	
 	@Nullable
-	public UUID getStorageServerUUID(boolean mustExist) {
-		if (storageServerUUID == null) {
-			storageServerUUID = Optional.fromNullable(
-					getProjectManager().getStorageServerUUID(getId(), false));
+	public String getActiveServer(boolean mustExist) {
+		if (activeServer == null) {
+			activeServer = Optional.fromNullable(
+					getProjectManager().getActiveServer(getId(), false));
 		}
-		if (storageServerUUID.isPresent())
-			return storageServerUUID.get();
+		if (activeServer.isPresent())
+			return activeServer.get();
 		else if (mustExist) 
 			throw new ExplicitException("Storage not found for project: " + getPath());
 		else
 			return null;
 	}
 	
-	public PatternSet findCodeAnalysisPatterns() {
+	public String findCodeAnalysisPatterns() {
 		Project current = this;
 		do {
 			if (current.getCodeAnalysisSetting().getAnalyzeFiles() != null)
-				return PatternSet.parse(current.getCodeAnalysisSetting().getAnalyzeFiles());
+				return current.getCodeAnalysisSetting().getAnalyzeFiles();
 			current = current.getParent();
 		} while (current != null);
-
-		return PatternSet.parse("**");
+		
+		return "**";
 	}
 
 	public MergeStrategy findDefaultMergeStrategy() {
@@ -1655,17 +1704,6 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		} while (current != null);
 
 		return MergeStrategy.CREATE_MERGE_COMMIT;
-	}
-
-	public boolean findPullRequestWithLFS() {
-		Project current = this;
-		do {
-			if (current.getPullRequestSetting().isWithLFS() != null)
-				return current.getPullRequestSetting().isWithLFS();
-			current = current.getParent();
-		} while (current != null);
-
-		return false;
 	}
 	
 	public String getSiteLockName() {
@@ -1682,7 +1720,7 @@ public class Project extends AbstractEntity implements LabelSupport<ProjectLabel
 		Collection<Build> builds = buildsCache.get(commitId);
 		if (builds == null) {
 			BuildManager buildManager = OneDev.getInstance(BuildManager.class);
-			builds = buildManager.query(this, commitId, null, null, null, new HashMap<>(), null);
+			builds = buildManager.query(this, commitId, null, null, null, null, new HashMap<>(), null);
 			buildsCache.put(commitId, builds);
 		}
 		return builds;

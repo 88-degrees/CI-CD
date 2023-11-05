@@ -15,7 +15,7 @@ import org.hibernate.annotations.CacheConcurrencyStrategy;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.annotation.Editable;
 
 @Entity
 @Table(indexes={@Index(columnList=PROP_EMAIL_ADDRESS), @Index(columnList=PROP_INVITATION_CODE)})
@@ -35,6 +35,8 @@ public class UserInvitation extends AbstractEntity {
 	@Column(unique=true, nullable=false)
     @JsonIgnore
     private String invitationCode = UUID.randomUUID().toString();
+	
+	private boolean inviteAsGuest;
 
 	public String getEmailAddress() {
 		return emailAddress;
@@ -52,4 +54,11 @@ public class UserInvitation extends AbstractEntity {
 		this.invitationCode = invitationCode;
 	}
 
+	public boolean isInviteAsGuest() {
+		return inviteAsGuest;
+	}
+
+	public void setInviteAsGuest(boolean inviteAsGuest) {
+		this.inviteAsGuest = inviteAsGuest;
+	}
 }

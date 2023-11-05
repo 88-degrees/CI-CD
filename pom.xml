@@ -6,10 +6,10 @@
 	<parent>
 		<groupId>io.onedev</groupId>
 		<artifactId>parent</artifactId>
-		<version>1.2.0</version>
+		<version>1.2.1</version>
 	</parent>
 	<artifactId>server</artifactId>
-	<version>8.0.0</version>
+	<version>9.2.5</version>
 	<packaging>pom</packaging>
 	<build>
 		<finalName>${project.groupId}.${project.artifactId}-${project.version}</finalName>
@@ -38,7 +38,7 @@
 			<plugin>
 				<groupId>io.onedev</groupId>
 				<artifactId>plugin-maven</artifactId>
-				<version>2.6.1</version>
+				<version>2.6.6</version>
 				<executions>
 					<execution>
 						<?m2e execute onConfiguration,onIncremental?>
@@ -95,6 +95,7 @@
 	<modules>
 		<module>server-core</module>
 		<module>server-plugin</module>
+		<module>server-ee</module>
 		<module>server-product</module>
 	</modules>
 	<dependencyManagement>
@@ -256,11 +257,6 @@
 				<version>${hibernate.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>com.hazelcast</groupId>
-				<artifactId>hazelcast-hibernate53</artifactId>
-				<version>2.2.1</version>
-			</dependency>
-			<dependency>
 				<groupId>com.nimbusds</groupId>
 				<artifactId>oauth2-oidc-sdk</artifactId>
 				<version>9.35</version>
@@ -303,12 +299,12 @@
 			<dependency>
 				<groupId>com.google.guava</groupId>
 				<artifactId>guava</artifactId>
-				<version>25.1-android</version>
+				<version>32.0.1-jre</version>
 			</dependency>
 			<dependency>
 				<groupId>commons-fileupload</groupId>
 				<artifactId>commons-fileupload</artifactId>
-				<version>1.3.3</version>
+				<version>1.5</version>
 			</dependency>
 			<dependency>
 				<groupId>commons-validator</groupId>
@@ -393,11 +389,6 @@
 			<dependency>
 				<groupId>org.apache.lucene</groupId>
 				<artifactId>lucene-analyzers-common</artifactId>
-				<version>${lucene.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>org.apache.lucene</groupId>
-				<artifactId>lucene-analyzers-smartcn</artifactId>
 				<version>${lucene.version}</version>
 			</dependency>
 			<dependency>
@@ -538,7 +529,7 @@
 			<dependency>
 				<groupId>org.json</groupId>
 				<artifactId>json</artifactId>
-				<version>20090211</version>
+				<version>20231013</version>
 			</dependency>
 			<dependency>
 				<groupId>com.fasterxml.jackson.core</groupId>
@@ -598,8 +589,18 @@
 			<dependency>
 				<groupId>com.hazelcast</groupId>
 				<artifactId>hazelcast</artifactId>
-				<version>5.1.4</version>
+				<version>5.1.7</version>
 			</dependency>
+			<dependency>
+				<groupId>com.hazelcast</groupId>
+				<artifactId>hazelcast-hibernate53</artifactId>
+				<version>2.2.1</version>
+			</dependency>
+			<dependency>
+				<groupId>org.dhatim</groupId>
+				<artifactId>fastexcel</artifactId>
+				<version>0.15.7</version>
+			</dependency>			
 		</dependencies>
 	</dependencyManagement>
 	<repositories>
@@ -619,17 +620,17 @@
 		</repository>
 	</repositories>
 	<properties>
-		<commons.version>2.7.11</commons.version>
-		<agent.version>1.8.1</agent.version>
+		<commons.version>2.7.24</commons.version>
+		<agent.version>1.9.6</agent.version>
 		<slf4j.version>1.7.36</slf4j.version>
 		<logback.version>1.2.11</logback.version>
 		<antlr.version>4.7.2</antlr.version>
-		<jetty.version>9.4.43.v20210629</jetty.version>
-		<wicket.version>7.17.0</wicket.version>
+		<jetty.version>9.4.51.v20230217</jetty.version>
+		<wicket.version>7.18.0</wicket.version>
 		<jersey.version>2.37</jersey.version>
 		<hibernate.version>5.4.24.Final</hibernate.version>
 		<lucene.version>8.7.0</lucene.version>
-		<shiro.version>1.10.0</shiro.version>
+		<shiro.version>1.12.0</shiro.version>
 		<jgit.version>5.13.0.202109080827-r</jgit.version>
 		<flexmark.version>0.64.0</flexmark.version>
 		<groovy.version>3.0.13</groovy.version>

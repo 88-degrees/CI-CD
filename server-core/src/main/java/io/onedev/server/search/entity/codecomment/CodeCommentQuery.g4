@@ -7,13 +7,14 @@ query
     ;
 
 criteria
-	: operator=(CreatedByMe|MentionedMe|Resolved|Unresolved) #OperatorCriteria
-    | operator=(CreatedBy|Mentioned|OnCommit) WS+ criteriaValue=Quoted #OperatorValueCriteria
+	: operator=(CreatedByMe|RepliedByMe|MentionedMe|Resolved|Unresolved) #OperatorCriteria
+    | operator=(CreatedBy|RepliedBy|Mentioned|OnCommit) WS+ criteriaValue=Quoted #OperatorValueCriteria
     | criteriaField=Quoted WS+ operator=(Is|IsUntil|IsSince|IsGreaterThan|IsLessThan|Contains) WS+ criteriaValue=Quoted #FieldOperatorValueCriteria
     | criteria WS+ And WS+ criteria	#AndCriteria
     | criteria WS+ Or WS+ criteria #OrCriteria
     | Not WS* LParens WS* criteria WS* RParens #NotCriteria 
     | LParens WS* criteria WS* RParens #ParensCriteria
+    | Fuzzy #FuzzyCriteria
     ;
 
 order
@@ -22,6 +23,10 @@ order
 
 CreatedByMe
 	: 'created' WS+ 'by' WS+ 'me'
+	;
+
+RepliedByMe
+	: 'replied' WS+ 'by' WS+ 'me'
 	;
 
 MentionedMe
@@ -39,6 +44,10 @@ Unresolved
 CreatedBy
 	: 'created' WS+ 'by'
 	;
+
+RepliedBy
+    : 'replied' WS+ 'by'
+    ;
 
 Mentioned
     : 'mentioned'
@@ -110,6 +119,10 @@ Quoted
 
 WS
     : ' '
+    ;
+
+Fuzzy
+    : '~' ('\\'.|~[~])+? '~'
     ;
 
 Identifier

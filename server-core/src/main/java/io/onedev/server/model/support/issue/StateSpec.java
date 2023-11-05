@@ -1,11 +1,10 @@
 package io.onedev.server.model.support.issue;
 
-import java.io.Serializable;
+import io.onedev.server.annotation.Color;
+import io.onedev.server.annotation.Editable;
 
 import javax.validation.constraints.NotEmpty;
-
-import io.onedev.server.web.editable.annotation.Color;
-import io.onedev.server.web.editable.annotation.Editable;
+import java.io.Serializable;
 
 @Editable
 public class StateSpec implements Serializable {

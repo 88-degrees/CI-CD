@@ -69,7 +69,7 @@ import io.onedev.server.web.behavior.OnTypingDoneBehavior;
 import io.onedev.server.web.component.commit.status.CommitStatusLink;
 import io.onedev.server.web.component.contributorpanel.ContributorPanel;
 import io.onedev.server.web.component.datatable.DefaultDataTable;
-import io.onedev.server.web.component.gitsignature.GitSignaturePanel;
+import io.onedev.server.web.component.gitsignature.SignatureStatusPanel;
 import io.onedev.server.web.component.link.ArchiveMenuLink;
 import io.onedev.server.web.component.link.ViewStateAwarePageLink;
 import io.onedev.server.web.component.modal.ModalLink;
@@ -241,7 +241,7 @@ public class ProjectTagsPage extends ProjectPage {
 							editor.error(new Path(new PathNode.Named("name")), 
 									"Tag '" + tagName + "' already exists, please choose a different name.");
 							target.add(form);
-						} else if (getProject().getHierarchyTagProtection(tagName, user).isPreventCreation()) {
+						} else if (getProject().getTagProtection(tagName, user).isPreventCreation()) {
 							editor.error(new Path(new PathNode.Named("name")), "Unable to create protected tag"); 
 							target.add(form);
 						} else {
@@ -312,7 +312,11 @@ public class ProjectTagsPage extends ProjectPage {
 				RefFacade ref = rowModel.getObject();
 				String tagName = GitUtils.ref2tag(ref.getName());
 				
-				BlobIdent blobIdent = new BlobIdent(tagName, null, FileMode.TREE.getBits());
+				BlobIdent blobIdent;
+				if (getProject().getBranchRef(tagName) != null)
+					blobIdent = new BlobIdent(ref.getName(), null, FileMode.TREE.getBits());
+				else
+					blobIdent = new BlobIdent(tagName, null, FileMode.TREE.getBits());
 				ProjectBlobPage.State state = new ProjectBlobPage.State(blobIdent);
 				AbstractLink link = new ViewStateAwarePageLink<Void>("tagLink", 
 						ProjectBlobPage.class, ProjectBlobPage.paramsOf(getProject(), state));
@@ -334,7 +338,7 @@ public class ProjectTagsPage extends ProjectPage {
 				});
 
 				if (ref.getObj() instanceof RevTag) {
-					fragment.add(new GitSignaturePanel("signature") {
+					fragment.add(new SignatureStatusPanel("signature") {
 
 						@Override
 						protected RevObject getRevObject() {
@@ -385,7 +389,7 @@ public class ProjectTagsPage extends ProjectPage {
 
 					@Override
 					protected String getRevision() {
-						return tagName;
+						return ref.getName();
 					}
 					
 				});
@@ -418,7 +422,7 @@ public class ProjectTagsPage extends ProjectPage {
 
 						Project project = getProject();
 						if (SecurityUtils.canWriteCode(project)) 
-							setEnabled(!project.getHierarchyTagProtection(tagName, getLoginUser()).isPreventDeletion());
+							setEnabled(!project.getTagProtection(tagName, getLoginUser()).isPreventDeletion());
 						else 
 							setVisible(false);
 					}
@@ -476,7 +480,7 @@ public class ProjectTagsPage extends ProjectPage {
 				}
 				
 				BuildManager buildManager = OneDev.getInstance(BuildManager.class);
-				getProject().cacheCommitStatus(buildManager.queryStatus(getProject(), commitIdsToDisplay));
+				getProject().cacheCommitStatuses(buildManager.queryStatus(getProject(), commitIdsToDisplay));
 				super.onBeforeRender();
 			}
 			

@@ -1,38 +1,24 @@
 package io.onedev.server.git;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-
-import javax.annotation.Nullable;
-
+import com.google.common.base.Objects;
+import com.google.common.base.*;
+import com.google.common.collect.Iterables;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.PathUtils;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.server.git.command.IsAncestorCommand;
+import io.onedev.server.git.exception.ObjectNotFoundException;
+import io.onedev.server.git.exception.ObsoleteCommitException;
+import io.onedev.server.git.exception.RefUpdateException;
+import io.onedev.server.git.service.DiffEntryFacade;
+import io.onedev.server.git.service.RefFacade;
+import io.onedev.server.util.GpgUtils;
 import org.bouncycastle.bcpg.ArmoredOutputStream;
 import org.bouncycastle.bcpg.BCPGOutputStream;
 import org.bouncycastle.bcpg.HashAlgorithmTags;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openpgp.PGPCompressedData;
-import org.bouncycastle.openpgp.PGPException;
-import org.bouncycastle.openpgp.PGPPrivateKey;
-import org.bouncycastle.openpgp.PGPPublicKey;
-import org.bouncycastle.openpgp.PGPSecretKeyRing;
-import org.bouncycastle.openpgp.PGPSignature;
-import org.bouncycastle.openpgp.PGPSignatureGenerator;
-import org.bouncycastle.openpgp.PGPSignatureList;
-import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator;
-import org.bouncycastle.openpgp.PGPUtil;
-import org.bouncycastle.openpgp.jcajce.JcaPGPObjectFactory;
+import org.bouncycastle.openpgp.*;
 import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentSignerBuilder;
-import org.bouncycastle.openpgp.operator.jcajce.JcaPGPContentVerifierBuilderProvider;
 import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyDecryptorBuilder;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffEntry.ChangeType;
@@ -42,65 +28,37 @@ import org.eclipse.jgit.errors.AmbiguousObjectException;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.errors.RevisionSyntaxException;
-import org.eclipse.jgit.lib.AnyObjectId;
-import org.eclipse.jgit.lib.CommitBuilder;
-import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.FileMode;
-import org.eclipse.jgit.lib.GpgSignature;
-import org.eclipse.jgit.lib.ObjectBuilder;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.ObjectInserter;
-import org.eclipse.jgit.lib.ObjectLoader;
-import org.eclipse.jgit.lib.ObjectReader;
-import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.lib.Ref;
-import org.eclipse.jgit.lib.RefUpdate;
-import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.*;
 import org.eclipse.jgit.merge.MergeStrategy;
 import org.eclipse.jgit.merge.Merger;
 import org.eclipse.jgit.merge.ResolveMerger;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevObject;
-import org.eclipse.jgit.revwalk.RevTag;
-import org.eclipse.jgit.revwalk.RevTree;
-import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.revwalk.RevWalkUtils;
+import org.eclipse.jgit.revwalk.*;
 import org.eclipse.jgit.revwalk.filter.RevFilter;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.TreeFilter;
-import org.eclipse.jgit.util.RawParseUtils;
 import org.eclipse.jgit.util.SystemReader;
 import org.eclipse.jgit.util.io.NullOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Joiner;
-import com.google.common.base.Objects;
-import com.google.common.base.Preconditions;
-import com.google.common.base.Splitter;
-import com.google.common.base.Strings;
-import com.google.common.collect.Iterables;
+import javax.annotation.Nullable;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.*;
+import java.util.stream.Collectors;
 
-import io.onedev.commons.utils.PathUtils;
-import io.onedev.server.git.command.IsAncestorCommand;
-import io.onedev.server.git.exception.ObjectNotFoundException;
-import io.onedev.server.git.exception.ObsoleteCommitException;
-import io.onedev.server.git.exception.RefUpdateException;
-import io.onedev.server.git.service.DiffEntryFacade;
-import io.onedev.server.git.signature.SignatureUnverified;
-import io.onedev.server.git.signature.SignatureVerification;
-import io.onedev.server.git.signature.SignatureVerificationKey;
-import io.onedev.server.git.signature.SignatureVerificationKeyLoader;
-import io.onedev.server.git.signature.SignatureVerified;
-import io.onedev.server.util.GpgUtils;
+import static org.eclipse.jgit.lib.Constants.R_HEADS;
+import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
 public class GitUtils {
 
 	public static final int SHORT_SHA_LENGTH = 8;
-	
+
 	private static final Logger logger = LoggerFactory.getLogger(GitUtils.class);
-	
+
 	public static boolean isEmptyPath(String path) {
 		return Strings.isNullOrEmpty(path) || Objects.equal(path, DiffEntry.DEV_NULL);
 	}
@@ -118,9 +76,9 @@ public class GitUtils {
 	public static String getDefaultBranch(Repository repository) {
 		try {
 			Ref headRef = repository.findRef("HEAD");
-			if (headRef != null 
-					&& headRef.isSymbolic() 
-					&& headRef.getTarget().getName().startsWith(Constants.R_HEADS) 
+			if (headRef != null
+					&& headRef.isSymbolic()
+					&& headRef.getTarget().getName().startsWith(R_HEADS)
 					&& headRef.getObjectId() != null) {
 				return Repository.shortenRefName(headRef.getTarget().getName());
 			} else {
@@ -130,12 +88,26 @@ public class GitUtils {
 			throw new RuntimeException(e);
 		}
 	}
-	
+
+	public static void setDefaultBranch(Repository repository, String defaultBranch) {
+		var defaultBranchRef = branch2ref(defaultBranch);
+		try {
+			if (repository.findRef(defaultBranchRef) != null) {
+				RefUpdate refUpdate = getRefUpdate(repository, "HEAD");
+				linkRef(refUpdate, branch2ref(defaultBranch));
+			} else {
+				throw new ExplicitException("Branch not exist: " + defaultBranch);	
+			}
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
 	public static List<DiffEntry> diff(Repository repository, AnyObjectId oldRevId, AnyObjectId newRevId) {
 		List<DiffEntry> diffs = new ArrayList<>();
 		try (DiffFormatter diffFormatter = new DiffFormatter(NullOutputStream.INSTANCE);
-				RevWalk revWalk = new RevWalk(repository);
-				ObjectReader reader = repository.newObjectReader();) {
+			 RevWalk revWalk = new RevWalk(repository);
+			 ObjectReader reader = repository.newObjectReader();) {
 			diffFormatter.setRepository(repository);
 			diffFormatter.setDetectRenames(true);
 			diffFormatter.setDiffComparator(RawTextComparator.DEFAULT);
@@ -161,7 +133,7 @@ public class GitUtils {
 		}
 		return diffs;
 	}
-	
+
 	public static InputStream getInputStream(Repository repository, ObjectId revId, String path) {
 		try (RevWalk revWalk = new RevWalk(repository)) {
 			RevTree revTree = revWalk.parseCommit(revId).getTree();
@@ -176,12 +148,12 @@ public class GitUtils {
 			throw new RuntimeException(e);
 		}
 	}
-	
+
 	@Nullable
 	public static RevCommit getLastCommit(Repository repository) {
 		RevCommit lastCommit = null;
 		try (RevWalk revWalk = new RevWalk(repository)) {
-			for (Ref ref: repository.getRefDatabase().getRefsByPrefix(Constants.R_HEADS)) {
+			for (Ref ref: repository.getRefDatabase().getRefsByPrefix(R_HEADS)) {
 				if (ref.getObjectId() != null) {
 					RevCommit commit =  parseCommit(revWalk, ref.getObjectId());
 					if (commit != null && (lastCommit == null || lastCommit.getCommitTime() < commit.getCommitTime())) {
@@ -222,7 +194,7 @@ public class GitUtils {
 	/**
 	 * Parse the original git raw date to Java date. The raw git date is in unix
 	 * timestamp with timezone like: 1392312299 -0800
-	 * 
+	 *
 	 * @param input the input raw date string
 	 * @return Java date
 	 */
@@ -271,38 +243,44 @@ public class GitUtils {
 
 	/**
 	 * Convert a git reference name to branch name.
-	 * 
+	 *
 	 * @param refName name of the git reference
 	 * @return name of the branch, or <tt>null</tt> if specified ref does not
 	 *         represent a branch
 	 */
 	public static @Nullable String ref2branch(String refName) {
-		if (refName.startsWith(Constants.R_HEADS))
-			return refName.substring(Constants.R_HEADS.length());
+		if (refName.startsWith(R_HEADS))
+			return refName.substring(R_HEADS.length());
 		else
 			return null;
 	}
 
 	public static String branch2ref(String branch) {
-		return Constants.R_HEADS + branch;
+		if (!branch.startsWith(R_HEADS))
+			return R_HEADS + branch;
+		else 
+			return branch;
 	}
 
 	/**
 	 * Convert a git reference name to tag name.
-	 * 
+	 *
 	 * @param refName name of the git reference
 	 * @return name of the tag, or <tt>null</tt> if specified ref does not represent
 	 *         a tag
 	 */
 	public static @Nullable String ref2tag(String refName) {
-		if (refName.startsWith(Constants.R_TAGS))
-			return refName.substring(Constants.R_TAGS.length());
+		if (refName.startsWith(R_TAGS))
+			return refName.substring(R_TAGS.length());
 		else
 			return null;
 	}
 
 	public static String tag2ref(String tag) {
-		return Constants.R_TAGS + tag;
+		if (!tag.startsWith(R_TAGS))
+			return R_TAGS + tag;
+		else 
+			return tag;
 	}
 
 	public static BlobIdent getOldBlobIdent(DiffEntryFacade diffEntry, String oldRev) {
@@ -313,6 +291,24 @@ public class GitUtils {
 			blobIdent = new BlobIdent(oldRev, null, null);
 		}
 		return blobIdent;
+	}
+
+	public static Collection<RevCommit> getReachableCommits(Repository repository,
+														   Collection<ObjectId> sinceCommits,
+														   Collection<ObjectId> untilCommits) {
+		try (RevWalk revWalk = new RevWalk(repository)) {
+			var reachableCommits = new LinkedHashSet<RevCommit>();
+			for (var commitId: untilCommits)
+				revWalk.markStart(revWalk.parseCommit(commitId));
+			for (var commitId: sinceCommits)
+				revWalk.markUninteresting(revWalk.parseCommit(commitId));
+			RevCommit commit;
+			while ((commit = revWalk.next()) != null)
+				reachableCommits.add(commit);
+			return reachableCommits;
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	public static BlobIdent getNewBlobIdent(DiffEntryFacade diffEntry, String newRev) {
@@ -345,7 +341,7 @@ public class GitUtils {
 	}
 
 	public static boolean isMergedInto(Repository repository, @Nullable Map<String, String> gitEnvs, ObjectId base,
-			ObjectId tip) {
+									   ObjectId tip) {
 		if (gitEnvs != null && !gitEnvs.isEmpty()) {
 			return new IsAncestorCommand(repository.getDirectory(), base.name(), tip.name(), gitEnvs).run();
 		} else {
@@ -365,7 +361,7 @@ public class GitUtils {
 
 	/**
 	 * Get commit of specified revision id.
-	 * 
+	 *
 	 * @param revWalk
 	 * @param revId
 	 * @return <tt>null</tt> if specified id does not exist or does not represent a
@@ -382,6 +378,22 @@ public class GitUtils {
 				return null;
 		} catch (MissingObjectException e) {
 			return null;
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	public static Collection<RefFacade> getCommitRefs(Repository repository, @Nullable String prefix) {
+		try (RevWalk revWalk = new RevWalk(repository)) {
+			List<Ref> refs;
+			if (prefix != null)
+				refs = repository.getRefDatabase().getRefsByPrefix(prefix);
+			else
+				refs = repository.getRefDatabase().getRefs();
+			return refs.stream()
+					.map(ref->new RefFacade(revWalk, ref))
+					.filter(refFacade->refFacade.getPeeledObj() instanceof RevCommit)
+					.collect(Collectors.toList());
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
@@ -441,8 +453,8 @@ public class GitUtils {
 
 	@Nullable
 	public static ObjectId merge(Repository repository, ObjectId targetCommitId, ObjectId sourceCommitId,
-			boolean squash, PersonIdent committer, PersonIdent author, String commitMessage,
-			boolean useOursOnConflict) {
+								 boolean squash, PersonIdent committer, PersonIdent author, String commitMessage,
+								 boolean useOursOnConflict) {
 		try (RevWalk revWalk = new RevWalk(repository); ObjectInserter inserter = repository.newObjectInserter();) {
 			RevCommit sourceCommit = revWalk.parseCommit(sourceCommitId);
 			RevCommit targetCommit = revWalk.parseCommit(targetCommitId);
@@ -473,7 +485,7 @@ public class GitUtils {
 	}
 
 	public static Collection<String> getChangedFiles(Repository repository, ObjectId oldCommitId,
-			ObjectId newCommitId) {
+													 ObjectId newCommitId) {
 		Collection<String> changedFiles = new HashSet<>();
 		try (RevWalk revWalk = new RevWalk(repository); TreeWalk treeWalk = new TreeWalk(repository)) {
 			treeWalk.setFilter(TreeFilter.ANY_DIFF);
@@ -544,6 +556,13 @@ public class GitUtils {
 			throw new RuntimeException(e);
 		}
 	}
+
+	public static String getBlobName(String blobPath) {
+		String blobName = blobPath;
+		if (blobPath.indexOf('/') != -1)
+			blobName = StringUtils.substringAfterLast(blobPath, "/");
+		return blobName;
+	}
 	
 	public static void sign(ObjectBuilder object, PGPSecretKeyRing signingKey) {
 		JcePBESecretKeyDecryptorBuilder decryptorBuilder = new JcePBESecretKeyDecryptorBuilder()
@@ -555,9 +574,9 @@ public class GitUtils {
 		} catch (PGPException e) {
 			throw new RuntimeException(e);
 		}
-		
+
 		PGPPublicKey publicKey = signingKey.getPublicKey();
-		
+
 		PGPSignatureGenerator signatureGenerator = new PGPSignatureGenerator(
 				new JcaPGPContentSignerBuilder(publicKey.getAlgorithm(), HashAlgorithmTags.SHA256)
 						.setProvider(BouncyCastleProvider.PROVIDER_NAME));
@@ -565,208 +584,20 @@ public class GitUtils {
 			signatureGenerator.init(PGPSignature.BINARY_DOCUMENT, privateKey);
 			PGPSignatureSubpacketGenerator subpackets = new PGPSignatureSubpacketGenerator();
 			subpackets.setIssuerFingerprint(false, publicKey);
-			
+
 			String emailAddress = GpgUtils.getEmailAddress(publicKey.getUserIDs().next());
 			subpackets.addSignerUserID(false, emailAddress);
-			
+
 			signatureGenerator.setHashedSubpackets(subpackets.generate());
 			ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 			try (BCPGOutputStream out = new BCPGOutputStream(new ArmoredOutputStream(buffer))) {
 				signatureGenerator.update(object.build());
 				signatureGenerator.generate().encode(out);
 			}
-			object.setGpgSignature(new GpgSignature(buffer.toByteArray()));		
+			object.setGpgSignature(new GpgSignature(buffer.toByteArray()));
 		} catch (IOException | PGPException e) {
 			throw new RuntimeException(e);
 		}
 	}
-	
-	@Nullable
-	public static SignatureVerification verifyTagSignature(byte[] raw, 
-			SignatureVerificationKeyLoader keyLoader) {
-		byte[] signatureData = TagParser.getRawGpgSignature(raw); 
-		if (signatureData == null) {
-			return null;
-		}
 
-		// The signature is just tacked onto the end of the message, which
-		// is last in the buffer.
-		byte[] data = Arrays.copyOfRange(raw, 0, raw.length - signatureData.length);
-		
-		PersonIdent taggerIdent = TagParser.getTaggerIdent(raw);
-		if (taggerIdent == null)
-			return null;
-		
-		return verify(data, signatureData, taggerIdent.getEmailAddress(), keyLoader);
-	}
-	
-	/*
-	 * Most logic here is copied from JGit
-	 */
-	@Nullable
-	public static SignatureVerification verifyCommitSignature(byte[] raw, 
-			SignatureVerificationKeyLoader keyLoader) {
-		byte[] header = {'g', 'p', 'g', 's', 'i', 'g'};
-		int start = RawParseUtils.headerStart(header, raw, 0);
-		if (start < 0)
-			return null;
-		int end = RawParseUtils.headerEnd(raw, start);
-		byte[] signatureData = Arrays.copyOfRange(raw, start, end);
-		
-		// start is at the beginning of the header's content
-		start -= header.length + 1;
-		// end is on the terminating LF; we need to skip that, too
-		if (end < raw.length) {
-			end++;
-		}
-		byte[] data = new byte[raw.length - (end - start)];
-		System.arraycopy(raw, 0, data, 0, start);
-		System.arraycopy(raw, end, data, start, raw.length - end);
-
-		int nameB = RawParseUtils.committer(raw, 0);
-		if (nameB < 0)
-			return null;
-		PersonIdent committerIdent = RawParseUtils.parsePersonIdent(raw, nameB);
-		String emailAddress = committerIdent.getEmailAddress();
-		return verify(data, signatureData, emailAddress, keyLoader);
-	}
-	
-	@Nullable
-	public static SignatureVerification verifySignature(RevObject object, SignatureVerificationKeyLoader keyLoader) {
-		if (object instanceof RevCommit) {
-			RevCommit commit = (RevCommit) object;
-			return verifyCommitSignature(commit.getRawBuffer(), keyLoader);
-		} else if (object instanceof RevTag) {
-			RevTag tag = (RevTag) object;
-			return verifyTagSignature(tag.getRawBuffer(), keyLoader);
-		} else {
-			return null;
-		}
-	}
-
-	private static PGPSignature parseSignature(InputStream in) throws IOException, PGPException {
-		try (InputStream sigIn = PGPUtil.getDecoderStream(in)) {
-			JcaPGPObjectFactory pgpFactory = new JcaPGPObjectFactory(sigIn);
-			Object obj = pgpFactory.nextObject();
-			if (obj instanceof PGPCompressedData) {
-				obj = new JcaPGPObjectFactory(((PGPCompressedData) obj).getDataStream()).nextObject();
-			}
-			if (obj instanceof PGPSignatureList) {
-				return ((PGPSignatureList) obj).get(0);
-			}
-			return null;
-		}
-	}
-
-	@Nullable
-	private static SignatureVerification verify(byte[] data, byte[] signatureData, String dataWriter, 
-			SignatureVerificationKeyLoader keyLoader) {
-		try (InputStream sigIn = new ByteArrayInputStream(signatureData)) {
-			PGPSignature signature = parseSignature(sigIn);
-			if (signature != null) {
-				SignatureVerificationKey key = keyLoader.getSignatureVerificationKey(signature.getKeyID());
-				if (key != null) {
-					try {
-						signature.init(
-								new JcaPGPContentVerifierBuilderProvider().setProvider(BouncyCastleProvider.PROVIDER_NAME),
-								key.getPublicKey());
-						signature.update(data);
-						if (signature.verify()) {
-							if (!key.shouldVerifyDataWriter() || key.getEmailAddresses().contains(dataWriter)) 
-								return new SignatureVerified(key);
-							else 
-								return new SignatureUnverified(key, "Can not verify committer email using signing key");
-						} else {
-							return new SignatureUnverified(key, "Invalid commit signature");
-						}
-					} catch (PGPException e) {
-						logger.error("Commit signature verification failed", e);
-						return new SignatureUnverified(key, "Signature verification failed");
-					}
-				} else {
-					return new SignatureUnverified(null, "Signature is signed with an unknown key "
-							+ "(key ID: " + GpgUtils.getKeyIDString(signature.getKeyID()) + ")");
-				}
-			} else {
-				return new SignatureUnverified(null, "Signature does not decode into a signature object");
-			}
-		} catch (PGPException e) {
-			logger.error("Error parsing commit signature", e);
-			return new SignatureUnverified(null, "Signature cannot be parsed");
-		} catch (IOException e2) {
-			throw new RuntimeException(e2);
-		}
-	}
-	
-	/*
-	 * Copied from JGit
-	 */
-	private static class TagParser {
-		
-		private static final byte[] hSignature = Constants.encodeASCII("-----BEGIN PGP SIGNATURE-----");
-
-		private static int nextStart(byte[] prefix, byte[] buffer, int from) {
-			int stop = buffer.length - prefix.length + 1;
-			int ptr = from;
-			if (ptr > 0) {
-				ptr = RawParseUtils.nextLF(buffer, ptr - 1);
-			}
-			while (ptr < stop) {
-				int lineStart = ptr;
-				boolean found = true;
-				for (byte element : prefix) {
-					if (element != buffer[ptr++]) {
-						found = false;
-						break;
-					}
-				}
-				if (found) {
-					return lineStart;
-				}
-				do {
-					ptr = RawParseUtils.nextLF(buffer, ptr);
-				} while (ptr < stop && buffer[ptr] == '\n');
-			}
-			return -1;
-		}
-
-		private static int getSignatureStart(byte[] raw) {
-			int msgB = RawParseUtils.tagMessage(raw, 0);
-			if (msgB < 0) {
-				return msgB;
-			}
-			// Find the last signature start and return the rest
-			int start = nextStart(hSignature, raw, msgB);
-			if (start < 0) {
-				return start;
-			}
-			int next = RawParseUtils.nextLF(raw, start);
-			while (next < raw.length) {
-				int newStart = nextStart(hSignature, raw, next);
-				if (newStart < 0) {
-					break;
-				}
-				start = newStart;
-				next = RawParseUtils.nextLF(raw, start);
-			}
-			return start;
-		}
-		
-		private static byte[] getRawGpgSignature(byte[] raw) {
-			int start = getSignatureStart(raw);
-			if (start < 0) {
-				return null;
-			}
-			return Arrays.copyOfRange(raw, start, raw.length);
-		}
-
-		private static PersonIdent getTaggerIdent(byte[] raw) {
-			int nameB = RawParseUtils.tagger(raw, 0);
-			if (nameB < 0)
-				return null;
-			return RawParseUtils.parsePersonIdent(raw, nameB);
-		}
-		
-	}
-	
 }

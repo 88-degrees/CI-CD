@@ -1,4 +1,4 @@
-<wicket:extend>
+<wicket:extend xmlns:wicket="http://www.w3.org/1999/html">
 	<div class="mb-5">
 		<a wicket:id="pauseOrResume" class="btn btn-light-primary mr-2"><span wicket:id="label"></span></a>
 		<a wicket:id="restart" class="btn btn-light-primary mr-2">Restart</a>
@@ -10,7 +10,6 @@
 			<th class="d-none d-xl-table-cell">IP Address</th>
 			<th class="d-none d-xl-table-cell">OS Version</th>
 			<th class="d-none d-xl-table-cell">OS Arch</th>
-			<th><span class="mr-1">Temporal</span> <a title="Temporal agent will be removed as soon as it goes offline"><wicket:svg href="question-o" class="icon icon-sm"/></a></th>
 			<th>Status</th>
 		</thead>
 		<tbody>
@@ -30,15 +29,18 @@
 				<td class="d-none d-xl-table-cell">
 					<span wicket:id="osArch"></span>
 				</td>
-				<td class="d-none d-xl-table-cell">
-					<span wicket:id="temporal"></span>
-				</td>
 				<td>
 					<span wicket:id="status"></span>
 				</td>
 			</tr>
 		</tbody>
 	</table>
+	<div class="mb-4">
+		<span class="font-weight-bold">Access Token: </span>
+		<span wicket:id="accessToken" class="text-monospace font-size-sm mr-2"></span> 
+		<a wicket:id="copyAccessToken" title="copy"><wicket:svg href="copy" class="icon mr-1"/></a>
+		<a wicket:id="regenerateAccessToken" title="Regenerate"><wicket:svg href="refresh2" class="icon"/></a>
+	</div>
 	<div wicket:id="attributes"></div>
 	<wicket:fragment wicket:id="onlineAttributesFrag">
 		<form wicket:id="form" class="leave-confirm">

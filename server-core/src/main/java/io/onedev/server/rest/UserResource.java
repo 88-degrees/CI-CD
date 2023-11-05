@@ -8,21 +8,17 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 
+import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
+import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
+import com.google.common.collect.Sets;
+import io.onedev.server.model.support.AccessToken;
 import org.apache.shiro.authc.credential.PasswordService;
 import org.apache.shiro.authz.UnauthenticatedException;
 import org.apache.shiro.authz.UnauthorizedException;
@@ -54,10 +50,10 @@ import io.onedev.server.model.support.issue.NamedIssueQuery;
 import io.onedev.server.model.support.pullrequest.NamedPullRequestQuery;
 import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.rest.annotation.EntityCreate;
-import io.onedev.server.rest.exception.InvalidParamException;
-import io.onedev.server.rest.support.RestConstants;
 import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.validation.annotation.UserName;
+import io.onedev.server.annotation.UserName;
+
+import static javax.ws.rs.core.Response.Status.NOT_FOUND;
 
 @Api(order=5000)
 @Path("/users")
@@ -104,15 +100,15 @@ public class UserResource {
     }
 	
 	@Api(order=250)
-	@Path("/{userId}/access-token")
+	@Path("/{userId}/access-tokens")
     @GET
-    public String getAccessToken(@PathParam("userId") Long userId) {
+    public List<AccessToken> getAccessTokens(@PathParam("userId") Long userId) {
     	User user = userManager.load(userId);
     	if (!SecurityUtils.isAdministrator() && !user.equals(SecurityUtils.getUser())) 
 			throw new UnauthorizedException();
-		return user.getAccessToken();
+		return user.getAccessTokens();
     }
-	
+
 	@Api(order=275)
 	@Path("/{userId}/email-addresses")
     @GET
@@ -275,12 +271,8 @@ public class UserResource {
     		@QueryParam("term") @Api(description="Any string in login name, full name or email address") String term, 
     		@QueryParam("offset") @Api(example="0") int offset, 
     		@QueryParam("count") @Api(example="100") int count) {
-		
 		if (!SecurityUtils.isAdministrator())
 			throw new UnauthorizedException();
-		
-    	if (count > RestConstants.MAX_PAGE_SIZE)
-    		throw new InvalidParamException("Count should not be greater than " + RestConstants.MAX_PAGE_SIZE);
 
     	return userManager.query(term, offset, count);
     }
@@ -298,7 +290,8 @@ public class UserResource {
 			user.setName(data.getName());
 			user.setFullName(data.getFullName());
 			user.setPassword(passwordService.encryptPassword(data.getPassword()));
-			userManager.save(user);
+			user.setGuest(data.isGuest());
+			userManager.create(user);
 			
 			EmailAddress emailAddress = new EmailAddress();
 			emailAddress.setGit(true);
@@ -306,18 +299,35 @@ public class UserResource {
 			emailAddress.setOwner(user);
 			emailAddress.setValue(data.getEmailAddress());
 			emailAddress.setVerificationCode(null);
-			emailAddressManager.save(emailAddress);
+			emailAddressManager.create(emailAddress);
 			
 			return user.getId();
 		} else {
 			throw new UnauthenticatedException();
 		}
     }
+
+	@Api(order=1910, description="Create access token. This operation returns value of created access token")
+	@Path("/{userId}/access-tokens")
+	@POST
+	public String createAccessToken(@PathParam("userId") Long userId, @NotNull @Valid AccessTokenData accessTokenData) {
+		User user = userManager.load(userId);
+		if (SecurityUtils.isAdministrator() || user.equals(SecurityUtils.getUser())) {
+			AccessToken accessToken = new AccessToken();
+			accessToken.setDescription(accessTokenData.getDescription());
+			accessToken.setExpireDate(accessTokenData.getExpireDate());
+			user.getAccessTokens().add(accessToken);
+			userManager.update(user, null);
+			return accessToken.getValue();
+		} else {
+			throw new UnauthenticatedException();
+		}
+	}
 	
 	@Api(order=1950, description="Update user profile")
 	@Path("/{userId}")
     @POST
-    public Long updateProfile(@PathParam("userId") Long userId, @NotNull @Valid ProfileUpdateData data) {
+    public Response updateProfile(@PathParam("userId") Long userId, @NotNull @Valid ProfileUpdateData data) {
 		User user = userManager.load(userId);
 		if (SecurityUtils.isAdministrator() || user.equals(SecurityUtils.getUser())) { 
 			User existingUser = userManager.findByName(data.getName());
@@ -327,8 +337,8 @@ public class UserResource {
 			String oldName = user.getName();
 			user.setName(data.getName());
 			user.setFullName(data.getFullName());
-			userManager.save(user, oldName);
-			return user.getId();
+			userManager.update(user, oldName);
+			return Response.ok().build();
 		} else { 
 			throw new UnauthenticatedException();
 		}
@@ -351,10 +361,27 @@ public class UserResource {
 			}
 		} else {
 	    	user.setPassword(passwordService.encryptPassword(password));
-	    	userManager.save(user);
+	    	userManager.update(user, null);
 	    	return Response.ok().build();
 		}
     }
+	
+	@Api(order=2050)
+	@Path("/{userId}/guest")
+	@POST
+	public Response setGuest(@PathParam("userId") Long userId, boolean guest) {
+		User user = userManager.load(userId);
+		if (!SecurityUtils.isAdministrator()) {
+			throw new UnauthorizedException();
+		} else if (user.isRoot()) {
+			throw new ExplicitException("Can not change guest status of root user");
+		} else if (user.equals(SecurityUtils.getUser())) {
+			throw new ExplicitException("Can not change guest status of yourself");
+		} else {
+			userManager.setAsGuest(Sets.newHashSet(user), guest);
+			return Response.ok().build();
+		}
+	}
 	
 	@Api(order=2100)
 	@Path("/{userId}/queries-and-watches")
@@ -371,7 +398,7 @@ public class UserResource {
 		user.setIssueQueryWatches(queriesAndWatches.issueQueryWatches);
 		user.setProjectQueries(queriesAndWatches.projectQueries);
 		user.setPullRequestQueries(queriesAndWatches.pullRequestQueries);
-		userManager.save(user);
+		userManager.update(user, null);
 		return Response.ok().build();
     }
 	
@@ -385,9 +412,9 @@ public class UserResource {
 		sshKey.setContent(content);
 		sshKey.setCreatedAt(new Date());
 		sshKey.setOwner(user);
-		sshKey.digest();
+		sshKey.fingerprint();
         
-		sshKeyManager.save(sshKey);
+		sshKeyManager.create(sshKey);
 		return sshKey.getId();
 	}
 	
@@ -407,6 +434,30 @@ public class UserResource {
     	return Response.ok().build();
     }
 
+	@Api(order=2400, description="Delete access token by value")
+	@Path("/{userId}/access-tokens/{accessTokenValue}")
+	@DELETE
+	public Response deleteAccessToken(@PathParam("userId") Long userId, @PathParam("accessTokenValue") @NotEmpty String accessTokenValue) {
+		User user = userManager.load(userId);
+		if (SecurityUtils.isAdministrator() || user.equals(SecurityUtils.getUser())) {
+			var found = false;
+			for (var it = user.getAccessTokens().iterator(); it.hasNext();) {
+				if (it.next().getValue().equals(accessTokenValue)) {
+					it.remove();
+					found = true;
+				}
+			}
+			if (found) {
+				userManager.update(user, null);
+				return Response.ok().build();
+			} else {
+				return Response.status(NOT_FOUND.getStatusCode(), "No access token found with specified value").build();
+			}
+		} else {
+			throw new UnauthenticatedException();
+		}
+	}
+
 	@EntityCreate(User.class)
 	public static class UserCreateData implements Serializable {
 
@@ -419,6 +470,8 @@ public class UserResource {
 		private String fullName;
 		
 		private String emailAddress;
+		
+		private boolean guest;
 
 		@Api(order=100, description="Login name of the user")
 		@UserName
@@ -460,7 +513,15 @@ public class UserResource {
 		public void setEmailAddress(String emailAddress) {
 			this.emailAddress = emailAddress;
 		}
-		
+
+		@Api(order=400)
+		public boolean isGuest() {
+			return guest;
+		}
+
+		public void setGuest(boolean guest) {
+			this.guest = guest;
+		}
 	}
 	
 	public static class ProfileUpdateData implements Serializable {
@@ -491,6 +552,35 @@ public class UserResource {
 			this.fullName = fullName;
 		}
 
+	}
+	
+	public static class AccessTokenData implements Serializable {
+		
+		private static final long serialVersionUID = 1L;
+
+		@Api(order=100, description = "Description of access token. Maybe null")
+		private String description;
+
+		@Api(order=200, description = "Expiration date of access token. Null to never expire")
+		private Date expireDate;
+
+		@Nullable
+		public String getDescription() {
+			return description;
+		}
+
+		public void setDescription(@Nullable String description) {
+			this.description = description;
+		}
+
+		@Nullable
+		public Date getExpireDate() {
+			return expireDate;
+		}
+
+		public void setExpireDate(@Nullable Date expireDate) {
+			this.expireDate = expireDate;
+		}
 	}
 	
 	public static class QueriesAndWatches implements Serializable {

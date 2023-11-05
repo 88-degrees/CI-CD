@@ -1,23 +1,19 @@
 package io.onedev.server.web.component.build.status;
 
-import java.util.Collection;
-
-import javax.annotation.Nullable;
-
+import com.google.common.collect.Sets;
+import io.onedev.server.model.Build;
+import io.onedev.server.model.Build.Status;
+import io.onedev.server.web.behavior.ChangeObserver;
+import io.onedev.server.web.component.svg.SpriteImage;
 import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
 import org.apache.wicket.markup.head.CssHeaderItem;
 import org.apache.wicket.markup.head.IHeaderResponse;
 import org.apache.wicket.model.AbstractReadOnlyModel;
 import org.apache.wicket.model.IModel;
 import org.apache.wicket.model.LoadableDetachableModel;
 
-import com.google.common.collect.Sets;
-
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Build.Status;
-import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.component.svg.SpriteImage;
+import javax.annotation.Nullable;
+import java.util.Collection;
 
 @SuppressWarnings("serial")
 public class BuildStatusIcon extends SpriteImage {
@@ -49,16 +45,11 @@ public class BuildStatusIcon extends SpriteImage {
 			
 		}));
 		
-		add(new WebSocketObserver() {
+		add(new ChangeObserver() {
 			
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(component);
-			}
-			
-			@Override
-			public Collection<String> getObservables() {
-				return getWebSocketObservables();
+			public Collection<String> findObservables() {
+				return getChangeObservables();
 			}
 			
 		});
@@ -72,7 +63,7 @@ public class BuildStatusIcon extends SpriteImage {
 		super.onDetach();
 	}
 
-	protected Collection<String> getWebSocketObservables() {
+	protected Collection<String> getChangeObservables() {
 		return Sets.newHashSet();
 	}
 	
@@ -109,11 +100,11 @@ public class BuildStatusIcon extends SpriteImage {
 	
 	public static String getIconClass(@Nullable Status status) {
 		if (status == Build.Status.RUNNING)
-			return "icon build-status-running spin";
+			return "icon flex-shrink-0 build-status-running spin";
 		else if (status != null)
-			return "icon build-status-" + status.name().toLowerCase();
+			return "icon flex-shrink-0 build-status-" + status.name().toLowerCase();
 		else
-			return "icon build-status-none";
+			return "icon flex-shrink-0 build-status-none";
 	}
 	
 }

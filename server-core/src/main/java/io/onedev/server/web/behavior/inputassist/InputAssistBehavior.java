@@ -1,10 +1,17 @@
 package io.onedev.server.web.behavior.inputassist;
 
-import static org.apache.wicket.ajax.attributes.CallbackParameter.explicit;
-
-import java.util.ArrayList;
-import java.util.List;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Splitter;
+import io.onedev.commons.codeassist.InputCompletion;
+import io.onedev.commons.codeassist.InputStatus;
+import io.onedev.commons.loader.AppLoader;
+import io.onedev.commons.utils.LinearRange;
+import io.onedev.server.util.ComponentContext;
+import io.onedev.server.util.RangeUtils;
+import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
+import io.onedev.server.web.component.floating.*;
 import org.apache.wicket.Component;
 import org.apache.wicket.ajax.AjaxChannel;
 import org.apache.wicket.ajax.AjaxRequestTarget;
@@ -17,30 +24,23 @@ import org.apache.wicket.request.IRequestParameters;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.unbescape.javascript.JavaScriptEscape;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Preconditions;
-import com.google.common.base.Splitter;
+import java.util.ArrayList;
+import java.util.List;
 
-import io.onedev.commons.codeassist.InputCompletion;
-import io.onedev.commons.codeassist.InputStatus;
-import io.onedev.commons.loader.AppLoader;
-import io.onedev.commons.utils.LinearRange;
-import io.onedev.server.util.ComponentContext;
-import io.onedev.server.util.RangeUtils;
-import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
-import io.onedev.server.web.component.floating.AlignPlacement;
-import io.onedev.server.web.component.floating.AlignTarget;
-import io.onedev.server.web.component.floating.Alignment;
-import io.onedev.server.web.component.floating.ComponentTarget;
-import io.onedev.server.web.component.floating.FloatingPanel;
+import static org.apache.wicket.ajax.attributes.CallbackParameter.explicit;
 
 @SuppressWarnings("serial")
 public abstract class InputAssistBehavior extends AbstractPostAjaxBehavior {
 
 	public static final int MAX_SUGGESTIONS = 1000;
 	
+	private boolean hideIfBlank;
+	
 	private FloatingPanel dropdown;
+	
+	public InputAssistBehavior(boolean hideIfBlank) {
+		this.hideIfBlank = hideIfBlank;
+	}
 	
 	@Override
 	protected void onBind() {
@@ -145,53 +145,72 @@ public abstract class InputAssistBehavior extends AbstractPostAjaxBehavior {
 				} finally {
 					ComponentContext.pop();
 				}
-				if (!suggestions.isEmpty()) {
-					int anchor = getAnchor(inputContent.substring(0, inputCaret));
-					if (dropdown == null) {
-						dropdown = new FloatingPanel(target, new Alignment(new ComponentTarget(getComponent(), anchor), AlignPlacement.bottom(0))) {
+				if (!suggestions.isEmpty() && (inputContent.length() != 0 || !hideIfBlank)) {
+					boolean hasOtherSuggestions = false;
+					boolean hasAppendSpaceSuggestions = false;
+					if ("assist".equals(params.getParameterValue("event").toString()) 
+							&& !inputContent.endsWith(" ") 
+							&& inputCaret == inputContent.length()) {
+						for (var suggestion: suggestions) {
+							if (suggestion.getContent().equals(inputContent + " ") && suggestion.getCaret() == inputContent.length() + 1) 
+								hasAppendSpaceSuggestions = true;
+							else if (!suggestion.getContent().equals(inputContent) && !isFuzzySuggestion(suggestion)) 
+								hasOtherSuggestions = true;
+						}
+					}
 
-							@Override
-							protected Component newContent(String id) {
-								return new AssistPanel(id, getComponent(), suggestions, getHints(inputStatus)) {
-
-									@Override
-									protected void onClose(AjaxRequestTarget target) {
-										close();
-									}
-									
-								};
-							}
-
-							@Override
-							protected void onClosed() {
-								super.onClosed();
-								dropdown = null;
-							}
-							
-						};
-						script = String.format("onedev.server.inputassist.assistOpened('%s', '%s', '%s');", 
-								getComponent().getMarkupId(), dropdown.getMarkupId(), JavaScriptEscape.escapeJavaScript(inputContent));
-						target.appendJavaScript(script);
+					if (hasAppendSpaceSuggestions && !hasOtherSuggestions) {
+						target.appendJavaScript(
+								String.format("onedev.server.inputassist.appendSpace('%s');", 
+								getComponent().getMarkupId()));
 					} else {
-						Component content = dropdown.getContent();
-						Component newContent = new AssistPanel(content.getId(), getComponent(), suggestions, getHints(inputStatus)) {
+						int anchor = getAnchor(inputContent.substring(0, inputCaret));
+						if (dropdown == null) {
+							dropdown = new FloatingPanel(target, new Alignment(new ComponentTarget(getComponent(), anchor), AlignPlacement.bottom(0))) {
 
-							@Override
-							protected void onClose(AjaxRequestTarget target) {
-								close();
-							}
-							
-						};
-						content.replaceWith(newContent);
-						target.add(newContent);
+								@Override
+								protected Component newContent(String id) {
+									return new AssistPanel(id, getComponent(), suggestions, getHints(inputStatus)) {
 
-						AlignTarget alignTarget = new ComponentTarget(getComponent(), anchor);
-						script = String.format("$('#%s').data('alignment').target=%s;", dropdown.getMarkupId(), alignTarget);
-						target.prependJavaScript(script);
-						
-						script = String.format("onedev.server.inputassist.assistUpdated('%s', '%s', '%s');", 
-								getComponent().getMarkupId(), dropdown.getMarkupId(), JavaScriptEscape.escapeJavaScript(inputContent));
-						target.appendJavaScript(script);
+										@Override
+										protected void onClose(AjaxRequestTarget target) {
+											close();
+										}
+
+									};
+								}
+
+								@Override
+								protected void onClosed() {
+									super.onClosed();
+									dropdown = null;
+								}
+
+							};
+							script = String.format("onedev.server.inputassist.assistOpened('%s', '%s', '%s');",
+									getComponent().getMarkupId(), dropdown.getMarkupId(), JavaScriptEscape.escapeJavaScript(inputContent));
+							target.appendJavaScript(script);
+						} else {
+							Component content = dropdown.getContent();
+							Component newContent = new AssistPanel(content.getId(), getComponent(), suggestions, getHints(inputStatus)) {
+
+								@Override
+								protected void onClose(AjaxRequestTarget target) {
+									close();
+								}
+
+							};
+							content.replaceWith(newContent);
+							target.add(newContent);
+
+							AlignTarget alignTarget = new ComponentTarget(getComponent(), anchor);
+							script = String.format("$('#%s').data('alignment').target=%s;", dropdown.getMarkupId(), alignTarget);
+							target.prependJavaScript(script);
+
+							script = String.format("onedev.server.inputassist.assistUpdated('%s', '%s', '%s');",
+									getComponent().getMarkupId(), dropdown.getMarkupId(), JavaScriptEscape.escapeJavaScript(inputContent));
+							target.appendJavaScript(script);
+						}
 					}
 				} else if (dropdown != null) {
 					dropdown.close();
@@ -219,11 +238,11 @@ public abstract class InputAssistBehavior extends AbstractPostAjaxBehavior {
 		
 		String script = String.format("onedev.server.inputassist.onDomReady('%s', %s);", 
 				getComponent().getMarkupId(true), 
-				getCallbackFunction(explicit("type"), explicit("input"), explicit("caret")));
+				getCallbackFunction(explicit("type"), explicit("input"), explicit("caret"), explicit("event")));
 		
 		response.render(OnDomReadyHeaderItem.forScript(script));
 	}
-
+	
 	protected abstract List<InputCompletion> getSuggestions(InputStatus inputStatus);
 
 	protected List<String> getHints(InputStatus inputStatus) {
@@ -241,5 +260,8 @@ public abstract class InputAssistBehavior extends AbstractPostAjaxBehavior {
 	 * @return
 	 */
 	protected abstract int getAnchor(String inputContent);
-	
+
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return false;
+	}
 }

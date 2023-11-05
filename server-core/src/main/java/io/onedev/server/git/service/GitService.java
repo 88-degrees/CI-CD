@@ -4,6 +4,7 @@ import io.onedev.commons.utils.LinearRange;
 import io.onedev.server.git.*;
 import io.onedev.server.git.command.RevListOptions;
 import io.onedev.server.model.Project;
+import io.onedev.server.model.User;
 import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -43,7 +44,7 @@ public interface GitService {
 	@Nullable
 	String getClosestPath(Project project, ObjectId revId, String path);
 	
-	List<RefFacade> getRefs(Project project, String prefix);
+	List<RefFacade> getCommitRefs(Project project, String prefix);
 
 	RefFacade getRef(Project project, String revision);
 	
@@ -82,6 +83,9 @@ public interface GitService {
 	@Nullable
 	Blob getBlob(Project project, ObjectId revId, String path);
 	
+	@Nullable
+	BlobIdent getBlobIdent(Project project, ObjectId revId, String path);
+	
 	void deleteRefs(Project project, Collection<String> refs);
 	
 	@Nullable
@@ -112,6 +116,8 @@ public interface GitService {
 	
 	boolean hasObjects(Project project, ObjectId... objIds);
 
+	Collection<ObjectId> filterNonExistants(Project project, Collection<ObjectId> objIds);
+	
 	List<BlobIdent> getChildren(Project project, ObjectId revId, @Nullable String path, 
 			BlobIdentFilter filter, boolean expandSingle);
 	
@@ -128,6 +134,12 @@ public interface GitService {
 	
 	byte[] getRawCommit(Project project, ObjectId revId, Map<String, String> envs);
 	
+	@Nullable
+	CommitMessageError checkCommitMessages(Project project, String branch, User user,
+							   ObjectId oldId, ObjectId newId, 
+							   @Nullable Map<String, String> envs);
+	
+	@Nullable
 	byte[] getRawTag(Project project, ObjectId tagId, Map<String, String> envs);
 	
 }

@@ -5,6 +5,7 @@ import java.util.Collection;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
+import com.google.common.base.Preconditions;
 import io.onedev.server.entitymanager.LinkAuthorizationManager;
 import io.onedev.server.model.LinkAuthorization;
 import io.onedev.server.model.LinkSpec;
@@ -41,9 +42,16 @@ public class DefaultLinkAuthorizationManager extends BaseEntityManager<LinkAutho
 				LinkAuthorization authorization = new LinkAuthorization();
 				authorization.setLink(link);
 				authorization.setRole(role);
-				save(authorization);
+				create(authorization);
 			}
 		}
+	}
+
+	@Transactional
+	@Override
+	public void create(LinkAuthorization authorization) {
+		Preconditions.checkState(authorization.isNew());
+		dao.persist(authorization);
 	}
 
 }

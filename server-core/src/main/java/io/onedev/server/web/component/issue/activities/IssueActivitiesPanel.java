@@ -5,23 +5,25 @@ import io.onedev.server.OneDev;
 import io.onedev.server.attachment.AttachmentSupport;
 import io.onedev.server.attachment.ProjectAttachmentSupport;
 import io.onedev.server.entitymanager.IssueCommentManager;
+import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.entityreference.ReferencedFromAware;
 import io.onedev.server.model.*;
-import io.onedev.server.model.support.issue.changedata.IssueDescriptionChangeData;
+import io.onedev.server.model.support.issue.TimeTrackingSetting;
+import io.onedev.server.model.support.issue.changedata.*;
 import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.ProjectScopedCommit;
 import io.onedev.server.util.facade.UserCache;
 import io.onedev.server.web.ajaxlistener.ConfirmLeaveListener;
-import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.component.issue.activities.activity.IssueActivity;
-import io.onedev.server.web.component.issue.activities.activity.IssueChangeActivity;
-import io.onedev.server.web.component.issue.activities.activity.IssueCommentedActivity;
-import io.onedev.server.web.component.issue.activities.activity.IssueOpenedActivity;
+import io.onedev.server.web.behavior.ChangeObserver;
 import io.onedev.server.web.component.comment.CommentInput;
+import io.onedev.server.web.component.issue.activities.activity.*;
 import io.onedev.server.web.component.user.ident.Mode;
 import io.onedev.server.web.component.user.ident.UserIdentPanel;
+import io.onedev.server.web.page.base.BasePage;
 import io.onedev.server.web.page.simple.security.LoginPage;
 import io.onedev.server.web.util.DeleteCallback;
+import io.onedev.server.web.util.WicketUtils;
 import org.apache.wicket.AttributeModifier;
 import org.apache.wicket.Component;
 import org.apache.wicket.RestartResponseAtInterceptPageException;
@@ -37,7 +39,6 @@ import org.apache.wicket.markup.head.CssHeaderItem;
 import org.apache.wicket.markup.head.IHeaderResponse;
 import org.apache.wicket.markup.html.WebMarkupContainer;
 import org.apache.wicket.markup.html.form.Form;
-import org.apache.wicket.markup.html.link.Link;
 import org.apache.wicket.markup.html.panel.Fragment;
 import org.apache.wicket.markup.html.panel.Panel;
 import org.apache.wicket.markup.repeater.RepeatingView;
@@ -58,12 +59,16 @@ public abstract class IssueActivitiesPanel extends Panel {
 	private static final String COOKIE_SHOW_COMMENTS = "onedev.server.issue.showComments";
 	
 	private static final String COOKIE_SHOW_CHANGE_HISTORY = "onedev.server.issue.showChangeHistory";
- 	
+
+	private static final String COOKIE_SHOW_WORK_LOG = "onedev.server.issue.showWorkLog";
+	
 	private RepeatingView activitiesView;
 
 	private boolean showComments = true;
 	
 	private boolean showChangeHistory = true;
+	
+	private boolean showWorkLog = true;
 	
 	public IssueActivitiesPanel(String panelId) {
 		super(panelId);
@@ -76,6 +81,10 @@ public abstract class IssueActivitiesPanel extends Panel {
 		cookie = request.getCookie(COOKIE_SHOW_CHANGE_HISTORY);
 		if (cookie != null)
 			showChangeHistory = Boolean.valueOf(cookie.getValue());
+
+		cookie = request.getCookie(COOKIE_SHOW_WORK_LOG);
+		if (cookie != null)
+			showWorkLog = Boolean.valueOf(cookie.getValue());
 	}
 
 	@Override
@@ -84,12 +93,14 @@ public abstract class IssueActivitiesPanel extends Panel {
 		addOrReplace(activitiesView);
 		Issue issue = getIssue();
 
+		var user = SecurityUtils.getUser();
 		for (IssueActivity activity: getActivities()) {
 			if (issue.isVisitedAfter(activity.getDate())) {
 				activitiesView.add(newActivityRow(activitiesView.newChildId(), activity));
 			} else {
 				Component row = newActivityRow(activitiesView.newChildId(), activity);
-				row.add(AttributeAppender.append("class", "new"));
+				if (user == null || !user.equals(activity.getUser()))
+					row.add(AttributeAppender.append("class", "new"));
 				activitiesView.add(row);
 			}
 		}		
@@ -108,14 +119,16 @@ public abstract class IssueActivitiesPanel extends Panel {
 			for (IssueChange change: getIssue().getChanges()) {
 				if (change.getData() instanceof ReferencedFromAware) {
 					ReferencedFromAware<?> referencedFromAware = (ReferencedFromAware<?>) change.getData();
-					if (referencedFromAware.getReferencedFrom() instanceof Issue) {
-						Issue issue = (Issue) referencedFromAware.getReferencedFrom();
-						if (SecurityUtils.canAccess(issue))
-							otherActivities.add(new IssueChangeActivity(change));
-					} else if (referencedFromAware.getReferencedFrom() != null) {
+					if (ReferencedFromAware.canDisplay(referencedFromAware))
 						otherActivities.add(new IssueChangeActivity(change));
-					}
-				} else if (!(change.getData() instanceof IssueDescriptionChangeData)) {
+				} else if (change.getData() instanceof IssueReferencedFromCommitData) {
+					ProjectScopedCommit commit = ((IssueReferencedFromCommitData) change.getData()).getCommit();
+					if (commit.canDisplay() && !getIssue().getCommits().contains(commit))
+						otherActivities.add(new IssueChangeActivity(change));
+				} else if (!(change.getData() instanceof IssueDescriptionChangeData)
+						&& !(change.getData() instanceof IssueTotalEstimatedTimeChangeData)
+						&& !(change.getData() instanceof IssueOwnSpentTimeChangeData)
+						&& !(change.getData() instanceof IssueTotalSpentTimeChangeData)) {
 					otherActivities.add(new IssueChangeActivity(change));
 				}
 			}
@@ -124,6 +137,11 @@ public abstract class IssueActivitiesPanel extends Panel {
 		if (showComments) {
 			for (IssueComment comment: getIssue().getComments())  
 				otherActivities.add(new IssueCommentedActivity(comment));
+		}
+		
+		if (showWorkLog && getIssue().getProject().isTimeTracking() && WicketUtils.isSubscriptionActive()) {
+			for (IssueWork work: getIssue().getWorks())
+				otherActivities.add(new IssueWorkActivity(work));
 		}
 		
 		otherActivities.sort((o1, o2) -> {
@@ -154,14 +172,9 @@ public abstract class IssueActivitiesPanel extends Panel {
 			row.add(new WebMarkupContainer("avatar").setVisible(false));
 		}
 
-		row.add(activity.render("content", new DeleteCallback() {
-
-			@Override
-			public void onDelete(AjaxRequestTarget target) {
-				row.remove();
-				target.appendJavaScript(String.format("$('#%s').remove();", row.getMarkupId()));
-			}
-			
+		row.add(activity.render("content", (DeleteCallback) target -> {
+			row.remove();
+			target.appendJavaScript(String.format("$('#%s').remove();", row.getMarkupId()));
 		}));
 		
 		row.add(AttributeAppender.append("class", activity.getClass().getSimpleName()));
@@ -172,10 +185,10 @@ public abstract class IssueActivitiesPanel extends Panel {
 	protected void onInitialize() {
 		super.onInitialize();
 		
-		add(new WebSocketObserver() {
+		add(new ChangeObserver() {
 			
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
+			public void onObservableChanged(IPartialPageRequestHandler handler, Collection<String> changedObservables) {
 				updateActivities(handler);
 			}
 			
@@ -189,9 +202,11 @@ public abstract class IssueActivitiesPanel extends Panel {
 						newActivities.add(activity);
 				}
 
+				var user = SecurityUtils.getUser();
 				for (IssueActivity activity: newActivities) {
 					Component newActivityRow = newActivityRow(activitiesView.newChildId(), activity); 
-					newActivityRow.add(AttributeAppender.append("class", "new"));
+					if (user == null || !user.equals(activity.getUser()))
+						newActivityRow.add(AttributeAppender.append("class", "new"));
 					activitiesView.add(newActivityRow);
 					
 					String script = String.format("$(\"<tr id='%s'></tr>\").insertAfter('#%s');", 
@@ -203,8 +218,8 @@ public abstract class IssueActivitiesPanel extends Panel {
 			}
 			
 			@Override
-			public Collection<String> getObservables() {
-				return Lists.newArrayList(Issue.getWebSocketObservable(getIssue().getId()));
+			public Collection<String> findObservables() {
+				return Lists.newArrayList(Issue.getDetailChangeObservable(getIssue().getId()));
 			}
 			
 		});
@@ -261,6 +276,7 @@ public abstract class IssueActivitiesPanel extends Panel {
 						comment.setDate(new Date());
 						comment.setIssue(getIssue());
 						OneDev.getInstance(IssueCommentManager.class).create(comment, new ArrayList<>());
+						((BasePage)getPage()).notifyObservablesChange(target, getIssue().getChangeObservables(false));
 						
 						input.clearMarkdown();
 						
@@ -280,10 +296,10 @@ public abstract class IssueActivitiesPanel extends Panel {
 			add(fragment);
 		} else {
 			Fragment fragment = new Fragment("addComment", "loginToCommentFrag", this);
-			fragment.add(new Link<Void>("login") {
+			fragment.add(new AjaxLink<Void>("login") {
 
 				@Override
-				public void onClick() {
+				public void onClick(AjaxRequestTarget target) {
 					throw new RestartResponseAtInterceptPageException(LoginPage.class);
 				}
 				
@@ -361,8 +377,47 @@ public abstract class IssueActivitiesPanel extends Panel {
 			}
 
 		});
-				
+
+		fragment.add(new AjaxLink<Void>("showWorkLog") {
+
+			@Override
+			protected void onInitialize() {
+				super.onInitialize();
+				if (showWorkLog)
+					add(AttributeAppender.append("class", "active"));
+			}
+
+			@Override
+			protected void updateAjaxAttributes(AjaxRequestAttributes attributes) {
+				super.updateAjaxAttributes(attributes);
+				attributes.getAjaxCallListeners().add(new ConfirmLeaveListener());
+			}
+
+			@Override
+			public void onClick(AjaxRequestTarget target) {
+				showWorkLog = !showWorkLog;
+				WebResponse response = (WebResponse) RequestCycle.get().getResponse();
+				Cookie cookie = new Cookie(COOKIE_SHOW_WORK_LOG, String.valueOf(showWorkLog));
+				cookie.setPath("/");
+				cookie.setMaxAge(Integer.MAX_VALUE);
+				response.addCookie(cookie);
+				target.add(IssueActivitiesPanel.this);
+				target.appendJavaScript(String.format("$('#%s').toggleClass('active');", getMarkupId()));
+			}
+
+			@Override
+			protected void onConfigure() {
+				super.onConfigure();
+				setVisible(getIssue().getProject().isTimeTracking() && WicketUtils.isSubscriptionActive());
+			}
+			
+		});
+		
 		return fragment;
 	}
 
+	private TimeTrackingSetting getTimeTrackingSetting() {
+		return OneDev.getInstance(SettingManager.class).getIssueSetting().getTimeTrackingSetting();
+	}
+	
 }

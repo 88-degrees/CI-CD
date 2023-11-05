@@ -46,11 +46,9 @@ public class DefaultPullRequestReviewManager extends BaseEntityManager<PullReque
 		this.listenerRegistry = listenerRegistry;
 	}
 
- 	@Transactional
-	@Override
-	public void save(PullRequestReview review) {
+	private void createOrUpdate(PullRequestReview review) {
  		review.setDirty(false);
-		super.save(review);
+		dao.persist(review);
 		
 		if (review.getStatus() == Status.PENDING) {
 			listenerRegistry.post(new PullRequestReviewRequested(
@@ -63,7 +61,21 @@ public class DefaultPullRequestReviewManager extends BaseEntityManager<PullReque
 		}
 	}
 
- 	@Sessional
+	@Transactional
+	@Override
+	public void create(PullRequestReview review) {
+		Preconditions.checkState(review.isNew());
+		createOrUpdate(review);	
+	}
+	
+	@Transactional
+	@Override
+	public void update(PullRequestReview review) {
+		Preconditions.checkState(!review.isNew());
+		createOrUpdate(review);
+	}
+
+	@Sessional
 	@Override
 	public void populateReviews(Collection<PullRequest> requests) {
 		CriteriaBuilder builder = getSession().getCriteriaBuilder();
@@ -92,7 +104,7 @@ public class DefaultPullRequestReviewManager extends BaseEntityManager<PullReque
 		else
 			review.setStatus(PullRequestReview.Status.REQUESTED_FOR_CHANGES);
 			
-		save(review);
+		createOrUpdate(review);
 		
 		PullRequestChange change = new PullRequestChange();
 		change.setDate(review.getStatusDate());
@@ -103,7 +115,7 @@ public class DefaultPullRequestReviewManager extends BaseEntityManager<PullReque
 		else
 			change.setData(new PullRequestRequestedForChangesData());
 		
-		changeManager.save(change, note);
+		changeManager.create(change, note);
 	}
 
 }

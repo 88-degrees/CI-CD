@@ -103,7 +103,7 @@ public class ProjectPullRequestsPage extends ProjectPage {
 			@Override
 			protected void onSaveCommonQueries(ArrayList<NamedPullRequestQuery> namedQueries) {
 				getProject().getPullRequestSetting().setNamedQueries(namedQueries);
-				OneDev.getInstance(ProjectManager.class).save(getProject());
+				OneDev.getInstance(ProjectManager.class).update(getProject());
 			}
 
 		});
@@ -172,7 +172,11 @@ public class ProjectPullRequestsPage extends ProjectPage {
 										} else {
 											namedQuery.setQuery(query);
 										}
-										getPullRequestQueryPersonalizationManager().save(setting);
+										if (setting.isNew()) 
+											getPullRequestQueryPersonalizationManager().create(setting);
+										else
+											getPullRequestQueryPersonalizationManager().update(setting);
+											
 										target.add(savedQueries);
 										close();
 									}
@@ -191,7 +195,7 @@ public class ProjectPullRequestsPage extends ProjectPage {
 										} else {
 											namedQuery.setQuery(query);
 										}
-										OneDev.getInstance(ProjectManager.class).save(getProject());
+										OneDev.getInstance(ProjectManager.class).update(getProject());
 										target.add(savedQueries);
 										close();
 									}

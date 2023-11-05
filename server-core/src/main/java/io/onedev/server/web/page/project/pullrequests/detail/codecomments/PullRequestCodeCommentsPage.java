@@ -1,12 +1,16 @@
 package io.onedev.server.web.page.project.pullrequests.detail.codecomments;
 
-import java.io.Serializable;
-import java.util.Collection;
-
-import javax.annotation.Nullable;
-
+import com.google.common.collect.Sets;
+import io.onedev.server.OneDev;
+import io.onedev.server.xodus.VisitInfoManager;
+import io.onedev.server.model.Project;
+import io.onedev.server.model.PullRequest;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.web.behavior.ChangeObserver;
+import io.onedev.server.web.component.codecomment.CodeCommentListPanel;
+import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPage;
+import io.onedev.server.web.util.PagingHistorySupport;
 import org.apache.wicket.ajax.AjaxRequestTarget;
-import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
 import org.apache.wicket.model.IModel;
 import org.apache.wicket.request.IRequestHandler;
 import org.apache.wicket.request.Url;
@@ -14,17 +18,9 @@ import org.apache.wicket.request.cycle.IRequestCycleListener;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
 
-import com.google.common.collect.Sets;
-
-import io.onedev.server.OneDev;
-import io.onedev.server.infomanager.VisitInfoManager;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.component.codecomment.CodeCommentListPanel;
-import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPage;
-import io.onedev.server.web.util.PagingHistorySupport;
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.Collection;
 
 @SuppressWarnings("serial")
 public class PullRequestCodeCommentsPage extends PullRequestDetailPage {
@@ -107,16 +103,11 @@ public class PullRequestCodeCommentsPage extends PullRequestDetailPage {
 
 		});
 		
-		commentList.add(new WebSocketObserver() {
+		commentList.add(new ChangeObserver() {
 
 			@Override
-			public Collection<String> getObservables() {
-				return Sets.newHashSet(PullRequest.getWebSocketObservable(getPullRequest().getId()));
-			}
-
-			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(component);
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(PullRequest.getChangeObservable(getPullRequest().getId()));
 			}
 			
 		});

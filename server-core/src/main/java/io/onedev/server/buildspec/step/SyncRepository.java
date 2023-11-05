@@ -1,33 +1,28 @@
 package io.onedev.server.buildspec.step;
 
+import io.onedev.commons.bootstrap.Bootstrap;
+import io.onedev.commons.codeassist.InputSuggestion;
+import io.onedev.commons.utils.FileUtils;
+import io.onedev.commons.utils.StringUtils;
+import io.onedev.commons.utils.command.Commandline;
+import io.onedev.server.annotation.*;
+import io.onedev.server.buildspec.BuildSpec;
+import io.onedev.server.model.Build;
+import io.onedev.server.model.Project;
+
+import javax.annotation.Nullable;
+import javax.validation.constraints.NotEmpty;
+import javax.validation.constraints.Null;
+import java.io.File;
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.validation.ConstraintValidatorContext;
-import javax.validation.constraints.NotEmpty;
-
-import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.commons.codeassist.InputSuggestion;
-import io.onedev.commons.utils.StringUtils;
-import io.onedev.commons.utils.command.Commandline;
-import io.onedev.server.OneDev;
-import io.onedev.server.buildspec.BuildSpec;
-import io.onedev.server.git.CommandUtils;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Project;
-import io.onedev.server.storage.StorageManager;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.ChoiceProvider;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
-
 @Editable
-@ClassValidating
-public abstract class SyncRepository extends ServerSideStep implements Validatable {
+public abstract class SyncRepository extends ServerSideStep {
 
 	private static final long serialVersionUID = 1L;
 
@@ -36,14 +31,17 @@ public abstract class SyncRepository extends ServerSideStep implements Validatab
 	private String userName;
 	
 	private String passwordSecret;
-	
-	private boolean withLfs;
-	
+
+	private String certificate;
+
 	private boolean force;
+	
+	private String proxy;
 
 	@Editable(order=100, name="Remote URL", description="Specify URL of remote git repository. "
 			+ "Only http/https protocol is supported")
-	@Interpolative(variableSuggester="suggestVariables")
+	@RegEx(pattern = "^http(s)?://.*", message="Only http/https protocol is supported")
+	@Interpolative(variableSuggester="suggestVariables", exampleVar = "http://localhost/test")
 	@NotEmpty
 	public String getRemoteUrl() {
 		return remoteUrl;
@@ -84,13 +82,17 @@ public abstract class SyncRepository extends ServerSideStep implements Validatab
 				.stream().map(it->it.getName()).collect(Collectors.toList());
 	}
 
-	@Editable(order=450, name="Transfer Git LFS Files", descriptionProvider="getLfsDescription")
-	public boolean isWithLfs() {
-		return withLfs;
+	@Editable(order=450, name="Certificates to Trust", placeholder = "Base64 encoded PEM format, starting with " +
+			"-----BEGIN CERTIFICATE----- and ending with -----END CERTIFICATE-----", 
+			description = "Specify certificate to trust if you are using self-signed certificate for above url")
+	@Multiline(monospace = true)
+	@Interpolative(variableSuggester="suggestVariables")
+	public String getCertificate() {
+		return certificate;
 	}
 
-	public void setWithLfs(boolean withLfs) {
-		this.withLfs = withLfs;
+	public void setCertificate(String certificate) {
+		this.certificate = certificate;
 	}
 	
 	@SuppressWarnings("unused")
@@ -113,11 +115,21 @@ public abstract class SyncRepository extends ServerSideStep implements Validatab
 		this.force = force;
 	}
 
+	@Editable(order=600, placeholder = "No proxy", description = "Optionally configure proxy for this step. Proxy " +
+			"should be in the format of &lt;proxy host&gt;:&lt;proxy port&gt;")
+	public String getProxy() {
+		return proxy;
+	}
+
+	public void setProxy(String proxy) {
+		this.proxy = proxy;
+	}
+
 	public String getRemoteUrlWithCredential(Build build) {
 		String encodedPassword = null;
 		if (getPasswordSecret() != null) {
 			try {
-				String password = build.getJobSecretAuthorizationContext().getSecretValue(getPasswordSecret());
+				String password = build.getJobAuthorizationContext().getSecretValue(getPasswordSecret());
 				encodedPassword = URLEncoder.encode(password, StandardCharsets.UTF_8.name());
 			} catch (UnsupportedEncodingException e) {
 				throw new RuntimeException(e);
@@ -141,24 +153,29 @@ public abstract class SyncRepository extends ServerSideStep implements Validatab
 		return remoteUrlWithCredentials;
 	}
 	
-	protected Commandline newGit(Project project) {
-		Commandline git = CommandUtils.newGit();
-		git.workingDir(OneDev.getInstance(StorageManager.class).getProjectGitDir(project.getId()));
-		return git;
+	protected static void configureProxy(Commandline git, @Nullable String proxy) {
+		if (proxy != null)
+			git.addArgs("-c", "http.proxy=" + proxy, "-c", "https.proxy=" + proxy);
 	}
 	
-	@Override
-	public boolean isValid(ConstraintValidatorContext context) {
-		boolean isValid = true;
-		if (getRemoteUrl() != null) {
-			if (!getRemoteUrl().startsWith("http://") && !getRemoteUrl().startsWith("https://")) {
-				isValid = false;
-				context.disableDefaultConstraintViolation();
-				context.buildConstraintViolationWithTemplate("Only http(s) protocol is supported")
-						.addPropertyNode("remoteUrl").addConstraintViolation();
+	@Nullable
+	protected static File writeCertificate(@Nullable String certificate) {
+		if (certificate != null) {
+			try {
+				var file = File.createTempFile("certificate", "pem");
+				FileUtils.writeFile(file, certificate);
+				return file;
+			} catch (IOException e) {
+				throw new RuntimeException(e);
 			}
+		} else {
+			return null;
 		}
-		return isValid;
 	}
 
+	protected static void configureCertificate(Commandline git, @Nullable File certificateFile) {
+		if (certificateFile != null)
+			git.addArgs("-c", "http.sslCAInfo=" + certificateFile.getAbsolutePath());
+	}
+	
 }

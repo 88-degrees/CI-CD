@@ -1,40 +1,32 @@
 package io.onedev.server.model.support.issue.field.spec;
 
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import javax.validation.Valid;
-
-import org.apache.wicket.MarkupContainer;
-import javax.validation.constraints.NotEmpty;
-
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.Multiline;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputContext;
-import io.onedev.server.model.support.inputspec.InputSpec;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
-import io.onedev.server.model.support.inputspec.showcondition.ShowCondition;
-import io.onedev.server.model.support.inputspec.showcondition.ValueIsNotAnyOf;
-import io.onedev.server.model.support.inputspec.showcondition.ValueIsOneOf;
+import io.onedev.server.buildspecmodel.inputspec.InputContext;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.buildspecmodel.inputspec.showcondition.ShowCondition;
+import io.onedev.server.buildspecmodel.inputspec.showcondition.ValueIsNotAnyOf;
+import io.onedev.server.buildspecmodel.inputspec.showcondition.ValueIsOneOf;
 import io.onedev.server.util.ComponentContext;
 import io.onedev.server.util.EditContext;
-import io.onedev.server.util.script.identity.ScriptIdentity;
-import io.onedev.server.util.script.identity.ScriptIdentityAware;
-import io.onedev.server.util.script.identity.SiteAdministrator;
 import io.onedev.server.util.usage.Usage;
-import io.onedev.server.util.validation.annotation.FieldName;
+import io.onedev.server.annotation.FieldName;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldResolution;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValue;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValuesResolution;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Patterns;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Patterns;
 import io.onedev.server.web.util.SuggestionUtils;
+import org.apache.wicket.MarkupContainer;
+
+import javax.validation.Valid;
+import javax.validation.constraints.NotEmpty;
+import java.util.*;
 
 @Editable
 public abstract class FieldSpec extends InputSpec {
@@ -64,7 +56,9 @@ public abstract class FieldSpec extends InputSpec {
 		super.setName(name);
 	}
 
-	@Editable(order=30, placeholder="No description", description="Optionally describes the custom field")
+	@Editable(order=30, placeholder="No description", description="Optionally describes the custom field. " +
+			"Html tags are accepted")
+	@Multiline
 	@Override
 	public String getDescription() {
 		return super.getDescription();
@@ -111,7 +105,7 @@ public abstract class FieldSpec extends InputSpec {
 	}
 	
 	@Editable(order=60)
-	@io.onedev.server.web.editable.annotation.ShowCondition("isNameOfEmptyValueVisible")
+	@io.onedev.server.annotation.ShowCondition("isNameOfEmptyValueVisible")
 	@NotEmpty
 	public String getNameOfEmptyValue() {
 		return nameOfEmptyValue;
@@ -126,7 +120,8 @@ public abstract class FieldSpec extends InputSpec {
 		return (boolean) EditContext.get().getInputValue("allowEmpty");
 	}
 
-	@Editable(order=10000, description="Whether or not to prompt this field upon issue open")
+	@Editable(order=10000, name="Include When Issue is Opened", description="Whether or not to include this field when issue is initially opened. " +
+			"If not, you may include this field later when issue is transited to other states via issue transition rule")
 	public boolean isPromptUponIssueOpen() {
 		return promptUponIssueOpen;
 	}
@@ -144,7 +139,7 @@ public abstract class FieldSpec extends InputSpec {
 			+ "Multiple projects should be separated by space. Use '**', '*' or '?' for "
 			+ "<a href='https://docs.onedev.io/appendix/path-wildcard' target='_blank'>path wildcard match</a>. "
 			+ "Prefix with '-' to exclude. Leave empty for all projects")
-	@io.onedev.server.web.editable.annotation.ShowCondition("isPromptUponIssueOpenEnabled")
+	@io.onedev.server.annotation.ShowCondition("isPromptUponIssueOpenEnabled")
 	@Patterns(suggester="suggestProjects", path=true)
 	public String getApplicableProjects() {
 		return applicableProjects;
@@ -272,7 +267,7 @@ public abstract class FieldSpec extends InputSpec {
 			if (getShowCondition() != null)
 				dependencies.add(getShowCondition().getInputName());
 			
-			class PropertyComponent extends MarkupContainer implements InputContext, EditContext, ScriptIdentityAware {
+			class PropertyComponent extends MarkupContainer implements InputContext, EditContext {
 
 				private static final long serialVersionUID = 1L;
 
@@ -294,11 +289,6 @@ public abstract class FieldSpec extends InputSpec {
 				public Object getInputValue(String name) {
 					dependencies.add(name);
 					return null;
-				}
-
-				@Override
-				public ScriptIdentity getScriptIdentity() {
-					return new SiteAdministrator();
 				}
 
 			}	

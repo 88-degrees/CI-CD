@@ -36,6 +36,8 @@ import io.onedev.server.util.criteria.Criteria;
 import io.onedev.server.util.criteria.NotCriteria;
 import io.onedev.server.util.criteria.OrCriteria;
 
+import static io.onedev.server.search.entity.pullrequest.PullRequestQueryParser.*;
+
 public class PullRequestQuery extends EntityQuery<PullRequest> {
 
 	private static final long serialVersionUID = 1L;
@@ -67,7 +69,7 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 				@Override
 				public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line,
 										int charPositionInLine, String msg, RecognitionException e) {
-					throw new RuntimeException("Malformed pull request query", e);
+					throw new RuntimeException("Malformed query", e);
 				}
 
 			});
@@ -82,6 +84,16 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 				requestCriteria = new PullRequestQueryBaseVisitor<Criteria<PullRequest>>() {
 
 					@Override
+					public Criteria<PullRequest> visitNumberCriteria(NumberCriteriaContext ctx) {
+						return new SimpleNumberCriteria(getLongValue(ctx.number.getText()));
+					}
+
+					@Override
+					public Criteria<PullRequest> visitFuzzyCriteria(FuzzyCriteriaContext ctx) {
+						return new FuzzyCriteria(getValue(ctx.getText()));
+					}
+					
+					@Override
 					public Criteria<PullRequest> visitOperatorCriteria(OperatorCriteriaContext ctx) {
 						switch (ctx.operator.getType()) {
 							case PullRequestQueryLexer.Open:
@@ -90,6 +102,20 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 								return new MergedCriteria();
 							case PullRequestQueryLexer.Discarded:
 								return new DiscardedCriteria();
+							case PullRequestQueryLexer.ReadyToMerge:
+								return new ReadyToMergeCriteria();
+							case PullRequestQueryLexer.NeedMyAction:
+								if (!withCurrentUserCriteria)
+									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
+								return new NeedMyActionCriteria();
+							case PullRequestQueryLexer.ToBeMergedByMe:
+								if (!withCurrentUserCriteria)
+									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
+								return new ToBeMergedByMeCriteria();
+							case PullRequestQueryLexer.ToBeChangedByMe:
+								if (!withCurrentUserCriteria)
+									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
+								return new ToBeChangedByMeCriteria();
 							case PullRequestQueryLexer.MentionedMe:
 								if (!withCurrentUserCriteria)
 									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
@@ -98,6 +124,14 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 								if (!withCurrentUserCriteria)
 									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
 								return new SubmittedByMeCriteria();
+							case PullRequestQueryLexer.WatchedByMe:
+								if (!withCurrentUserCriteria)
+									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
+								return new WatchedByMeCriteria();
+							case PullRequestQueryLexer.CommentedByMe:
+								if (!withCurrentUserCriteria)
+									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
+								return new CommentedByMeCriteria();
 							case PullRequestQueryLexer.ToBeReviewedByMe:
 								if (!withCurrentUserCriteria)
 									throw new ExplicitException("Criteria '" + ctx.operator.getText() + "' is not supported here");
@@ -116,12 +150,12 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 								return new AssignedToMeCriteria();
 							case PullRequestQueryLexer.SomeoneRequestedForChanges:
 								return new SomeoneRequestedForChangesCriteria();
-							case PullRequestQueryLexer.HasFailedBuilds:
-								return new HasFailedBuildsCriteria();
+							case PullRequestQueryLexer.HasUnsuccessfulBuilds:
+								return new HasUnsuccessfulBuilds();
 							case PullRequestQueryLexer.HasMergeConflicts:
 								return new HasMergeConflictsCriteria();
-							case PullRequestQueryLexer.ToBeVerifiedByBuilds:
-								return new ToBeVerifiedByBuildsCriteria();
+							case PullRequestQueryLexer.HasUnfinishedBuilds:
+								return new HasUnfinishedBuildsCriteria();
 							case PullRequestQueryLexer.HasPendingReviews:
 								return new HasPendingReviewsCriteria();
 							default:
@@ -135,6 +169,10 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 						switch (ctx.operator.getType()) {
 							case PullRequestQueryLexer.ToBeReviewedBy:
 								return new ToBeReviewedByCriteria(getUser(value));
+							case PullRequestQueryLexer.ToBeChangedBy:
+								return new ToBeChangedByCriteria(getUser(value));
+							case PullRequestQueryLexer.ToBeMergedBy:
+								return new ToBeMergedByCriteria(getUser(value));
 							case PullRequestQueryLexer.ApprovedBy:
 								return new ApprovedByCriteria(getUser(value));
 							case PullRequestQueryLexer.AssignedTo:
@@ -145,6 +183,12 @@ public class PullRequestQuery extends EntityQuery<PullRequest> {
 								return new MentionedCriteria(getUser(value));
 							case PullRequestQueryLexer.SubmittedBy:
 								return new SubmittedByCriteria(getUser(value));
+							case PullRequestQueryLexer.WatchedBy:
+								return new WatchedByCriteria(getUser(value));
+							case PullRequestQueryLexer.NeedActionOf:
+								return new NeedActionOfCriteria(getUser(value));
+							case PullRequestQueryLexer.CommentedBy:
+								return new CommentedByCriteria(getUser(value));
 							case PullRequestQueryLexer.IncludesCommit:
 								return new IncludesCommitCriteria(project, value);
 							case PullRequestQueryLexer.IncludesIssue:

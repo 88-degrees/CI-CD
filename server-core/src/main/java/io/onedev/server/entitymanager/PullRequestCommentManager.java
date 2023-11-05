@@ -1,12 +1,14 @@
 package io.onedev.server.entitymanager;
 
-import java.util.Collection;
-
 import io.onedev.server.model.PullRequestComment;
 import io.onedev.server.persistence.dao.EntityManager;
 
+import java.util.Collection;
+
 public interface PullRequestCommentManager extends EntityManager<PullRequestComment> {
 
-	void save(PullRequestComment comment, Collection<String> notifiedEmailAddresses);
+	void create(PullRequestComment comment, Collection<String> notifiedEmailAddresses);
+
+	void update(PullRequestComment comment);
 	
 }

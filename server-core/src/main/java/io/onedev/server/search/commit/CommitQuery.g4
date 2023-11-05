@@ -2,6 +2,7 @@ grammar CommitQuery;
 
 query
 	: WS* criteria (WS+ criteria)* WS* EOF
+	| WS* EOF
 	;
 
 criteria
@@ -12,6 +13,7 @@ criteria
 	| authorCriteria 
 	| pathCriteria
 	| messageCriteria
+	| fuzzyCriteria
 	;
 
 revisionCriteria
@@ -103,11 +105,23 @@ CommittedByMe
 DefaultBranch
 	: 'default-branch'
 	;
-		
+
 WS
 	: ' '
 	;
 
 Value
 	: '(' ('\\'.|~[\\()])+? ')'
+	;
+
+fuzzyCriteria
+    : Fuzzy
+    ;
+
+Fuzzy
+    : '~' ('\\'.|~[~])+? '~'
+    ;
+
+Identifier
+	: [a-zA-Z0-9:_/\\+\-;]+
 	;

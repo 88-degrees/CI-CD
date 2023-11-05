@@ -8,6 +8,7 @@ import javax.servlet.DispatcherType;
 import javax.servlet.http.HttpSessionEvent;
 import javax.servlet.http.HttpSessionListener;
 
+import io.onedev.server.OneDev;
 import org.apache.shiro.web.env.EnvironmentLoader;
 import org.apache.shiro.web.env.EnvironmentLoaderListener;
 import org.apache.shiro.web.servlet.ShiroFilter;
@@ -18,7 +19,7 @@ import org.eclipse.jetty.servlet.ServletHolder;
 import org.glassfish.jersey.servlet.ServletContainer;
 
 import io.onedev.commons.bootstrap.Bootstrap;
-import io.onedev.server.ServerSocketServlet;
+import io.onedev.server.agent.ServerSocketServlet;
 import io.onedev.server.git.GitFilter;
 import io.onedev.server.git.GitLfsFilter;
 import io.onedev.server.git.GoGetFilter;
@@ -118,7 +119,7 @@ public class ProductServletConfigurator implements ServletConfigurator {
 		 * Configure a servlet to serve contents under site folder. Site folder can be used 
 		 * to hold site specific web assets.   
 		 */
-		File assetsDir = new File(Bootstrap.getSiteDir(), "assets");
+		File assetsDir = OneDev.getAssetsDir();
 		
 		boolean hasCustomLogo = false;
 		boolean hasSiteMapTxt = false;
@@ -142,6 +143,10 @@ public class ProductServletConfigurator implements ServletConfigurator {
 			context.addServlet(new ServletHolder(new FileAssetServlet(assetsDir)), "/sitemap.txt");
 		if (!hasSiteMapXml)
 			context.addServlet(new ServletHolder(new FileAssetServlet(assetsDir)), "/sitemap.xml");
+		
+		var incompatibilitiesDir = new File(Bootstrap.installDir, "incompatibilities");
+		for (var file: incompatibilitiesDir.listFiles())
+			context.addServlet(new ServletHolder(new FileAssetServlet(incompatibilitiesDir)), "/~help/" + file.getName());
 		
 		context.addServlet(new ServletHolder(jerseyServlet), "/~api/*");	
 		context.addServlet(new ServletHolder(serverServlet), "/~server");

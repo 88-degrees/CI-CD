@@ -1,15 +1,17 @@
 package io.onedev.server.security;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.Callable;
-
-import javax.annotation.Nullable;
-import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.core.HttpHeaders;
-
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Sets;
+import io.onedev.commons.loader.AppLoader;
+import io.onedev.k8shelper.KubernetesHelper;
+import io.onedev.server.OneDev;
+import io.onedev.server.entitymanager.ProjectManager;
+import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.entitymanager.UserManager;
+import io.onedev.server.model.*;
+import io.onedev.server.security.permission.*;
+import io.onedev.server.util.concurrent.PrioritizedCallable;
+import io.onedev.server.util.concurrent.PrioritizedRunnable;
 import org.apache.shiro.authz.Permission;
 import org.apache.shiro.subject.PrincipalCollection;
 import org.apache.shiro.subject.SimplePrincipalCollection;
@@ -20,57 +22,14 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Sets;
-
-import io.onedev.commons.loader.AppLoader;
-import io.onedev.k8shelper.KubernetesHelper;
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.RoleManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.CodeCommentReply;
-import io.onedev.server.model.Group;
-import io.onedev.server.model.GroupAuthorization;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueChange;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.LinkSpec;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestChange;
-import io.onedev.server.model.PullRequestComment;
-import io.onedev.server.model.Role;
-import io.onedev.server.model.User;
-import io.onedev.server.model.UserAuthorization;
-import io.onedev.server.security.permission.AccessBuild;
-import io.onedev.server.security.permission.AccessBuildLog;
-import io.onedev.server.security.permission.AccessBuildReports;
-import io.onedev.server.security.permission.AccessConfidentialIssues;
-import io.onedev.server.security.permission.AccessProject;
-import io.onedev.server.security.permission.ConfidentialIssuePermission;
-import io.onedev.server.security.permission.CreateChildren;
-import io.onedev.server.security.permission.CreateRootProjects;
-import io.onedev.server.security.permission.EditIssueField;
-import io.onedev.server.security.permission.EditIssueLink;
-import io.onedev.server.security.permission.JobPermission;
-import io.onedev.server.security.permission.ManageBuilds;
-import io.onedev.server.security.permission.ManageCodeComments;
-import io.onedev.server.security.permission.ManageIssues;
-import io.onedev.server.security.permission.ManageJob;
-import io.onedev.server.security.permission.ManageProject;
-import io.onedev.server.security.permission.ManagePullRequests;
-import io.onedev.server.security.permission.ProjectPermission;
-import io.onedev.server.security.permission.ReadCode;
-import io.onedev.server.security.permission.RunJob;
-import io.onedev.server.security.permission.ScheduleIssues;
-import io.onedev.server.security.permission.SystemAdministration;
-import io.onedev.server.security.permission.WriteCode;
-import io.onedev.server.util.concurrent.PrioritizedCallable;
-import io.onedev.server.util.concurrent.PrioritizedRunnable;
+import javax.annotation.Nullable;
+import javax.servlet.http.HttpServletRequest;
+import javax.ws.rs.core.HttpHeaders;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.Callable;
 
 public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	
@@ -115,30 +74,38 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	
 	public static boolean canDeleteBranch(Project project, String branchName) {
 		if (canWriteCode(project)) 
-			return !project.getHierarchyBranchProtection(branchName, getUser()).isPreventDeletion();
+			return !project.getBranchProtection(branchName, getUser()).isPreventDeletion();
 		else 
 			return false;
 	}
 	
 	public static boolean canDeleteTag(Project project, String tagName) {
 		if (canWriteCode(project)) 
-			return !project.getHierarchyTagProtection(tagName, getUser()).isPreventDeletion();
+			return !project.getTagProtection(tagName, getUser()).isPreventDeletion();
 		else 
 			return false;
 	}
 	
 	public static boolean canCreateTag(Project project, String tagName) {
-		if (canWriteCode(project)) 
-			return !project.getHierarchyTagProtection(tagName, getUser()).isPreventCreation();
-		else 
+		return canCreateTag(getUser(), project, tagName);
+	}
+
+	public static boolean canCreateTag(@Nullable User user, Project project, String tagName) {
+		if (canWriteCode(user, project))
+			return !project.getTagProtection(tagName, user).isPreventCreation();
+		else
 			return false;
 	}
 	
-	public static boolean canCreateBranch(Project project, String branchName) {
-		if (canWriteCode(project)) 
-			return !project.getHierarchyBranchProtection(branchName, getUser()).isPreventCreation();
+	public static boolean canCreateBranch(@Nullable User user, Project project, String branchName) {
+		if (canWriteCode(user, project)) 
+			return !project.getBranchProtection(branchName, user).isPreventCreation();
 		else 
 			return false;
+	}
+
+	public static boolean canCreateBranch(Project project, String branchName) {
+		return canCreateBranch(getUser(), project, branchName);
 	}
 	
 	public static boolean canModify(Project project, String branch, String file) {
@@ -167,37 +134,34 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	public static boolean canScheduleIssues(Project project) {
 		return getSubject().isPermitted(new ProjectPermission(project, new ScheduleIssues()));
 	}
+
+	public static boolean isAssignedRole(Project project, Role role) {
+		return isAssignedRole(getUser(), project, role);
+	}
 	
-	public static boolean isAuthorizedWithRole(Project project, String roleName) {
-		Role role = OneDev.getInstance(RoleManager.class).find(roleName);
-		if (role != null) {
-			User user = getUser();
-			if (user != null) {
-				for (UserAuthorization authorization: user.getProjectAuthorizations()) {
+	public static boolean isAssignedRole(@Nullable User user, Project project, Role role) {
+		if (user != null) {
+			for (UserAuthorization authorization: user.getProjectAuthorizations()) {
+				Project authorizedProject = authorization.getProject();
+				if (authorization.getRole().equals(role) && authorizedProject.isSelfOrAncestorOf(project)) 
+					return true;
+			}
+			
+			Set<Group> groups = new HashSet<>(user.getGroups());
+			Group defaultLoginGroup = OneDev.getInstance(SettingManager.class)
+					.getSecuritySetting().getDefaultLoginGroup();
+			if (defaultLoginGroup != null)
+				groups.add(defaultLoginGroup);
+			
+			for (Group group: groups) {
+				for (GroupAuthorization authorization: group.getAuthorizations()) {
 					Project authorizedProject = authorization.getProject();
 					if (authorization.getRole().equals(role) && authorizedProject.isSelfOrAncestorOf(project)) 
 						return true;
 				}
-				
-				Set<Group> groups = new HashSet<>(user.getGroups());
-				Group defaultLoginGroup = OneDev.getInstance(SettingManager.class)
-						.getSecuritySetting().getDefaultLoginGroup();
-				if (defaultLoginGroup != null)
-					groups.add(defaultLoginGroup);
-				
-				for (Group group: groups) {
-					for (GroupAuthorization authorization: group.getAuthorizations()) {
-						Project authorizedProject = authorization.getProject();
-						if (authorization.getRole().equals(role) && authorizedProject.isSelfOrAncestorOf(project)) 
-							return true;
-					}
-				}
-			} 
-			return role.getDefaultProjects().stream().anyMatch(it->it.isSelfOrAncestorOf(project));
-		} else {
-			logger.error("Undefined role: " + roleName);
-			return false;
-		}
+			}
+		} 
+		return role.getDefaultProjects().stream().anyMatch(it->it.isSelfOrAncestorOf(project));
 	}
 	
 	public static boolean canAccess(Project project) {
@@ -231,7 +195,11 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	}
 	
 	public static boolean canWriteCode(Project project) {
-		return getSubject().isPermitted(new ProjectPermission(project, new WriteCode()));
+		return canWriteCode(getUser(), project);
+	}
+
+	public static boolean canWriteCode(@Nullable User user, Project project) {
+		return asSubject(user).isPermitted(new ProjectPermission(project, new WriteCode()));
 	}
 	
 	public static boolean canManage(Project project) {
@@ -239,7 +207,11 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	}
 	
 	public static boolean canManageIssues(Project project) {
-		return getSubject().isPermitted(new ProjectPermission(project, new ManageIssues()));
+		return canManageIssues(getUser(), project);
+	}
+
+	public static boolean canManageIssues(@Nullable User user, Project project) {
+		return asSubject(user).isPermitted(new ProjectPermission(project, new ManageIssues()));
 	}
 	
 	public static boolean canManageBuilds(Project project) {
@@ -311,19 +283,25 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 		return user != null && user.equals(comment.getUser()) 
 				|| canManageIssues(comment.getIssue().getProject());
 	}
-	
-	public static boolean canModifyOrDelete(PullRequestChange change) {
+
+	public static boolean canModifyOrDelete(IssueWork work) {
 		User user = SecurityUtils.getUser();
-		return user != null && user.equals(change.getUser()) 
-				|| canManagePullRequests(change.getRequest().getTargetProject());
-	}
-	
-	public static boolean canModifyOrDelete(IssueChange change) {
-		User user = SecurityUtils.getUser();
-		return user != null && user.equals(change.getUser()) 
-				|| canManageIssues(change.getIssue().getProject());
+		return user != null && user.equals(work.getUser())
+				|| canManageIssues(work.getIssue().getProject());
 	}
 
+	public static boolean canModifyOrDelete(IssueVote vote) {
+		User user = SecurityUtils.getUser();
+		return user != null && user.equals(vote.getUser())
+				|| canManageIssues(vote.getIssue().getProject());
+	}
+
+	public static boolean canModifyOrDelete(IssueWatch watch) {
+		User user = SecurityUtils.getUser();
+		return user != null && user.equals(watch.getUser())
+				|| canManageIssues(watch.getIssue().getProject());
+	}
+	
 	public static boolean canModify(PullRequest request) {
 		User user = SecurityUtils.getUser();
 		return user != null && user.equals(request.getSubmitter()) 
@@ -353,6 +331,13 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
     public static Subject asAnonymous() {
     	return asSubject(0L);
     }
+	
+	public static Subject asSubject(@Nullable User user) {
+		if (user != null)
+			return asSubject(user.getId());
+		else 
+			return asAnonymous();
+	}
     
 	public static void bindAsSystem() {
 		ThreadContext.bind(asSubject(User.SYSTEM_ID));
@@ -360,15 +345,18 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	
 	public static Runnable inheritSubject(Runnable task) {
 		Subject subject = SecurityUtils.getSubject();
-		return new Runnable() {
-
-			@Override
-			public void run() {
-				ThreadContext.bind(subject);
-				task.run();
-			}
-			
+		return () -> {
+			ThreadContext.bind(subject);
+			task.run();
 		};
+	}
+	
+	public static Long getPrevUserId() {
+		PrincipalCollection prevPrincipals = SecurityUtils.getSubject().getPreviousPrincipals();
+		if (prevPrincipals != null) 
+			return (Long) prevPrincipals.getPrimaryPrincipal();
+		else 
+			return 0L;
 	}
 	
 	public static PrioritizedRunnable inheritSubject(PrioritizedRunnable task) {
@@ -429,7 +417,9 @@ public class SecurityUtils extends org.apache.shiro.SecurityUtils {
 	
 	@Nullable
 	public static String getBearerToken(HttpServletRequest request) {
-		String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+		String authHeader = request.getHeader(KubernetesHelper.AUTHORIZATION);
+		if (authHeader == null)
+			authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
 		if (authHeader != null && authHeader.startsWith(KubernetesHelper.BEARER + " "))
 			return authHeader.substring(KubernetesHelper.BEARER.length() + 1);
 		else

@@ -1,24 +1,18 @@
 package io.onedev.server.rest;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-
-import org.apache.shiro.authz.UnauthorizedException;
-
 import io.onedev.server.entitymanager.PullRequestCommentManager;
 import io.onedev.server.model.PullRequestComment;
 import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.security.SecurityUtils;
+import org.apache.shiro.authz.UnauthorizedException;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.validation.constraints.NotNull;
+import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import java.util.ArrayList;
 
 @Api(order=3200)
 @Path("/pull-request-comments")
@@ -44,16 +38,31 @@ public class PullRequestCommentResource {
     	return comment;
 	}
 	
-	@Api(order=200, description="Update pull request comment of specified id in request body, or create new if id property not provided")
+	@Api(order=200, description="Create new pull request comment")
 	@POST
-	public Long createOrUpdate(@NotNull PullRequestComment comment) {
+	public Long create(@NotNull PullRequestComment comment) {
     	if (!SecurityUtils.canReadCode(comment.getProject()) || 
     			!SecurityUtils.isAdministrator() && !comment.getUser().equals(SecurityUtils.getUser())) { 
 			throw new UnauthorizedException();
     	}
-    	
-		commentManager.save(comment);
+
+		commentManager.create(comment, new ArrayList<>());
+		
 		return comment.getId();
+	}
+
+	@Api(order=250, description="Update pull request comment of specified id")
+	@Path("/{commentId}")
+	@POST
+	public Response update(@PathParam("commentId") Long commentId, @NotNull PullRequestComment comment) {
+		if (!SecurityUtils.canReadCode(comment.getProject()) ||
+				!SecurityUtils.isAdministrator() && !comment.getUser().equals(SecurityUtils.getUser())) {
+			throw new UnauthorizedException();
+		}
+
+		commentManager.update(comment);
+
+		return Response.ok().build();
 	}
 	
 	@Api(order=300)

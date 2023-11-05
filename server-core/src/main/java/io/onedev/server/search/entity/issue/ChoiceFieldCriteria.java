@@ -16,7 +16,7 @@ import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.Issue;
 import io.onedev.server.model.IssueField;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValue;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldValuesResolution;
 
@@ -56,14 +56,18 @@ public class ChoiceFieldCriteria extends FieldCriteria {
 	@Override
 	public boolean matches(Issue issue) {
 		Object fieldValue = issue.getFieldValue(getFieldName());
-		if (allowMultiple) 
-			return ((List<String>)fieldValue).contains(value);
-		else if (operator == IssueQueryLexer.Is)
-			return Objects.equals(fieldValue, value);
-		else if (operator == IssueQueryLexer.IsGreaterThan)
-			return issue.getFieldOrdinal(getFieldName(), (String)fieldValue) > ordinal;
-		else
-			return issue.getFieldOrdinal(getFieldName(), (String)fieldValue) < ordinal;
+		if (fieldValue != null) {
+			if (allowMultiple)
+				return ((List<String>) fieldValue).contains(value);
+			else if (operator == IssueQueryLexer.Is)
+				return Objects.equals(fieldValue, value);
+			else if (operator == IssueQueryLexer.IsGreaterThan)
+				return issue.getFieldOrdinal(getFieldName(), (String) fieldValue) > ordinal;
+			else
+				return issue.getFieldOrdinal(getFieldName(), (String) fieldValue) < ordinal;
+		} else {
+			return false;
+		}
 	}
 
 	@Override

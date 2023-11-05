@@ -1,17 +1,48 @@
 package io.onedev.server.web.page.project.commits;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
+import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Sets;
+import io.onedev.commons.utils.PlanarRange;
+import io.onedev.server.OneDev;
+import io.onedev.server.buildspec.BuildSpec;
+import io.onedev.server.buildspec.job.Job;
+import io.onedev.server.codequality.CodeProblem;
+import io.onedev.server.codequality.CodeProblemContribution;
+import io.onedev.server.codequality.CoverageStatus;
+import io.onedev.server.codequality.LineCoverageContribution;
+import io.onedev.server.entitymanager.CodeCommentManager;
+import io.onedev.server.entitymanager.CodeCommentReplyManager;
+import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
+import io.onedev.server.entitymanager.PullRequestManager;
+import io.onedev.server.git.BlobIdent;
+import io.onedev.server.git.GitUtils;
+import io.onedev.server.git.service.RefFacade;
+import io.onedev.server.xodus.CommitInfoManager;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.CompareContext;
+import io.onedev.server.model.support.Mark;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.diff.WhitespaceOption;
+import io.onedev.server.job.JobAuthorizationContext;
+import io.onedev.server.job.JobAuthorizationContextAware;
+import io.onedev.server.web.asset.emoji.Emojis;
+import io.onedev.server.web.component.AjaxLazyLoadPanel;
+import io.onedev.server.web.component.branch.create.CreateBranchLink;
+import io.onedev.server.web.component.contributorpanel.ContributorPanel;
+import io.onedev.server.web.component.createtag.CreateTagLink;
+import io.onedev.server.web.component.diff.revision.RevisionDiffPanel;
+import io.onedev.server.web.component.gitsignature.SignatureStatusPanel;
+import io.onedev.server.web.component.job.jobinfo.JobInfoButton;
+import io.onedev.server.web.component.link.ViewStateAwarePageLink;
+import io.onedev.server.web.component.link.copytoclipboard.CopyToClipboardLink;
+import io.onedev.server.web.component.svg.SpriteImage;
+import io.onedev.server.web.component.user.contributoravatars.ContributorAvatars;
+import io.onedev.server.web.page.project.ProjectPage;
+import io.onedev.server.web.page.project.blob.ProjectBlobPage;
+import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
+import io.onedev.server.web.util.ReferenceTransformer;
+import io.onedev.server.web.util.RevisionDiff;
 import org.apache.wicket.Component;
 import org.apache.wicket.RestartResponseException;
 import org.apache.wicket.ajax.AjaxRequestTarget;
@@ -39,58 +70,13 @@ import org.eclipse.jgit.revwalk.RevObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Sets;
-
-import io.onedev.commons.utils.PlanarRange;
-import io.onedev.server.OneDev;
-import io.onedev.server.buildspec.BuildSpec;
-import io.onedev.server.buildspec.job.Job;
-import io.onedev.server.codequality.CodeProblem;
-import io.onedev.server.codequality.CodeProblemContribution;
-import io.onedev.server.codequality.CoverageStatus;
-import io.onedev.server.codequality.LineCoverageContribution;
-import io.onedev.server.entitymanager.CodeCommentManager;
-import io.onedev.server.entitymanager.CodeCommentReplyManager;
-import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
-import io.onedev.server.entitymanager.PullRequestManager;
-import io.onedev.server.git.BlobIdent;
-import io.onedev.server.git.GitUtils;
-import io.onedev.server.git.service.RefFacade;
-import io.onedev.server.infomanager.CommitInfoManager;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.CodeCommentReply;
-import io.onedev.server.model.CodeCommentStatusChange;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.support.CompareContext;
-import io.onedev.server.model.support.Mark;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.JobSecretAuthorizationContext;
-import io.onedev.server.util.JobSecretAuthorizationContextAware;
-import io.onedev.server.util.diff.WhitespaceOption;
-import io.onedev.server.web.asset.emoji.Emojis;
-import io.onedev.server.web.component.AjaxLazyLoadPanel;
-import io.onedev.server.web.component.branch.create.CreateBranchLink;
-import io.onedev.server.web.component.contributorpanel.ContributorPanel;
-import io.onedev.server.web.component.createtag.CreateTagLink;
-import io.onedev.server.web.component.diff.revision.RevisionDiffPanel;
-import io.onedev.server.web.component.gitsignature.GitSignaturePanel;
-import io.onedev.server.web.component.job.jobinfo.JobInfoButton;
-import io.onedev.server.web.component.link.ViewStateAwarePageLink;
-import io.onedev.server.web.component.link.copytoclipboard.CopyToClipboardLink;
-import io.onedev.server.web.component.svg.SpriteImage;
-import io.onedev.server.web.component.user.contributoravatars.ContributorAvatars;
-import io.onedev.server.web.page.project.ProjectPage;
-import io.onedev.server.web.page.project.blob.ProjectBlobPage;
-import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
-import io.onedev.server.web.util.ReferenceTransformer;
-import io.onedev.server.web.util.RevisionDiff;
+import javax.annotation.Nullable;
+import java.io.Serializable;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @SuppressWarnings("serial")
-public class CommitDetailPage extends ProjectPage implements RevisionDiff.AnnotationSupport, JobSecretAuthorizationContextAware {
+public class CommitDetailPage extends ProjectPage implements RevisionDiff.AnnotationSupport, JobAuthorizationContextAware {
 
 	private static final Logger logger = LoggerFactory.getLogger(CommitDetailPage.class);
 	
@@ -291,7 +277,7 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 		add(new ContributorAvatars("contributorAvatars", getCommit().getAuthorIdent(), getCommit().getCommitterIdent()));
 		add(new ContributorPanel("contribution", getCommit().getAuthorIdent(), getCommit().getCommitterIdent()));
 		
-		add(new GitSignaturePanel("signature") {
+		add(new SignatureStatusPanel("signature") {
 			
 			@Override
 			protected RevObject getRevObject() {
@@ -305,7 +291,7 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 		
 		newParentsContainer(null);
 
-		add(new ListView<Job>("jobs", new LoadableDetachableModel<List<Job>>() {
+		add(new ListView<Job>("jobs", new LoadableDetachableModel<>() {
 
 			@Override
 			protected List<Job> load() {
@@ -313,18 +299,18 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 				try {
 					BuildSpec buildSpec = getProject().getBuildSpec(getCommit().copy());
 					if (buildSpec != null) {
-						for (Job job: buildSpec.getJobMap().values()) {
+						for (Job job : buildSpec.getJobMap().values()) {
 							if (SecurityUtils.canAccess(getProject(), job.getName()))
 								jobs.add(job);
 						}
 					}
 				} catch (Exception e) {
-					logger.error("Error retrieving build spec (project: {}, commit: {})", 
+					logger.error("Error retrieving build spec (project: {}, commit: {})",
 							getProject().getPath(), getCommit().name(), e);
 				}
 				return jobs;
 			}
-			
+
 		}) {
 
 			@Override
@@ -739,17 +725,23 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 
 	@Override
 	public void onSaveComment(CodeComment comment) {
-		OneDev.getInstance(CodeCommentManager.class).save(comment);
+		if (comment.isNew())
+			OneDev.getInstance(CodeCommentManager.class).create(comment);
+		else
+			OneDev.getInstance(CodeCommentManager.class).update(comment);			
 	}
 	
 	@Override
 	public void onSaveCommentReply(CodeCommentReply reply) {
-		OneDev.getInstance(CodeCommentReplyManager.class).save(reply);
+		if (reply.isNew())
+			OneDev.getInstance(CodeCommentReplyManager.class).create(reply);
+		else
+			OneDev.getInstance(CodeCommentReplyManager.class).update(reply);
 	}
 
 	@Override
 	public void onSaveCommentStatusChange(CodeCommentStatusChange change, String note) {
-		OneDev.getInstance(CodeCommentStatusChangeManager.class).save(change, note);
+		OneDev.getInstance(CodeCommentStatusChangeManager.class).create(change, note);
 	}
 	
 	@Override
@@ -855,8 +847,8 @@ public class CommitDetailPage extends ProjectPage implements RevisionDiff.Annota
 	}
 
 	@Override
-	public JobSecretAuthorizationContext getJobSecretAuthorizationContext() {
-		return new JobSecretAuthorizationContext(getProject(), getCommit(), getPullRequest());
+	public JobAuthorizationContext getJobAuthorizationContext() {
+		return new JobAuthorizationContext(getProject(), getCommit(), SecurityUtils.getUser(), getPullRequest());
 	}
 	
 }

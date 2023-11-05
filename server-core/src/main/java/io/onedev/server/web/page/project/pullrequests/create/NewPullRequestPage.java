@@ -1,20 +1,58 @@
 package io.onedev.server.web.page.project.pullrequests.create;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
+import com.google.common.collect.Lists;
+import io.onedev.commons.utils.PlanarRange;
+import io.onedev.server.OneDev;
+import io.onedev.server.attachment.AttachmentSupport;
+import io.onedev.server.attachment.ProjectAttachmentSupport;
+import io.onedev.server.codequality.CodeProblem;
+import io.onedev.server.codequality.CodeProblemContribution;
+import io.onedev.server.codequality.CoverageStatus;
+import io.onedev.server.codequality.LineCoverageContribution;
+import io.onedev.server.git.GitUtils;
+import io.onedev.server.git.service.GitService;
+import io.onedev.server.git.service.RefFacade;
+import io.onedev.server.entitymanager.CodeCommentManager;
+import io.onedev.server.entitymanager.CodeCommentReplyManager;
+import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
+import io.onedev.server.entitymanager.PullRequestManager;
+import io.onedev.server.model.*;
+import io.onedev.server.model.PullRequest.Status;
+import io.onedev.server.model.support.CompareContext;
+import io.onedev.server.model.support.Mark;
+import io.onedev.server.model.support.pullrequest.MergePreview;
+import io.onedev.server.model.support.pullrequest.MergeStrategy;
+import io.onedev.server.persistence.dao.Dao;
+import io.onedev.server.search.commit.CommitQuery;
+import io.onedev.server.search.commit.Revision;
+import io.onedev.server.search.commit.RevisionCriteria;
+import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.Pair;
+import io.onedev.server.util.ProjectAndBranch;
+import io.onedev.server.util.diff.WhitespaceOption;
+import io.onedev.server.web.ajaxlistener.DisableGlobalAjaxIndicatorListener;
+import io.onedev.server.web.behavior.ReferenceInputBehavior;
+import io.onedev.server.web.component.branch.BranchLink;
+import io.onedev.server.web.component.branch.picker.AffinalBranchPicker;
+import io.onedev.server.web.component.comment.CommentInput;
+import io.onedev.server.web.component.commit.list.CommitListPanel;
+import io.onedev.server.web.component.diff.revision.RevisionDiffPanel;
+import io.onedev.server.web.component.link.ViewStateAwarePageLink;
+import io.onedev.server.web.component.pullrequest.assignment.AssignmentListPanel;
+import io.onedev.server.web.component.pullrequest.review.ReviewListPanel;
+import io.onedev.server.web.component.svg.SpriteImage;
+import io.onedev.server.web.component.tabbable.AjaxActionTab;
+import io.onedev.server.web.component.tabbable.Tab;
+import io.onedev.server.web.component.tabbable.Tabbable;
+import io.onedev.server.web.page.project.ProjectPage;
+import io.onedev.server.web.page.project.commits.CommitDetailPage;
+import io.onedev.server.web.page.project.compare.RevisionComparePage;
+import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
+import io.onedev.server.web.page.project.pullrequests.ProjectPullRequestsPage;
+import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPage;
+import io.onedev.server.web.page.project.pullrequests.detail.activities.PullRequestActivitiesPage;
+import io.onedev.server.web.page.simple.security.LoginPage;
+import io.onedev.server.web.util.RevisionDiff;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.wicket.Component;
 import org.apache.wicket.RestartResponseAtInterceptPageException;
@@ -41,78 +79,13 @@ import org.apache.wicket.model.LoadableDetachableModel;
 import org.apache.wicket.model.Model;
 import org.apache.wicket.request.cycle.RequestCycle;
 import org.apache.wicket.request.mapper.parameter.PageParameters;
-import org.apache.wicket.validation.IErrorMessageSource;
-import org.apache.wicket.validation.IValidatable;
-import org.apache.wicket.validation.IValidationError;
-import org.apache.wicket.validation.IValidator;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.joda.time.DateTime;
 
-import com.google.common.collect.Lists;
-
-import io.onedev.commons.utils.PlanarRange;
-import io.onedev.server.OneDev;
-import io.onedev.server.attachment.AttachmentSupport;
-import io.onedev.server.attachment.ProjectAttachmentSupport;
-import io.onedev.server.codequality.CodeProblem;
-import io.onedev.server.codequality.CodeProblemContribution;
-import io.onedev.server.codequality.CoverageStatus;
-import io.onedev.server.codequality.LineCoverageContribution;
-import io.onedev.server.entitymanager.CodeCommentManager;
-import io.onedev.server.entitymanager.CodeCommentReplyManager;
-import io.onedev.server.entitymanager.CodeCommentStatusChangeManager;
-import io.onedev.server.entitymanager.PullRequestManager;
-import io.onedev.server.git.GitUtils;
-import io.onedev.server.git.service.GitService;
-import io.onedev.server.git.service.RefFacade;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.CodeCommentReply;
-import io.onedev.server.model.CodeCommentStatusChange;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequest.Status;
-import io.onedev.server.model.PullRequestAssignment;
-import io.onedev.server.model.PullRequestReview;
-import io.onedev.server.model.PullRequestUpdate;
-import io.onedev.server.model.User;
-import io.onedev.server.model.UserAuthorization;
-import io.onedev.server.model.support.CompareContext;
-import io.onedev.server.model.support.Mark;
-import io.onedev.server.model.support.pullrequest.MergePreview;
-import io.onedev.server.model.support.pullrequest.MergeStrategy;
-import io.onedev.server.persistence.dao.Dao;
-import io.onedev.server.search.commit.CommitQuery;
-import io.onedev.server.search.commit.Revision;
-import io.onedev.server.search.commit.RevisionCriteria;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.util.Pair;
-import io.onedev.server.util.ProjectAndBranch;
-import io.onedev.server.util.diff.WhitespaceOption;
-import io.onedev.server.web.ajaxlistener.DisableGlobalAjaxIndicatorListener;
-import io.onedev.server.web.behavior.ReferenceInputBehavior;
-import io.onedev.server.web.component.branch.BranchLink;
-import io.onedev.server.web.component.branch.picker.AffinalBranchPicker;
-import io.onedev.server.web.component.commit.list.CommitListPanel;
-import io.onedev.server.web.component.diff.revision.RevisionDiffPanel;
-import io.onedev.server.web.component.link.ViewStateAwarePageLink;
-import io.onedev.server.web.component.comment.CommentInput;
-import io.onedev.server.web.component.pullrequest.assignment.AssignmentListPanel;
-import io.onedev.server.web.component.pullrequest.review.ReviewListPanel;
-import io.onedev.server.web.component.svg.SpriteImage;
-import io.onedev.server.web.component.tabbable.AjaxActionTab;
-import io.onedev.server.web.component.tabbable.Tab;
-import io.onedev.server.web.component.tabbable.Tabbable;
-import io.onedev.server.web.page.project.ProjectPage;
-import io.onedev.server.web.page.project.commits.CommitDetailPage;
-import io.onedev.server.web.page.project.compare.RevisionComparePage;
-import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
-import io.onedev.server.web.page.project.pullrequests.ProjectPullRequestsPage;
-import io.onedev.server.web.page.project.pullrequests.detail.PullRequestDetailPage;
-import io.onedev.server.web.page.project.pullrequests.detail.activities.PullRequestActivitiesPage;
-import io.onedev.server.web.page.simple.security.LoginPage;
-import io.onedev.server.web.util.RevisionDiff;
+import javax.annotation.Nullable;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 @SuppressWarnings("serial")
 public class NewPullRequestPage extends ProjectPage implements RevisionDiff.AnnotationSupport {
@@ -177,9 +150,9 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 			if (verifiedEmailAddresses.contains(commit.getAuthorIdent().getEmailAddress().toLowerCase()))
 				branchUpdates.add(new Pair<>(GitUtils.ref2branch(ref.getName()), commit.getCommitTime()));
 		}
-		branchUpdates.sort(Comparator.comparing(Pair::getSecond));
+		branchUpdates.sort(Comparator.comparing(Pair::getRight));
 		if (!branchUpdates.isEmpty())
-			return branchUpdates.get(branchUpdates.size()-1).getFirst();
+			return branchUpdates.get(branchUpdates.size()-1).getLeft();
 		else
 			return getProject().getDefaultBranch();
 	}
@@ -253,7 +226,6 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 					request.setStatus(Status.MERGED);
 	
 				PullRequestUpdate update = new PullRequestUpdate();
-				update.setDate(new DateTime(request.getSubmitDate()).plusSeconds(1).toDate());
 				request.getUpdates().add(update);
 				request.setUpdates(request.getUpdates());
 				update.setRequest(request);
@@ -269,7 +241,7 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 					request.getAssignments().add(assignment);
 				} else {
 					for (UserAuthorization authorization: target.getProject().getUserAuthorizations()) {
-						if (authorization.getRole().isOwner()) {
+						if (authorization.getRole().isOwner() && !authorization.getUser().isEffectiveGuest()) {
 							PullRequestAssignment assignment = new PullRequestAssignment();
 							assignment.setRequest(request);
 							assignment.setUser(authorization.getUser());
@@ -465,11 +437,6 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 				revisions.add(new Revision(request.getBaseCommitHash(), Revision.Scope.SINCE));
 				revisions.add(new Revision(request.getLatestUpdate().getHeadCommitHash(), Revision.Scope.UNTIL));
 				return new CommitQuery(Lists.newArrayList(new RevisionCriteria(revisions)));
-			}
-
-			@Override
-			protected String getRefName() {
-				return NewPullRequestPage.this.getPullRequest().getSourceRef();
 			}
 
 			@Override
@@ -723,7 +690,7 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 			}
 			
 		});
-		titleInput.add(new ReferenceInputBehavior(false) {
+		titleInput.add(new ReferenceInputBehavior() {
 			
 			@Override
 			protected Project getProject() {
@@ -777,22 +744,10 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 			}
 			
 		};
-		descriptionInput.add(new IValidator<String>() {
-
-			@Override
-			public void validate(IValidatable<String> validatable) {
-				if (validatable.getValue().length() > PullRequest.MAX_DESCRIPTION_LEN) {
-					validatable.error(new IValidationError() {
-						
-						@Override
-						public Serializable getErrorMessage(IErrorMessageSource messageSource) {
-							return "Description too long";
-						}
-						
-					});
-				}
+		descriptionInput.add(validatable -> {
+			if (validatable.getValue().length() > PullRequest.MAX_DESCRIPTION_LEN) {
+				validatable.error(messageSource -> "Description too long");
 			}
-			
 		});
 		
 		descriptionInput.add(AttributeAppender.append("class", new AbstractReadOnlyModel<String>() {
@@ -879,12 +834,14 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 			@Override
 			public Component getLazyLoadComponent(String componentId) {
 				PullRequest request = getPullRequest();
-				MergePreview mergePreview = new MergePreview(request.getTarget().getObjectName(), 
-						request.getLatestUpdate().getHeadCommitHash(), request.getMergeStrategy(), null);
+				MergePreview mergePreview = new MergePreview();
+				mergePreview.setTargetHeadCommitHash(request.getTarget().getObjectName());
+				mergePreview.setHeadCommitHash(request.getLatestUpdate().getHeadCommitHash());
+				mergePreview.setMergeStrategy(request.getMergeStrategy());
 				ObjectId merged = mergePreview.getMergeStrategy().merge(request, "Pull request merge preview");
 				if (merged != null)
 					mergePreview.setMergeCommitHash(merged.name());
-				request.setLastMergePreview(mergePreview);
+				request.setMergePreview(mergePreview);
 				
 				if (merged != null) {
 					String html = String.format("<svg class='icon mt-n1 mr-1'><use xlink:href='%s'/></svg> Able to merge without conflicts", 
@@ -1063,22 +1020,30 @@ public class NewPullRequestPage extends ProjectPage implements RevisionDiff.Anno
 	
 	@Override
 	public void onSaveComment(CodeComment comment) {
-		OneDev.getInstance(CodeCommentManager.class).save(comment);
+		if (comment.isNew())
+			OneDev.getInstance(CodeCommentManager.class).create(comment);
+		else
+			OneDev.getInstance(CodeCommentManager.class).update(comment);			
 	}
 	
 	@Override
 	public void onSaveCommentReply(CodeCommentReply reply) {
-		OneDev.getInstance(CodeCommentReplyManager.class).save(reply);
+		if (reply.isNew())
+			OneDev.getInstance(CodeCommentReplyManager.class).create(reply);
+		else
+			OneDev.getInstance(CodeCommentReplyManager.class).update(reply);
 	}
 	
 	@Override
 	public void onSaveCommentStatusChange(CodeCommentStatusChange change, String note) {
-		OneDev.getInstance(CodeCommentStatusChangeManager.class).save(change, note);
+		OneDev.getInstance(CodeCommentStatusChangeManager.class).create(change, note);
 	}
 	
 	@Override
 	protected boolean isPermitted() {
-		return SecurityUtils.canReadCode(target.getProject()) && SecurityUtils.canReadCode(source.getProject());
+		return !SecurityUtils.getUser().isEffectiveGuest() 
+				&& SecurityUtils.canReadCode(target.getProject()) 
+				&& SecurityUtils.canReadCode(source.getProject());
 	}
 
 	@Override

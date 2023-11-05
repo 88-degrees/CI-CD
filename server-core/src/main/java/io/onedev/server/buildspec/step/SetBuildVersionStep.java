@@ -19,8 +19,8 @@ import io.onedev.server.event.ListenerRegistry;
 import io.onedev.server.event.project.build.BuildUpdated;
 import io.onedev.server.model.Build;
 import io.onedev.server.persistence.TransactionManager;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Interpolative;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Interpolative;
 
 @Editable(order=260, name="Set Build Version")
 public class SetBuildVersionStep extends ServerSideStep {
@@ -47,17 +47,12 @@ public class SetBuildVersionStep extends ServerSideStep {
 	
 	@Override
 	public Map<String, byte[]> run(Build build, File inputDir, TaskLogger jobLogger) {
-		return OneDev.getInstance(TransactionManager.class).call(new Callable<Map<String, byte[]>>() {
-
-			@Override
-			public Map<String, byte[]> call() {
-				build.setVersion(buildVersion);
-				OneDev.getInstance(ListenerRegistry.class).post(new BuildUpdated(build));
-				Map<String, byte[]> outputFiles = new HashMap<>();
-				outputFiles.put(BUILD_VERSION, buildVersion.getBytes(StandardCharsets.UTF_8));
-				return outputFiles;
-			}
-			
+		return OneDev.getInstance(TransactionManager.class).call(() -> {
+			build.setVersion(buildVersion);
+			OneDev.getInstance(ListenerRegistry.class).post(new BuildUpdated(build));
+			Map<String, byte[]> outputFiles = new HashMap<>();
+			outputFiles.put(BUILD_VERSION, buildVersion.getBytes(StandardCharsets.UTF_8));
+			return outputFiles;
 		});
 		
 	}

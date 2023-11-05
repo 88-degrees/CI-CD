@@ -1,23 +1,9 @@
 package io.onedev.server.web.behavior;
 
-import static io.onedev.server.model.AbstractEntity.NAME_NUMBER;
-import static io.onedev.server.search.entity.EntityQuery.getValue;
-import static io.onedev.server.search.entity.pullrequest.PullRequestQuery.checkField;
-import static io.onedev.server.search.entity.pullrequest.PullRequestQuery.getOperator;
-import static io.onedev.server.search.entity.pullrequest.PullRequestQuery.getRuleName;
-import static io.onedev.server.search.entity.pullrequest.PullRequestQueryLexer.*;
-
-import java.util.ArrayList;
-import java.util.List;
-
-import org.apache.commons.lang3.StringUtils;
-import org.apache.wicket.Component;
-import org.apache.wicket.model.IModel;
-
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
-
 import io.onedev.commons.codeassist.FenceAware;
+import io.onedev.commons.codeassist.InputCompletion;
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.commons.codeassist.grammar.LexerRuleRefElementSpec;
 import io.onedev.commons.codeassist.parser.Element;
@@ -33,23 +19,42 @@ import io.onedev.server.util.DateUtils;
 import io.onedev.server.web.behavior.inputassist.ANTLRAssistBehavior;
 import io.onedev.server.web.behavior.inputassist.InputAssistBehavior;
 import io.onedev.server.web.util.SuggestionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.wicket.Component;
+import org.apache.wicket.model.IModel;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static io.onedev.server.model.AbstractEntity.NAME_NUMBER;
+import static io.onedev.server.search.entity.EntityQuery.getValue;
+import static io.onedev.server.search.entity.pullrequest.PullRequestQuery.*;
+import static io.onedev.server.search.entity.pullrequest.PullRequestQueryLexer.*;
 
 @SuppressWarnings("serial")
 public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 
+	private static final String FUZZY_SUGGESTION_DESCRIPTION_PREFIX = "surround with ~";
+	
 	private final IModel<Project> projectModel;
 	
 	private final boolean withCurrentUserCriteria;
 	
 	private final boolean withOrder;
 	
-	public PullRequestQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria, boolean withOrder) {
-		super(PullRequestQueryParser.class, "query", false);
+	public PullRequestQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria, 
+									boolean withOrder, boolean hideIfBlank) {
+		super(PullRequestQueryParser.class, "query", false, hideIfBlank);
 		this.projectModel = projectModel;
 		this.withCurrentUserCriteria = withCurrentUserCriteria;
 		this.withOrder = withOrder;
 	}
 
+	public PullRequestQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria,
+									boolean withOrder) {
+		this(projectModel, withCurrentUserCriteria, withOrder, false);
+	}
+	
 	@Override
 	public void detach(Component component) {
 		super.detach(component);
@@ -64,7 +69,11 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 	protected List<InputSuggestion> suggest(TerminalExpect terminalExpect) {
 		if (terminalExpect.getElementSpec() instanceof LexerRuleRefElementSpec) {
 			LexerRuleRefElementSpec spec = (LexerRuleRefElementSpec) terminalExpect.getElementSpec();
-			if (spec.getRuleName().equals("Quoted")) {
+			if (spec.getRuleName().equals("Number")) {
+				return SuggestionUtils.suggestNumber(
+						terminalExpect.getUnmatchedText(),
+						"find pull request with this number");
+			} else if (spec.getRuleName().equals("Quoted")) {
 				return new FenceAware(codeAssist.getGrammar(), '"', '"') {
 
 					@Override
@@ -85,7 +94,7 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 							List<Element> operatorElements = terminalExpect.getState().findMatchedElementsByLabel("operator", true);
 							Preconditions.checkState(operatorElements.size() == 1);
 							String operatorName = StringUtils.normalizeSpace(operatorElements.get(0).getMatchedText());
-							int operator = getOperator(operatorName);							
+							int operator = getOperator(operatorName);
 							if (fieldElements.isEmpty()) {
 								if (operator == IncludesIssue)
 									return SuggestionUtils.suggestIssues(project, matchWith, InputAssistBehavior.MAX_SUGGESTIONS);
@@ -97,14 +106,14 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 								String fieldName = getValue(fieldElements.get(0).getMatchedText());
 								try {
 									checkField(fieldName, operator);
-									if (fieldName.equals(PullRequest.NAME_SUBMIT_DATE) 
+									if (fieldName.equals(PullRequest.NAME_SUBMIT_DATE)
 											|| fieldName.equals(PullRequest.NAME_LAST_ACTIVITY_DATE)
 											|| fieldName.equals(PullRequest.NAME_CLOSE_DATE)) {
 										List<InputSuggestion> suggestions = SuggestionUtils.suggest(DateUtils.RELAX_DATE_EXAMPLES, matchWith);
-										return !suggestions.isEmpty()? suggestions: null;
+										return !suggestions.isEmpty() ? suggestions : null;
 									} else if (fieldName.equals(PullRequest.NAME_STATUS)) {
 										List<String> candidates = new ArrayList<>();
-										for (PullRequest.Status status: PullRequest.Status.values())
+										for (PullRequest.Status status : PullRequest.Status.values())
 											candidates.add(status.toString());
 										return SuggestionUtils.suggest(candidates, matchWith);
 									} else if (fieldName.equals(PullRequest.NAME_TARGET_PROJECT)
@@ -113,7 +122,7 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 											return SuggestionUtils.suggestProjectPaths(matchWith);
 										else
 											return null;
-									} else if (fieldName.equals(PullRequest.NAME_TARGET_BRANCH) 
+									} else if (fieldName.equals(PullRequest.NAME_TARGET_BRANCH)
 											|| fieldName.equals(PullRequest.NAME_SOURCE_BRANCH)) {
 										if (project != null && !matchWith.contains("*"))
 											return SuggestionUtils.suggestBranches(project, matchWith);
@@ -123,13 +132,13 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 										return SuggestionUtils.suggestPullRequests(project, matchWith, InputAssistBehavior.MAX_SUGGESTIONS);
 									} else if (fieldName.equals(PullRequest.NAME_MERGE_STRATEGY)) {
 										List<String> candidates = new ArrayList<>();
-										for (MergeStrategy strategy: MergeStrategy.values())
+										for (MergeStrategy strategy : MergeStrategy.values())
 											candidates.add(strategy.toString());
 										return SuggestionUtils.suggest(candidates, matchWith);
 									} else if (fieldName.equals(PullRequest.NAME_LABEL)) {
 										return SuggestionUtils.suggestLabels(matchWith);
-									} else if (fieldName.equals(PullRequest.NAME_TITLE) 
-											|| fieldName.equals(PullRequest.NAME_DESCRIPTION) 
+									} else if (fieldName.equals(PullRequest.NAME_TITLE)
+											|| fieldName.equals(PullRequest.NAME_DESCRIPTION)
 											|| fieldName.equals(PullRequest.NAME_COMMENT_COUNT)
 											|| fieldName.equals(PullRequest.NAME_COMMENT)) {
 										return null;
@@ -140,27 +149,39 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 						}
 						return new ArrayList<>();
 					}
-					
+
 					@Override
 					protected String getFencingDescription() {
 						return "value should be quoted";
 					}
-					
+
+				}.suggest(terminalExpect);
+			} else if (spec.getRuleName().equals("Fuzzy")) {
+				return new FenceAware(codeAssist.getGrammar(), '~', '~') {
+
+					@Override
+					protected List<InputSuggestion> match(String matchWith) {
+						return null;
+					}
+
+					@Override
+					protected String getFencingDescription() {
+						return FUZZY_SUGGESTION_DESCRIPTION_PREFIX + " to query title/description/comment";
+					}
+
 				}.suggest(terminalExpect);
 			}
-		} 
+		}
 		return null;
 	}
 	
 	@Override
 	protected Optional<String> describe(ParseExpect parseExpect, String suggestedLiteral) {
 		if (!withOrder && suggestedLiteral.equals(getRuleName(OrderBy))
-				|| !withCurrentUserCriteria && ((suggestedLiteral.equals(getRuleName(SubmittedByMe)) || suggestedLiteral.equals(getRuleName(MentionedMe))) 
-						|| suggestedLiteral.equals(getRuleName(ToBeReviewedByMe))
-						|| suggestedLiteral.equals(getRuleName(RequestedForChangesByMe))
-						|| suggestedLiteral.equals(getRuleName(ApprovedByMe))
-						|| suggestedLiteral.equals(getRuleName(AssignedToMe)))) {
+				|| !withCurrentUserCriteria && (suggestedLiteral.equals(getRuleName(SubmittedByMe)) || suggestedLiteral.equals(getRuleName(WatchedByMe)) || suggestedLiteral.equals(getRuleName(NeedMyAction)) || suggestedLiteral.equals(getRuleName(CommentedByMe)) || suggestedLiteral.equals(getRuleName(MentionedMe)) || suggestedLiteral.equals(getRuleName(ToBeReviewedByMe)) || suggestedLiteral.equals(getRuleName(RequestedForChangesByMe)) || suggestedLiteral.equals(getRuleName(ApprovedByMe)) || suggestedLiteral.equals(getRuleName(AssignedToMe)) || suggestedLiteral.equals(getRuleName(ToBeChangedByMe)) || suggestedLiteral.equals(getRuleName(ToBeMergedByMe)))) {
 			return null;
+		} else if (suggestedLiteral.equals("#")) {
+			return Optional.of("Find pull request by number");
 		}
 		
 		parseExpect = parseExpect.findExpectByLabel("operator");
@@ -204,4 +225,10 @@ public class PullRequestQueryBehavior extends ANTLRAssistBehavior {
 		return hints;
 	}
 
+	@Override
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return suggestion.getDescription() != null 
+				&& suggestion.getDescription().startsWith(FUZZY_SUGGESTION_DESCRIPTION_PREFIX);
+	}
+	
 }

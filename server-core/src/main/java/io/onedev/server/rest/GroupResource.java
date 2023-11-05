@@ -27,8 +27,6 @@ import io.onedev.server.model.GroupAuthorization;
 import io.onedev.server.model.Membership;
 import io.onedev.server.persistence.dao.EntityCriteria;
 import io.onedev.server.rest.annotation.Api;
-import io.onedev.server.rest.exception.InvalidParamException;
-import io.onedev.server.rest.support.RestConstants;
 import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.facade.GroupFacade;
 
@@ -77,12 +75,8 @@ public class GroupResource {
 	@GET
     public List<Group> queryBasicInfo(@QueryParam("name") String name, @QueryParam("offset") @Api(example="0") int offset, 
     		@QueryParam("count") @Api(example="100") int count) {
-		
 		if (!SecurityUtils.isAdministrator())
 			throw new UnauthorizedException();
-		
-    	if (count > RestConstants.MAX_PAGE_SIZE)
-    		throw new InvalidParamException("Count should not be greater than " + RestConstants.MAX_PAGE_SIZE);
 
 		EntityCriteria<Group> criteria = EntityCriteria.of(Group.class);
 		if (name != null) 
@@ -91,18 +85,29 @@ public class GroupResource {
     	return groupManager.query(criteria, offset, count);
     }
 	
-	@Api(order=500, description="Update group of specified id in request body, or create new if id property not provided")
+	@Api(order=500, description="Create new group")
     @POST
-    public Long createOrUpdate(@NotNull Group group) {
+    public Long create(@NotNull Group group) {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-    	if (group.getOldVersion() != null)
-    		groupManager.save(group, ((GroupFacade) group.getOldVersion()).getName());
-    	else
-    		groupManager.save(group, null);
+		
+		groupManager.create(group);
     		
     	return group.getId();
     }
+
+	@Api(order=550, description="Update group of specified id")
+	@Path("/{groupId}")
+	@POST
+	public Response update(@PathParam("groupId") Long groupId, @NotNull Group group) {
+		if (!SecurityUtils.isAdministrator())
+			throw new UnauthorizedException();
+		if (group.getOldVersion() != null)
+			groupManager.update(group, ((GroupFacade) group.getOldVersion()).getName());
+		else
+			groupManager.update(group, null);
+		return Response.ok().build();
+	}
 	
 	@Api(order=600)
 	@Path("/{groupId}")

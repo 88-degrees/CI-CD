@@ -1,21 +1,20 @@
 package io.onedev.server.model.support.code;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.validation.constraints.NotEmpty;
-
 import io.onedev.commons.codeassist.InputSuggestion;
 import io.onedev.server.model.Project;
 import io.onedev.server.util.patternset.PatternSet;
 import io.onedev.server.util.usage.Usage;
 import io.onedev.server.util.usermatch.Anyone;
 import io.onedev.server.util.usermatch.UserMatch;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Horizontal;
-import io.onedev.server.web.editable.annotation.Patterns;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Horizontal;
+import io.onedev.server.annotation.Patterns;
 import io.onedev.server.web.util.SuggestionUtils;
+
+import javax.validation.constraints.NotEmpty;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 
 @Editable
 @Horizontal
@@ -35,7 +34,7 @@ public class TagProtection implements Serializable {
 	
 	private boolean preventCreation = true;
 	
-	private boolean signatureRequired;
+	private boolean commitSignatureRequired;
 	
 	public boolean isEnabled() {
 		return enabled;
@@ -63,7 +62,7 @@ public class TagProtection implements Serializable {
 	}
 	
 	@Editable(order=150, name="Applicable Users", description="Rule will apply if user operating the tag matches criteria specified here")
-	@io.onedev.server.web.editable.annotation.UserMatch
+	@io.onedev.server.annotation.UserMatch
 	@NotEmpty(message="may not be empty")
 	public String getUserMatch() {
 		return userMatch;
@@ -110,12 +109,12 @@ public class TagProtection implements Serializable {
 	}
 
 	@Editable(order=560, description="Check this to require valid signature of head commit")
-	public boolean isSignatureRequired() {
-		return signatureRequired;
+	public boolean isCommitSignatureRequired() {
+		return commitSignatureRequired;
 	}
 
-	public void setSignatureRequired(boolean signatureRequired) {
-		this.signatureRequired = signatureRequired;
+	public void setCommitSignatureRequired(boolean commitSignatureRequired) {
+		this.commitSignatureRequired = commitSignatureRequired;
 	}
 
 	public void onRenameGroup(String oldName, String newName) {
@@ -126,7 +125,7 @@ public class TagProtection implements Serializable {
 		Usage usage = new Usage();
 		if (UserMatch.isUsingGroup(userMatch, groupName))
 			usage.add("applicable users");
-		return usage.prefix("tag protection '" + getTags() + "'");
+		return usage.prefix("code: tag protection '" + getTags() + "'");
 	}
 	
 	public void onRenameUser(String oldName, String newName) {

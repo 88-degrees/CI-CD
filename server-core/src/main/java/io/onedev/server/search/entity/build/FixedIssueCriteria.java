@@ -17,7 +17,7 @@ import org.eclipse.jgit.lib.ObjectId;
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.BuildManager;
 import io.onedev.server.git.service.GitService;
-import io.onedev.server.infomanager.CommitInfoManager;
+import io.onedev.server.xodus.CommitInfoManager;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.Issue;
 import io.onedev.server.model.Project;
@@ -59,7 +59,7 @@ public class FixedIssueCriteria extends Criteria<Build> {
 			Collection<Long> inBuildNumbers = buildManager.filterNumbers(it.getId(), descendants);
 			predicates.add(builder.and(
 					builder.equal(from.get(Build.PROP_PROJECT), it),
-					forManyValues(builder, attribute, inBuildNumbers, buildManager.getNumbersByProject(it.getId()))));
+					forManyValues(builder, attribute, inBuildNumbers, buildManager.getNumbers(it.getId()))));
 		});
 		if (!predicates.isEmpty())
 			return builder.or(predicates.toArray(new Predicate[0]));

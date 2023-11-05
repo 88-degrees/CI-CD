@@ -1,6 +1,9 @@
 package io.onedev.server.util.facade;
 
+import io.onedev.server.model.support.AccessToken;
+
 import javax.annotation.Nullable;
+import java.util.List;
 
 public class UserFacade extends EntityFacade {
 	
@@ -10,13 +13,16 @@ public class UserFacade extends EntityFacade {
 	
 	private final String fullName;
 	
-	private final String accessToken;
+	private final boolean guest;
 	
-	public UserFacade(Long id, String name, @Nullable String fullName, String accessToken) {
+	private final List<AccessToken> accessTokens;
+	
+	public UserFacade(Long id, String name, @Nullable String fullName, boolean guest, List<AccessToken> accessTokens) {
 		super(id);
 		this.name = name;
 		this.fullName = fullName;
-		this.accessToken = accessToken;
+		this.guest = guest;
+		this.accessTokens = accessTokens;
 	}
 
 	public String getName() {
@@ -27,8 +33,12 @@ public class UserFacade extends EntityFacade {
 		return fullName;
 	}
 
-	public String getAccessToken() {
-		return accessToken;
+	public boolean isGuest() {
+		return guest;
+	}
+
+	public List<AccessToken> getAccessTokens() {
+		return accessTokens;
 	}
 
 	public String getDisplayName() {

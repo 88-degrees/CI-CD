@@ -7,6 +7,10 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Password;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
 import io.onedev.server.entitymanager.*;
 import io.onedev.server.entityreference.ReferenceMigrator;
 import io.onedev.server.event.ListenerRegistry;
@@ -15,18 +19,19 @@ import io.onedev.server.git.command.LsRemoteCommand;
 import io.onedev.server.model.*;
 import io.onedev.server.model.support.LastActivity;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
+import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.dao.Dao;
+import io.onedev.server.security.SecurityUtils;
 import io.onedev.server.util.DateUtils;
 import io.onedev.server.util.JerseyUtils;
 import io.onedev.server.util.JerseyUtils.PageDataConsumer;
 import io.onedev.server.util.Pair;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Password;
+import io.onedev.server.validation.Validatable;
+import io.onedev.server.web.component.taskbutton.TaskResult;
+import io.onedev.server.web.component.taskbutton.TaskResult.HtmlMessgae;
 import org.apache.http.client.utils.URIBuilder;
+import org.apache.shiro.authz.UnauthorizedException;
 import org.glassfish.jersey.client.ClientProperties;
 import org.glassfish.jersey.client.oauth2.OAuth2ClientSupport;
 import org.joda.time.format.ISODateTimeFormat;
@@ -191,24 +196,24 @@ public class ImportServer implements Serializable, Validatable {
 	}
 	
 	@Nullable
-	private User getUser(Map<String, Optional<User>> users, JsonNode userNode, TaskLogger logger) {
+	private Long getUserId(Map<String, Optional<Long>> users, JsonNode userNode, TaskLogger logger) {
 		String login = userNode.get("login").asText();
-		Optional<User> userOpt = users.get(login);
-		if (userOpt == null) {
+		Optional<Long> userIdOpt = users.get(login);
+		if (userIdOpt == null) {
 			String email = null;
 			if (userNode.hasNonNull("email"))
 				email = userNode.get("email").asText(null);
 			if (email != null)
-				userOpt = Optional.ofNullable(OneDev.getInstance(UserManager.class).findByVerifiedEmailAddress(email));
+				userIdOpt = Optional.ofNullable(User.idOf(OneDev.getInstance(UserManager.class).findByVerifiedEmailAddress(email)));
 			else
-				userOpt = Optional.empty();
-			users.put(login, userOpt);
+				userIdOpt = Optional.empty();
+			users.put(login, userIdOpt);
 		}
-		return userOpt.orElse(null);
+		return userIdOpt.orElse(null);
 	}
 	
 	ImportResult importIssues(String giteaRepo, Project oneDevProject, IssueImportOption option, 
-			Map<String, Optional<User>> users, boolean dryRun, TaskLogger logger) {
+			Map<String, Optional<Long>> userIds, boolean dryRun, TaskLogger logger) {
 		IssueManager issueManager = OneDev.getInstance(IssueManager.class);
 		Client client = newClient();
 		try {
@@ -293,10 +298,11 @@ public class ImportServer implements Serializable, Validatable {
 							}
 						}
 						
+						var userManager = OneDev.getInstance(UserManager.class);
 						JsonNode userNode = issueNode.get("user");
-						User user = getUser(users, userNode, logger);
-						if (user != null) {
-							issue.setSubmitter(user);
+						Long userId = getUserId(userIds, userNode, logger);
+						if (userId != null) {
+							issue.setSubmitter(userManager.load(userId));
 						} else {
 							issue.setSubmitter(OneDev.getInstance(UserManager.class).getUnknown());
 							nonExistentLogins.add(userNode.get("login").asText());
@@ -326,9 +332,9 @@ public class ImportServer implements Serializable, Validatable {
 							assigneeField.setName(option.getAssigneesIssueField());
 							assigneeField.setType(InputSpec.USER);
 							
-							user = getUser(users, assigneeNode, logger);
-							if (user != null) { 
-								assigneeField.setValue(user.getName());
+							userId = getUserId(userIds, assigneeNode, logger);
+							if (userId != null) { 
+								assigneeField.setValue(userManager.load(userId).getName());
 								issue.getFields().add(assigneeField);
 							} else {
 								nonExistentLogins.add(assigneeNode.get("login").asText());
@@ -355,10 +361,10 @@ public class ImportServer implements Serializable, Validatable {
 							if (mapped != null) {
 								IssueField labelField = new IssueField();
 								labelField.setIssue(issue);
-								labelField.setName(mapped.getFirst().getName());
+								labelField.setName(mapped.getLeft().getName());
 								labelField.setType(InputSpec.ENUMERATION);
-								labelField.setValue(mapped.getSecond());
-								labelField.setOrdinal(mapped.getFirst().getOrdinal(mapped.getSecond()));
+								labelField.setValue(mapped.getRight());
+								labelField.setOrdinal(mapped.getLeft().getOrdinal(mapped.getRight()));
 								issue.getFields().add(labelField);
 							} else {
 								currentUnmappedLabels.add(labelName);
@@ -383,9 +389,9 @@ public class ImportServer implements Serializable, Validatable {
 										DateTimeFormatter.ISO_DATE_TIME.parse(created_at))));
 								
 								userNode = commentNode.get("user");
-								user = getUser(users, userNode, logger);
-								if (user != null) {
-									comment.setUser(user);
+								userId = getUserId(userIds, userNode, logger);
+								if (userId != null) {
+									comment.setUser(userManager.load(userId));
 								} else {
 									comment.setUser(OneDev.getInstance(UserManager.class).getUnknown());
 									nonExistentLogins.add(userNode.get("username").asText());
@@ -455,7 +461,7 @@ public class ImportServer implements Serializable, Validatable {
 			result.nonExistentLogins.addAll(nonExistentLogins);
 			result.nonExistentMilestones.addAll(nonExistentMilestones);
 			result.unmappedIssueLabels.addAll(unmappedIssueLabels);
-			result.importedIssues.addAll(issues);
+			result.issuesImported = !issues.isEmpty();
 			
 			if (!dryRun && !issues.isEmpty())
 				OneDev.getInstance(ListenerRegistry.class).post(new IssuesImported(oneDevProject, issues));
@@ -468,93 +474,104 @@ public class ImportServer implements Serializable, Validatable {
 		}
 	}
 	
-	String importProjects(ImportRepositories repositories, ProjectImportOption option, 
-			boolean dryRun, TaskLogger logger) {
+	TaskResult importProjects(ImportRepositories repositories, ProjectImportOption option,
+							  boolean dryRun, TaskLogger logger) {
 		Client client = newClient();
 		try {
-			Map<String, Optional<User>> users = new HashMap<>();
+			Map<String, Optional<Long>> userIds = new HashMap<>();
 			ImportResult result = new ImportResult();
-			for (ProjectMapping projectMapping: repositories.getProjectMappings()) {
-				String apiEndpoint = getApiEndpoint("/repos/" + projectMapping.getGiteaRepo());
-				JsonNode repoNode = JerseyUtils.get(client, apiEndpoint, logger);
-				ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);				
-				Project project = projectManager.setup(projectMapping.getOneDevProject());
-				project.setDescription(repoNode.get("description").asText(null));
-				project.setIssueManagement(repoNode.get("has_issues").asBoolean());
-				
-				boolean isPrivate = repoNode.get("private").asBoolean();
-				if (!isPrivate && option.getPublicRole() != null)
-					project.setDefaultRole(option.getPublicRole());
-
-				if (project.isNew() || project.getDefaultBranch() == null) {
-					logger.log("Cloning code from repository " + projectMapping.getGiteaRepo() + "...");
-					
-					URIBuilder builder = new URIBuilder(repoNode.get("clone_url").asText());
-					builder.setUserInfo("git", getAccessToken());
-					
-					SensitiveMasker.push(new SensitiveMasker() {
-
-						@Override
-						public String mask(String text) {
-							return StringUtils.replace(text, getAccessToken(), "******");
-						}
-						
-					});
+			for (var giteaRepository : repositories.getImportRepositories()) {
+				OneDev.getInstance(TransactionManager.class).run(() -> {
 					try {
-						if (dryRun) {
-							new LsRemoteCommand(builder.build().toString()).refs("HEAD").quiet(true).run();
-						} else { 
-							if (project.isNew()) 
-								projectManager.create(project);
-							projectManager.clone(project, builder.build().toString());
-						}
-					} finally {
-						SensitiveMasker.pop();
-					}
-				} else {
-					logger.warning("Skipping code clone as the project already has code");
-				}
+						String oneDevProjectPath;
+						if (repositories.getParentOneDevProject() != null)
+							oneDevProjectPath = repositories.getParentOneDevProject() + "/" + giteaRepository;
+						else
+							oneDevProjectPath = giteaRepository;
 
-				if (option.getIssueImportOption() != null) {
-					logger.log("Importing milestones from repository " + projectMapping.getGiteaRepo() + "...");
-					apiEndpoint = getApiEndpoint("/repos/" + projectMapping.getGiteaRepo() + "/milestones?state=all");
-					for (JsonNode milestoneNode: list(client, apiEndpoint, logger)) {
-						String milestoneName = milestoneNode.get("title").asText();
-						Milestone milestone = project.getMilestone(milestoneName);
-						if (milestone == null) {
-							milestone = new Milestone();
-							milestone.setName(milestoneName);
-							milestone.setDescription(milestoneNode.get("description").asText(null));
-							milestone.setProject(project);
-							String dueDateString = milestoneNode.get("due_on").asText(null);
-							if (dueDateString != null) 
-								milestone.setDueDate(ISODateTimeFormat.dateTimeNoMillis().parseDateTime(dueDateString).toDate());
-							if (milestoneNode.get("state").asText().equals("closed"))
-								milestone.setClosed(true);
-							
-							project.getMilestones().add(milestone);
-							
-							if (!dryRun)
-								OneDev.getInstance(MilestoneManager.class).save(milestone);
+						logger.log("Importing from '" + giteaRepository + "' to '" + oneDevProjectPath + "'...");
+
+						ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);
+						Project project = projectManager.setup(oneDevProjectPath);
+
+						if (!project.isNew() && !SecurityUtils.canManage(project)) {
+							throw new UnauthorizedException("Import target already exists. " +
+									"You need to have project management privilege over it");
 						}
+
+						String apiEndpoint = getApiEndpoint("/repos/" + giteaRepository);
+						JsonNode repoNode = JerseyUtils.get(client, apiEndpoint, logger);
+
+						project.setDescription(repoNode.get("description").asText(null));
+						project.setIssueManagement(repoNode.get("has_issues").asBoolean());
+
+						boolean isPrivate = repoNode.get("private").asBoolean();
+						if (!isPrivate && option.getPublicRole() != null)
+							project.setDefaultRole(option.getPublicRole());
+
+						if (project.isNew() || project.getDefaultBranch() == null) {
+							logger.log("Cloning code...");
+
+							URIBuilder builder = new URIBuilder(repoNode.get("clone_url").asText());
+							builder.setUserInfo("git", getAccessToken());
+
+							SensitiveMasker.push(text -> StringUtils.replace(text, getAccessToken(), "******"));
+							try {
+								if (dryRun) {
+									new LsRemoteCommand(builder.build().toString()).refs("HEAD").quiet(true).run();
+								} else {
+									if (project.isNew())
+										projectManager.create(project);
+									projectManager.clone(project, builder.build().toString());
+								}
+							} finally {
+								SensitiveMasker.pop();
+							}
+						} else {
+							logger.warning("Skipping code clone as the project already has code");
+						}
+
+						if (option.getIssueImportOption() != null) {
+							logger.log("Importing milestones...");
+							apiEndpoint = getApiEndpoint("/repos/" + giteaRepository + "/milestones?state=all");
+							for (JsonNode milestoneNode : list(client, apiEndpoint, logger)) {
+								String milestoneName = milestoneNode.get("title").asText();
+								Milestone milestone = project.getMilestone(milestoneName);
+								if (milestone == null) {
+									milestone = new Milestone();
+									milestone.setName(milestoneName);
+									milestone.setDescription(milestoneNode.get("description").asText(null));
+									milestone.setProject(project);
+									String dueDateString = milestoneNode.get("due_on").asText(null);
+									if (dueDateString != null)
+										milestone.setDueDate(ISODateTimeFormat.dateTimeNoMillis().parseDateTime(dueDateString).toDate());
+									if (milestoneNode.get("state").asText().equals("closed"))
+										milestone.setClosed(true);
+
+									project.getMilestones().add(milestone);
+
+									if (!dryRun)
+										OneDev.getInstance(MilestoneManager.class).create(milestone);
+								}
+							}
+
+							logger.log("Importing issues...");
+							ImportResult currentResult = importIssues(giteaRepository,
+									project, option.getIssueImportOption(), userIds, dryRun, logger);
+							result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
+							result.nonExistentMilestones.addAll(currentResult.nonExistentMilestones);
+							result.unmappedIssueLabels.addAll(currentResult.unmappedIssueLabels);
+							result.issuesImported = result.issuesImported || currentResult.issuesImported;
+						}
+					} catch (URISyntaxException e) {
+						throw new RuntimeException(e);
 					}
-					
-					logger.log("Importing issues from repository " + projectMapping.getGiteaRepo() + "...");
-					ImportResult currentResult = importIssues(projectMapping.getGiteaRepo(), 
-							project, option.getIssueImportOption(), users, dryRun, logger);
-					result.nonExistentLogins.addAll(currentResult.nonExistentLogins);
-					result.nonExistentMilestones.addAll(currentResult.nonExistentMilestones);
-					result.unmappedIssueLabels.addAll(currentResult.unmappedIssueLabels);
-					result.importedIssues.addAll(currentResult.importedIssues);
-				} 
+				});
 			}
-			
-			return result.toHtml("Repositories imported successfully");
-		} catch (URISyntaxException e) {
-			throw new RuntimeException(e);
+			return new TaskResult(true, new HtmlMessgae(result.toHtml("Repositories imported successfully")));
 		} finally {
 			client.close();
-		}			
+		}
 	}
 	
 	private GlobalIssueSetting getIssueSetting() {

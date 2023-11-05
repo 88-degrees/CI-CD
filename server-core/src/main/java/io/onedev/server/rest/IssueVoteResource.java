@@ -1,24 +1,19 @@
 package io.onedev.server.rest;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-
-import org.apache.shiro.authz.UnauthorizedException;
-
 import io.onedev.server.entitymanager.IssueVoteManager;
 import io.onedev.server.model.IssueVote;
 import io.onedev.server.rest.annotation.Api;
-import io.onedev.server.security.SecurityUtils;
+import org.apache.shiro.authz.UnauthorizedException;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.validation.constraints.NotNull;
+import javax.ws.rs.*;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+
+import static io.onedev.server.security.SecurityUtils.canAccess;
+import static io.onedev.server.security.SecurityUtils.canModifyOrDelete;
 
 @Api(order=2100)
 @Path("/issue-votes")
@@ -39,19 +34,17 @@ public class IssueVoteResource {
 	@GET
 	public IssueVote get(@PathParam("voteId") Long voteId) {
 		IssueVote vote = voteManager.load(voteId);
-		if (!SecurityUtils.canAccess(vote.getIssue().getProject()))
+		if (!canAccess(vote.getIssue().getProject()))
 			throw new UnauthorizedException();
 		return vote;
 	}
 	
-	@Api(order=200, description="Update issue vote of specified id in request body, or create new if id property not provided")
+	@Api(order=200, description="Create new issue vote")
 	@POST
-	public Long createOrUpdate(@NotNull IssueVote vote) {
-		if (!SecurityUtils.canAccess(vote.getIssue().getProject()) 
-				|| !SecurityUtils.isAdministrator() && !vote.getUser().equals(SecurityUtils.getUser())) {
+	public Long create(@NotNull IssueVote vote) {
+		if (!canAccess(vote.getIssue().getProject()) || !canModifyOrDelete(vote)) 
 			throw new UnauthorizedException();
-		}
-		voteManager.save(vote);
+		voteManager.create(vote);
 		return vote.getId();
 	}
 	
@@ -60,7 +53,7 @@ public class IssueVoteResource {
 	@DELETE
 	public Response delete(@PathParam("voteId") Long voteId) {
 		IssueVote vote = voteManager.load(voteId);
-		if (!SecurityUtils.isAdministrator() && !vote.getUser().equals(SecurityUtils.getUser())) 
+		if (!canModifyOrDelete(vote)) 
 			throw new UnauthorizedException();
 		
 		voteManager.delete(vote);

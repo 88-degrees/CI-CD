@@ -44,6 +44,9 @@
 	width: 100%;
 	border-collapse: separate;
 }
+.editable table.norecords {
+	border-collapse: collapse;
+}
 .editable table.norecords tfoot td {
 	border: none;
 	padding: 4px 0 0 0;
@@ -102,13 +105,17 @@
 .editable table tr:first-child td {
 	border-top: 1px dashed var(--secondary);
 }
+.dark-mode .editable table tr:first-child td {
+	border-top: 1px dashed var(--dark-mode-lighter-dark);
+}
 .editable table tr:first-child td:first-child {
 	border-top-left-radius: 0.42rem;
 }
 .editable table tr:first-child td:last-child {
 	border-top-right-radius: 0.42rem;
 }
-.editable table thead+tbody tr:first-child td {
+.editable table thead+tbody tr:first-child td,
+.dark-mode .editable table thead+tbody tr:first-child td {
 	border-top: none;
 }
 .editable table thead+tbody tr:first-child td:first-child {
@@ -128,6 +135,22 @@
 
 .bean-editor .password-confirm {
 	margin-top: 1rem;
+}
+
+.bean-editor.disabled {
+	opacity: 50%;
+	position: relative;
+}
+.bean-editor>.disable-mask {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: none;
+}
+.bean-editor.disabled>.disable-mask {
+	display: block;
 }
 
 .bean-viewer .type-selector {
@@ -154,4 +177,12 @@
 
 .inplace-property-edit {
 	width: 300px !important;
+}
+.select2-drop.string-list .select2-no-results,
+.select2-drop.string-list .select2-searching {
+	display: none;
+}
+
+.select2-container-multi.string-list .select2-choices .select2-search-field input.select2-active {
+	background: none !important;
 }

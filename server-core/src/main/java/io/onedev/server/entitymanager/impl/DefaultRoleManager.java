@@ -1,44 +1,43 @@
 package io.onedev.server.entitymanager.impl;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-
-import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.hibernate.ReplicationMode;
-import org.hibernate.criterion.MatchMode;
-import org.hibernate.criterion.Order;
-import org.hibernate.criterion.Restrictions;
-
+import com.google.common.base.Preconditions;
+import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.cp.IAtomicLong;
+import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.entitymanager.LinkAuthorizationManager;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.entitymanager.RoleManager;
 import io.onedev.server.entitymanager.SettingManager;
+import io.onedev.server.event.Listen;
+import io.onedev.server.event.entity.EntityPersisted;
+import io.onedev.server.event.entity.EntityRemoved;
+import io.onedev.server.event.system.SystemStarting;
 import io.onedev.server.model.LinkSpec;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.Role;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.role.AllIssueFields;
-import io.onedev.server.model.support.role.CodePrivilege;
-import io.onedev.server.model.support.role.ExcludeIssueFields;
-import io.onedev.server.model.support.role.IncludeIssueFields;
-import io.onedev.server.model.support.role.IssueFieldSet;
-import io.onedev.server.model.support.role.JobPrivilege;
-import io.onedev.server.model.support.role.NoneIssueFields;
+import io.onedev.server.model.support.role.*;
 import io.onedev.server.persistence.IdManager;
+import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.persistence.annotation.Sessional;
 import io.onedev.server.persistence.annotation.Transactional;
 import io.onedev.server.persistence.dao.BaseEntityManager;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.persistence.dao.EntityCriteria;
+import io.onedev.server.util.facade.RoleCache;
+import io.onedev.server.util.facade.RoleFacade;
 import io.onedev.server.util.usage.Usage;
 import io.onedev.server.web.component.issue.workflowreconcile.ReconcileUtils;
 import io.onedev.server.web.component.issue.workflowreconcile.UndefinedFieldResolution;
+import org.hibernate.ReplicationMode;
+import org.hibernate.criterion.MatchMode;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Restrictions;
+
+import javax.annotation.Nullable;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.*;
 
 @Singleton
 public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleManager {
@@ -51,14 +50,24 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 	
 	private final ProjectManager projectManager;
 	
+	private final ClusterManager clusterManager;
+	
+	private final TransactionManager transactionManager;
+
+	private volatile RoleCache cache;
+	
 	@Inject
 	public DefaultRoleManager(Dao dao, SettingManager settingManager, IdManager idManager, 
-			LinkAuthorizationManager linkAuthorizationManager, ProjectManager projectManager) {
+							  LinkAuthorizationManager linkAuthorizationManager, 
+							  ProjectManager projectManager, ClusterManager clusterManager, 
+							  TransactionManager transactionManager) {
 		super(dao);
 		this.settingManager = settingManager;
 		this.idManager = idManager;
 		this.linkAuthorizationManager = linkAuthorizationManager;
 		this.projectManager = projectManager;
+		this.clusterManager = clusterManager;
+		this.transactionManager = transactionManager;
 	}
 
 	@Transactional
@@ -66,11 +75,38 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 	public void replicate(Role role) {
 		getSession().replicate(role, ReplicationMode.OVERWRITE);
 		idManager.useId(Role.class, role.getId());
+
+		var facade = role.getFacade();
+		transactionManager.runAfterCommit(() -> cache.put(facade.getId(), facade));
 	}
-	
+
+	@Sessional
+	@Listen
+	public void on(SystemStarting event) {
+		HazelcastInstance hazelcastInstance = clusterManager.getHazelcastInstance();
+		cache = new RoleCache(hazelcastInstance.getMap("roleCache"));
+
+		IAtomicLong cacheInited = hazelcastInstance.getCPSubsystem().getAtomicLong("roleCacheInited"); 
+		clusterManager.init(cacheInited, () -> {
+			for (var role: query())
+				cache.put(role.getId(), role.getFacade());
+			return 1L;			
+		});
+	}
+
 	@Transactional
 	@Override
-	public void save(Role role, Collection<LinkSpec> authorizedLinks, String oldName) {
+	public void create(Role role, Collection<LinkSpec> authorizedLinks) {
+		Preconditions.checkState(role.isNew());
+		dao.persist(role);
+		linkAuthorizationManager.syncAuthorizations(role, authorizedLinks);
+	}
+
+	@Transactional
+	@Override
+	public void update(Role role, Collection<LinkSpec> authorizedLinks, String oldName) {
+		Preconditions.checkState(!role.isNew());
+		
 		if (oldName != null && !oldName.equals(role.getName())) 
 			settingManager.onRenameRole(oldName, role.getName());
 		dao.persist(role);
@@ -84,14 +120,13 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
     	Usage usage = new Usage();
 
     	usage.add(settingManager.onDeleteRole(role.getName()));
-
+		
 		usage.checkInUse("Role '" + role.getName() + "'");
 		
 		for (Project project: role.getDefaultProjects()) {
 			project.setDefaultRole(null);
-			projectManager.save(project);
+			projectManager.update(project);
 		}
-    	
 		dao.remove(role);
 	}
 
@@ -108,10 +143,11 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 	@Sessional
 	@Override
 	public Role find(String name) {
-		EntityCriteria<Role> criteria = newCriteria();
-		criteria.add(Restrictions.ilike("name", name));
-		criteria.setCacheable(true);
-		return dao.find(criteria);
+		RoleFacade facade = cache.find(name);
+		if (facade != null)
+			return load(facade.getId());
+		else
+			return null;
 	}
 	
 	@Transactional
@@ -130,7 +166,7 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 		jobPrivilege.setRunJob(true);
 		codeWriter.getJobPrivileges().add(jobPrivilege);
 		
-		save(codeWriter, new ArrayList<>(), null);
+		create(codeWriter, new ArrayList<>());
 
 		Role codeReader = new Role();
 		codeReader.setName("Code Reader");
@@ -146,7 +182,7 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 		jobPrivilege.setJobNames("*");
 		codeReader.getJobPrivileges().add(jobPrivilege);
 		
-		save(codeReader, new ArrayList<>(), null);
+		create(codeReader, new ArrayList<>());
 		
 		Role issueReporter = new Role();
 		issueReporter.setName("Issue Reporter");
@@ -162,7 +198,7 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 		jobPrivilege.setJobNames("*");
 		issueReporter.getJobPrivileges().add(jobPrivilege);
 
-		save(issueReporter, new ArrayList<>(), null);					
+		create(issueReporter, new ArrayList<>());					
 	}
 
     @Sessional
@@ -246,6 +282,24 @@ public class DefaultRoleManager extends BaseEntityManager<Role> implements RoleM
 	@Override
 	public int count(@Nullable String term) {
 		return count(getCriteria(term));
+	}
+
+	@Transactional
+	@Listen
+	public void on(EntityPersisted event) {
+		if (event.getEntity() instanceof Role) {
+			var facade = (RoleFacade) event.getEntity().getFacade();
+			transactionManager.runAfterCommit(() -> cache.put(facade.getId(), facade));
+		}
+	}
+
+	@Transactional
+	@Listen
+	public void on(EntityRemoved event) {
+		if (event.getEntity() instanceof Role) {
+			var id = event.getEntity().getId();
+			transactionManager.runAfterCommit(() -> cache.remove(id));
+		}
 	}
 	
 }

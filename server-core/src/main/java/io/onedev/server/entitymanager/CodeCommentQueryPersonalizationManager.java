@@ -8,5 +8,9 @@ import io.onedev.server.persistence.dao.EntityManager;
 public interface CodeCommentQueryPersonalizationManager extends EntityManager<CodeCommentQueryPersonalization> {
 	
 	CodeCommentQueryPersonalization find(Project project, User user);
+
+    void create(CodeCommentQueryPersonalization personalization);
+
+	void update(CodeCommentQueryPersonalization personalization);
 	
 }

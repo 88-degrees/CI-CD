@@ -12,5 +12,9 @@ public interface UserAuthorizationManager extends EntityManager<UserAuthorizatio
 	void syncAuthorizations(User user, Collection<UserAuthorization> authorizations);
 	
 	void syncAuthorizations(Project project, Collection<UserAuthorization> authorizations);
+
+    void create(UserAuthorization authorization);
+
+	void update(UserAuthorization authorization);
 	
 }

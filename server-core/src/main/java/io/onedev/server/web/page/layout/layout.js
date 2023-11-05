@@ -135,8 +135,9 @@ onedev.server.layout = {
 			return false;
 		});
 		
-		if (onedev.server.util.isMac())
+		if (onedev.server.util.isMac()) {
 			$("a.command-palette").attr("title", "cmd-k to show command palette").html("<span class='keycap'>⌘</span> <span class='keycap'>k</span>");
+		}
 		else
 			$("a.command-palette").attr("title", "ctrl-k to show command palette").html("<span class='keycap'>ctrl</span> <span class='keycap'>k</span>");
 		$(document).keydown(function(e) {
@@ -158,5 +159,34 @@ onedev.server.layout = {
 			if ($lastActive.length != 0)
 				$lastActive[0].scrollIntoViewIfNeeded();
 		}
+	},
+	onNewVersionStatusIconLoaded: function(newVersionStatusCallback) {
+		var $newVersionStatusIcon = $(".new-version-status>img");
+		var width = $newVersionStatusIcon[0].width;
+		var height = $newVersionStatusIcon[0].height;
+
+		var newVersionStatus;
+		if (width == 17 && height == 17)
+			newVersionStatus = "none";
+		else if (width == 16 && height == 16)
+			newVersionStatus = "normal";
+		else if (width == 17 && height == 16)
+			newVersionStatus = "warning";
+		else
+			newVersionStatus = "danger";
+
+		if (newVersionStatus == "none") {
+			$newVersionStatusIcon.parent().hide();
+		} else {
+			$newVersionStatusIcon.css({
+				width: "16px",
+				height: "16px"
+			});
+		}
+		
+		// cache new version status so that we do not need to check new version 
+		// in remaining time of the day
+		if (newVersionStatusCallback)
+			newVersionStatusCallback(newVersionStatus);
 	}
 }

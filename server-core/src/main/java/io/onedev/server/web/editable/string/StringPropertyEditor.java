@@ -16,7 +16,7 @@ import io.onedev.server.web.behavior.OnTypingDoneBehavior;
 import io.onedev.server.web.behavior.inputassist.InputAssistBehavior;
 import io.onedev.server.web.editable.PropertyDescriptor;
 import io.onedev.server.web.editable.PropertyEditor;
-import io.onedev.server.web.editable.annotation.Multiline;
+import io.onedev.server.annotation.Multiline;
 
 @SuppressWarnings("serial")
 public class StringPropertyEditor extends PropertyEditor<String> {
@@ -34,17 +34,22 @@ public class StringPropertyEditor extends PropertyEditor<String> {
 		super.onInitialize();
 		
 		Method getter = getDescriptor().getPropertyGetter();
-		if (getter.getAnnotation(Multiline.class) != null) {
+		var multiline = getter.getAnnotation(Multiline.class);
+		if (multiline != null) {
 			Fragment fragment = new Fragment("content", "multiLineFrag", this);
-			fragment.add(input = new TextArea<String>("input", Model.of(getModelObject())) {
+			fragment.add(input = new TextArea<>("input", Model.of(getModelObject())) {
 
 				@Override
 				protected boolean shouldTrimInput() {
 					return false;
 				}
-				
+
 			});
 			input.setType(getDescriptor().getPropertyClass());
+			if (multiline.monospace()) 
+				input.add(AttributeAppender.append("class", "text-monospace"));
+			if (multiline.maxHeight().length() != 0)
+				input.add(AttributeAppender.append("style", "max-height: " + multiline.maxHeight()));
 			add(fragment);
 		} else {
 			Fragment fragment = new Fragment("content", "singleLineFrag", this);

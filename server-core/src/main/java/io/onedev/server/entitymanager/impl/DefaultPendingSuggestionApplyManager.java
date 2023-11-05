@@ -10,6 +10,7 @@ import javax.persistence.criteria.CriteriaDelete;
 import javax.persistence.criteria.CriteriaQuery;
 import javax.persistence.criteria.Root;
 
+import com.google.common.base.Preconditions;
 import org.eclipse.jgit.lib.ObjectId;
 
 import io.onedev.server.OneDev;
@@ -83,7 +84,7 @@ public class DefaultPendingSuggestionApplyManager extends BaseEntityManager<Pend
 			compareContext.setOldCommitHash(comment.getMark().getCommitHash());
 			compareContext.setNewCommitHash(newCommitId.name());
 			change.setCompareContext(compareContext);
-			OneDev.getInstance(CodeCommentStatusChangeManager.class).save(change, "Suggestion applied");
+			OneDev.getInstance(CodeCommentStatusChangeManager.class).create(change, "Suggestion applied");
 		}
 
 		return newCommitId;
@@ -121,6 +122,13 @@ public class DefaultPendingSuggestionApplyManager extends BaseEntityManager<Pend
 		criteriaQuery.select(root);
 		
 		return getSession().createQuery(criteriaQuery).list();
+	}
+
+	@Transactional
+	@Override
+	public void create(PendingSuggestionApply pendingSuggestionApply) {
+		Preconditions.checkState(pendingSuggestionApply.isNew());
+		dao.persist(pendingSuggestionApply);
 	}
 
 }

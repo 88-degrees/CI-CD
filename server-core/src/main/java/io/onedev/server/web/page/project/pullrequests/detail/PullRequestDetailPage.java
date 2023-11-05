@@ -6,10 +6,11 @@ import io.onedev.server.entitymanager.*;
 import io.onedev.server.entityreference.Referenceable;
 import io.onedev.server.git.GitUtils;
 import io.onedev.server.git.service.RefFacade;
-import io.onedev.server.infomanager.VisitInfoManager;
+import io.onedev.server.xodus.VisitInfoManager;
 import io.onedev.server.model.*;
 import io.onedev.server.model.PullRequestReview.Status;
 import io.onedev.server.model.support.EntityWatch;
+import io.onedev.server.model.support.code.BuildRequirement;
 import io.onedev.server.model.support.pullrequest.MergePreview;
 import io.onedev.server.model.support.pullrequest.MergeStrategy;
 import io.onedev.server.search.entity.EntityQuery;
@@ -22,8 +23,8 @@ import io.onedev.server.util.ProjectScopedNumber;
 import io.onedev.server.web.WebSession;
 import io.onedev.server.web.ajaxlistener.ConfirmClickListener;
 import io.onedev.server.web.asset.emoji.Emojis;
+import io.onedev.server.web.behavior.ChangeObserver;
 import io.onedev.server.web.behavior.ReferenceInputBehavior;
-import io.onedev.server.web.behavior.WebSocketObserver;
 import io.onedev.server.web.component.branch.BranchLink;
 import io.onedev.server.web.component.entity.labels.EntityLabelsPanel;
 import io.onedev.server.web.component.entity.nav.EntityNavPanel;
@@ -50,7 +51,9 @@ import io.onedev.server.web.component.tabbable.Tabbable;
 import io.onedev.server.web.component.user.ident.Mode;
 import io.onedev.server.web.component.user.ident.UserIdentPanel;
 import io.onedev.server.web.editable.InplacePropertyEditLink;
+import io.onedev.server.web.page.base.BasePage;
 import io.onedev.server.web.page.project.ProjectPage;
+import io.onedev.server.web.page.project.commits.CommitDetailPage;
 import io.onedev.server.web.page.project.dashboard.ProjectDashboardPage;
 import io.onedev.server.web.page.project.pullrequests.InvalidPullRequestPage;
 import io.onedev.server.web.page.project.pullrequests.ProjectPullRequestsPage;
@@ -103,9 +106,9 @@ import javax.validation.ValidationException;
 import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static io.onedev.server.model.support.pullrequest.MergeStrategy.*;
+import static org.unbescape.html.HtmlEscape.escapeHtml5;
 
 @SuppressWarnings("serial")
 public abstract class PullRequestDetailPage extends ProjectPage implements PullRequestAware {
@@ -131,7 +134,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					ProjectPullRequestsPage.paramsOf(getProject(), null, 0));
 		}
 		
-		requestModel = new LoadableDetachableModel<PullRequest>() {
+		requestModel = new LoadableDetachableModel<>() {
 
 			@Override
 			protected PullRequest load() {
@@ -140,11 +143,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					requestNumber = Long.valueOf(requestNumberString);
 				} catch (NumberFormatException e) {
 					throw new ValidationException("Invalid pull request number: " + requestNumberString);
-				}				
-				
+				}
+
 				PullRequest request = getPullRequestManager().find(getProject(), requestNumber);
 				if (request == null) {
-					throw new EntityNotFoundException("Unable to find pull request #" 
+					throw new EntityNotFoundException("Unable to find pull request #"
 							+ requestNumber + " in project " + getProject());
 				} else if (!request.getTargetProject().equals(getProject())) {
 					throw new RestartResponseException(getPageClass(), paramsOf(request));
@@ -183,7 +186,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				PullRequest request = getPullRequest();
 				ReferenceTransformer transformer = new ReferenceTransformer(request.getTargetProject(), null);
 				String transformed = Emojis.getInstance().apply(transformer.apply(request.getTitle()));
-				return "#" + request.getNumber() + " - " + transformed;
+				return "#" + request.getNumber() + "&nbsp;&nbsp;" + transformed;
 			}
 			
 		}) {
@@ -237,7 +240,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 		requestHead.add(form);
 		
 		title = getPullRequest().getTitle();
-		form.add(new TextField<String>("title", new IModel<String>() {
+		form.add(new TextField<>("title", new IModel<String>() {
 
 			@Override
 			public void detach() {
@@ -252,8 +255,8 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			public void setObject(String object) {
 				title = object;
 			}
-			
-		}).setRequired(true).add(new ReferenceInputBehavior(false) {
+
+		}).setRequired(true).add(new ReferenceInputBehavior() {
 
 			@Override
 			protected Project getProject() {
@@ -269,6 +272,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				super.onSubmit(target, form);
 				
 				OneDev.getInstance(PullRequestChangeManager.class).changeTitle(getPullRequest(), title);
+				notifyPullRequestChange(target);				
 				isEditingTitle = false;
 
 				target.add(requestHead);
@@ -315,18 +319,13 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			
 		};
 		
-		summaryContainer.add(new WebSocketObserver() {
+		summaryContainer.add(new ChangeObserver() {
 
 			@Override
-			public Collection<String> getObservables() {
-				return Sets.newHashSet(PullRequest.getWebSocketObservable(getPullRequest().getId()));
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(PullRequest.getChangeObservable(getPullRequest().getId()));
 			}
 
-			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(component);
-			}
-			
 		});
 		summaryContainer.setOutputMarkupId(true);
 		add(summaryContainer);
@@ -365,7 +364,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				super.onConfigure();
 				
 				PullRequest request = getPullRequest();
-				MergePreview preview = request.getLastMergePreview();
+				MergePreview preview = request.getMergePreview();
 				setVisible(request.isMerged() && preview != null 
 						&& preview.getHeadCommitHash().equals(preview.getMergeCommitHash()));
 			}
@@ -378,7 +377,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				super.onConfigure();
 				
 				PullRequest request = getPullRequest();
-				MergePreview preview = request.getLastMergePreview();
+				MergePreview preview = request.getMergePreview();
 				setVisible(request.isMerged() && preview != null 
 						&& (preview.getMergeStrategy() == CREATE_MERGE_COMMIT 
 								|| preview.getMergeStrategy() == CREATE_MERGE_COMMIT_IF_NECESSARY 
@@ -392,7 +391,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			protected void onConfigure() {
 				super.onConfigure();
 				
-				setVisible(getPullRequest().isMerged() && getPullRequest().getLastMergePreview() == null);
+				setVisible(getPullRequest().isMerged() && getPullRequest().getMergePreview() == null);
 			}
 			
 		});
@@ -403,7 +402,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				super.onConfigure();
 				
 				PullRequest request = getPullRequest();
-				MergePreview preview = request.getLastMergePreview();
+				MergePreview preview = request.getMergePreview();
 				setVisible(request.isMerged() && preview != null 
 						&& preview.getMergeStrategy() == SQUASH_SOURCE_BRANCH_COMMITS);
 			}
@@ -416,7 +415,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				super.onConfigure();
 				
 				PullRequest request = getPullRequest();
-				MergePreview preview = request.getMergePreview();
+				MergePreview preview = request.checkMergePreview();
 				setVisible(request.isMerged() && preview != null 
 						&& preview.getMergeStrategy() == REBASE_SOURCE_BRANCH_COMMITS);
 			}
@@ -428,7 +427,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
-				setVisible(getPullRequest().isOpen() && getPullRequest().getMergePreview() == null);
+				setVisible(getPullRequest().isOpen() && getPullRequest().checkMergePreview() == null);
 			}
 			
 		});
@@ -492,7 +491,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
-				MergePreview preview = getPullRequest().getMergePreview();
+				MergePreview preview = getPullRequest().checkMergePreview();
 				setVisible(getPullRequest().isOpen() 
 						&& preview != null 
 						&& preview.getMergeCommitHash() == null);
@@ -504,7 +503,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
-				MergePreview preview = getPullRequest().getMergePreview();
+				MergePreview preview = getPullRequest().checkMergePreview();
 				setVisible(getPullRequest().isOpen() 
 						&& preview != null 
 						&& preview.getMergeCommitHash() != null);
@@ -546,7 +545,19 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
-				setVisible(getPullRequest().isOpen() && hasUnsuccessfulRequiredBuilds());
+				PullRequest request = getPullRequest();
+				if (request.isOpen()) {
+					BuildRequirement buildRequirement = request.getBuildRequirement();
+					if (buildRequirement.isStictMode() && request.isBuildCommitOutdated()) {
+						setVisible(false);
+					} else {
+						var requiredJobs = buildRequirement.getRequiredJobs();
+						setVisible(request.getCurrentBuilds().stream().anyMatch(
+								it-> requiredJobs.contains(it.getJobName()) && it.isFinished() && !it.isSuccessful()));
+					}
+				} else {
+					setVisible(false);
+				}
 			}
 			
 		});
@@ -555,19 +566,69 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
-				
-				Stream<Build> stream = getPullRequest().getCurrentBuilds().stream();
-				setVisible(getPullRequest().isOpen() && !hasUnsuccessfulRequiredBuilds() 
-						&& stream.anyMatch(it-> getPullRequest().getRequiredJobs().contains(it.getJobName()) && !it.isFinished()));
+
+				PullRequest request = getPullRequest();
+				if (request.isOpen()) {
+					BuildRequirement buildRequirement = request.getBuildRequirement();
+					if (buildRequirement.isStictMode() && request.isBuildCommitOutdated()) {
+						setVisible(false);
+					} else {
+						var requiredJobs = buildRequirement.getRequiredJobs();
+						setVisible(request.getCurrentBuilds().stream().anyMatch(
+								it-> requiredJobs.contains(it.getJobName()) && !it.isFinished()));
+					}
+				} else {
+					setVisible(false);
+				}
 			}
 			
 		});
+
+		summaryContainer.add(new Label("commitMessageCheckError", new LoadableDetachableModel<>() {
+			@Override
+			protected String load() {
+				var commitMessageError = getPullRequest().checkCommitMessages();
+				if (commitMessageError != null) {
+					var params = CommitDetailPage.paramsOf(getProject(), commitMessageError.getCommitId().name());
+					return String.format("Error validating commit message of <a href='%s' class='text-monospace font-size-sm'>%s</a>: %s",
+							RequestCycle.get().urlFor(CommitDetailPage.class, params),								
+							GitUtils.abbreviateSHA(commitMessageError.getCommitId().name()),
+							escapeHtml5(commitMessageError.getErrorMessage()));
+				} else {
+					return null;
+				}
+			}
+		}) {
+			@Override
+			protected void onConfigure() {
+				super.onConfigure();
+				PullRequest request = getPullRequest();
+				if (request.isOpen())
+					setVisible(getDefaultModelObject() != null);
+				else
+					setVisible(false);
+			}
+		}.setEscapeModelStrings(false));
 		
-		summaryContainer.add(new ListView<String>("untriggeredJobs", new LoadableDetachableModel<List<String>>() {
+		summaryContainer.add(new Label("requiredJobsMessage", new AbstractReadOnlyModel<String>() {
+			@Override
+			public String getObject() {
+				if (getPullRequest().getBuildRequirement().isStictMode())
+					return "Jobs required to be successful on merge commit: ";
+				else 
+					return "Jobs required to be successful: ";
+			}
+		}));
+		summaryContainer.add(new ListView<String>("requiredJobs", new LoadableDetachableModel<List<String>>() {
 			@Override
 			protected List<String> load() {
-				List<String> requiredJobs = new ArrayList<>(getPullRequest().getRequiredJobs());
-				requiredJobs.removeAll(getPullRequest().getCurrentBuilds().stream().map(Build::getJobName).collect(Collectors.toSet()));
+				PullRequest request = getPullRequest();
+				BuildRequirement buildRequirement = request.getBuildRequirement();
+				List<String> requiredJobs = new ArrayList<>(buildRequirement.getRequiredJobs());
+				if (!buildRequirement.isStictMode() || !request.isBuildCommitOutdated()) {
+					for (Build build: request.getCurrentBuilds())
+						requiredJobs.remove(build.getJobName());
+				}
 				return requiredJobs;
 			}
 			
@@ -577,9 +638,16 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			protected void populateItem(ListItem<String> item) {
 				String jobName = item.getModelObject();
 				item.add(new Label("jobName", jobName));
+				
+				PullRequest request = getPullRequest();
+				String commitHash;
+				if (request.getBuildRequirement().isStictMode() || request.getBuildCommitHash() == null)
+					commitHash = request.checkMergePreview().getMergeCommitHash();
+				else 
+					commitHash = request.getBuildCommitHash();
+				
 				item.add(new RunJobLink("runJob", 
-						ObjectId.fromString(getPullRequest().getMergePreview().getMergeCommitHash()), 
-						jobName, getPullRequest().getMergeRef()) {
+						ObjectId.fromString(commitHash), jobName, request.getMergeRef()) {
 					
 					@Override
 					protected Project getProject() {
@@ -608,9 +676,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
+				
+				MergePreview mergePreview = getPullRequest().checkMergePreview();
 				setVisible(getPullRequest().isOpen() 
-						&& getPullRequest().getMergePreview() != null
-						&& getPullRequest().getMergePreview().getMergeCommitHash() != null
+						&& mergePreview != null
+						&& mergePreview.getMergeCommitHash() != null
 						&& !getModelObject().isEmpty());
 			}
 			
@@ -621,9 +691,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onConfigure() {
 				super.onConfigure();
+				
+				MergePreview mergePreview = getPullRequest().checkMergePreview();
 				setVisible(getPullRequest().isOpen() && !SecurityUtils.canWriteCode(getProject()) 
-						&& getPullRequest().getMergePreview() != null && getPullRequest().getMergePreview().getMergeCommitHash() != null
-						&& getPullRequest().isAllReviewsApproved() && getPullRequest().isRequiredBuildsSuccessful());
+						&& mergePreview != null && mergePreview.getMergeCommitHash() != null
+						&& getPullRequest().isAllReviewsApproved() && getPullRequest().isBuildRequirementSatisfied());
 			}
 			
 		});
@@ -698,11 +770,6 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				.anyMatch(it-> it.getStatus() == Status.REQUESTED_FOR_CHANGES);
 	}
 	
-	private boolean hasUnsuccessfulRequiredBuilds() {
-		return getPullRequest().getCurrentBuilds().stream().anyMatch(
-				it-> getPullRequest().getRequiredJobs().contains(it.getJobName()) && it.isFinished() && !it.isSuccessful());		
-	}
-	
 	private WebMarkupContainer newMoreInfoContainer() {
 		return new SideInfoPanel("moreInfo") {
 
@@ -752,8 +819,9 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 
 											@Override
 											public void onClick(AjaxRequestTarget target) {
-												dropdown.close();
 												OneDev.getInstance(PullRequestChangeManager.class).changeTargetBranch(getPullRequest(), branch);
+												notifyPullRequestChange(target);
+												dropdown.close();
 											}
 											
 										};
@@ -782,7 +850,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 						@Override
 						protected void onComponentTag(ComponentTag tag) {
 							super.onComponentTag(tag);
-							tag.setName("span");
+							tag.setName("em");
 						}
 						
 					});
@@ -840,7 +908,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 
 						boolean hasVisibleRequiredJobs = false;
 						for (Build build: getPullRequest().getCurrentBuilds()) {
-							if (getPullRequest().getRequiredJobs().contains(build.getJobName()) 
+							if (getPullRequest().getBuildRequirement().getRequiredJobs().contains(build.getJobName()) 
 									&& SecurityUtils.canAccess(getProject(), build.getJobName())) {
 								hasVisibleRequiredJobs = true;
 								break;
@@ -896,7 +964,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 						
 						@Override
 						protected Project getProject() {
-							return getProject();
+							return PullRequestDetailPage.this.getProject();
 						}
 						
 						@Override
@@ -932,7 +1000,10 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 
 					@Override
 					protected void onSaveWatch(EntityWatch watch) {
-						OneDev.getInstance(PullRequestWatchManager.class).save((PullRequestWatch) watch);
+						if (watch.isNew())
+							OneDev.getInstance(PullRequestWatchManager.class).create((PullRequestWatch) watch);
+						else
+							OneDev.getInstance(PullRequestWatchManager.class).update((PullRequestWatch) watch);
 					}
 
 					@Override
@@ -954,7 +1025,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				
 				WebMarkupContainer actions = new WebMarkupContainer("actions");
 				fragment.add(actions);
-				if (SecurityUtils.canManagePullRequests(getPullRequest().getTargetProject())) {
+				if (SecurityUtils.canModify(getPullRequest())) {
 					actions.add(new AjaxLink<Void>("synchronize") {
 	
 						@Override
@@ -965,7 +1036,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 	
 						@Override
 						public void onClick(AjaxRequestTarget target) {
-							getPullRequestManager().checkAsync(getPullRequest(), false);
+							getPullRequestManager().checkAsync(getPullRequest(), false, true);
 							Session.get().success("Pull request synchronization submitted");
 						}
 						
@@ -993,18 +1064,13 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					fragment.add(actions);
 				}				
 				
-				fragment.add(new WebSocketObserver() {
+				fragment.add(new ChangeObserver() {
 
 					@Override
-					public Collection<String> getObservables() {
-						return Sets.newHashSet(PullRequest.getWebSocketObservable(getPullRequest().getId()));
+					public Collection<String> findObservables() {
+						return Sets.newHashSet(PullRequest.getChangeObservable(getPullRequest().getId()));
 					}
 
-					@Override
-					public void onObservableChanged(IPartialPageRequestHandler handler) {
-						handler.add(component);
-					}
-					
 				});
 
 				fragment.setOutputMarkupId(true);
@@ -1080,6 +1146,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			@Override
 			protected void onUpdate(AjaxRequestTarget target) {
 				OneDev.getInstance(PullRequestChangeManager.class).changeMergeStrategy(getPullRequest(), mergeStrategy);
+				notifyPullRequestChange(target);
 			}
 			
 		});
@@ -1140,16 +1207,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			protected void onInitialize() {
 				super.onInitialize();
 
-				add(new WebSocketObserver() {
+				add(new ChangeObserver() {
 					
 					@Override
-					public void onObservableChanged(IPartialPageRequestHandler handler) {
-						handler.add(component);
-					}
-					
-					@Override
-					public Collection<String> getObservables() {
-						return Sets.newHashSet(PullRequest.getWebSocketObservable(getPullRequest().getId()));
+					public Collection<String> findObservables() {
+						return Sets.newHashSet(PullRequest.getChangeObservable(getPullRequest().getId()));
 					}
 					
 				});
@@ -1160,7 +1222,7 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					public String getObject() {
 						PullRequest request = getPullRequest();
 						if (request.isDiscarded())
-							return " badge-danger";
+							return " badge-secondary";
 						else if (request.isMerged())
 							return " badge-success";
 						else
@@ -1191,8 +1253,8 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					@Override
 					protected void onConfigure() {
 						super.onConfigure();
-						setVisible(getPullRequest().getMergePreview() != null 
-								&& getPullRequest().getMergePreview().getMergeCommitHash() != null);
+						setVisible(getPullRequest().checkMergePreview() != null 
+								&& getPullRequest().checkMergePreview().getMergeCommitHash() != null);
 					}
 					
 				});
@@ -1201,8 +1263,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			
 		});
 		
-		statusBarContainer.add(new BookmarkablePageLink<Void>("newPullRequest", NewPullRequestPage.class, 
-				NewPullRequestPage.paramsOf(getProject())));		
+		var user = SecurityUtils.getUser();
+		statusBarContainer.add(new BookmarkablePageLink<Void>(
+				"newPullRequest", 
+				NewPullRequestPage.class, 
+				NewPullRequestPage.paramsOf(getProject())).setVisible(user == null || !user.isEffectiveGuest()));		
 		
 		return statusBarContainer;
 	}
@@ -1238,16 +1303,16 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 	
 	private WebMarkupContainer newOperationsContainer() {
 		WebMarkupContainer operationsContainer = new WebMarkupContainer("requestOperations");
-		operationsContainer.add(new WebSocketObserver() {
+		operationsContainer.add(new ChangeObserver() {
 
 			@Override
-			public Collection<String> getObservables() {
-				return Sets.newHashSet(PullRequest.getWebSocketObservable(getPullRequest().getId()));
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(PullRequest.getChangeObservable(getPullRequest().getId()));
 			}
 
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(component);
+			public void onObservableChanged(IPartialPageRequestHandler handler, Collection<String> changedObservables) {
+				super.onObservableChanged(handler, changedObservables);
 				handler.appendJavaScript("setTimeout(function() {$(window).resize();}, 0);");
 			}
 			
@@ -1280,13 +1345,14 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new CommentableOperationConfirmPanel(id, modal, latestUpdateId) {
 					
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
 							getPullRequestReviewManager().review(getPullRequest(), true, getComment());
+							notifyPullRequestChange(target);
 							Session.get().success("Approved");
-							return true;
+							return null;
 						} else {
-							return false; 
+							return "Can not perform this operation now"; 
 						}
 					}
 					
@@ -1322,13 +1388,14 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new CommentableOperationConfirmPanel(id, modal, latestUpdateId) {
 					
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
 							getPullRequestReviewManager().review(getPullRequest(), false, getComment());
+							notifyPullRequestChange(target);
 							Session.get().success("Requested For changes");
-							return true;
+							return null;
 						} else {
-							return false; 
+							return "Can not perform this operation now"; 
 						}
 					}
 					
@@ -1359,12 +1426,21 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new MergeConfirmPanel(id, modal, latestUpdateId) {
 
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
-							OneDev.getInstance(PullRequestManager.class).merge(getPullRequest(), getCommitMessage());
-							return true;
+							var request = getPullRequest();
+							var branchProtection = getProject().getBranchProtection(request.getTargetBranch(), request.getSubmitter());
+							if (getCommitMessage() != null) {
+								var errorMessage = branchProtection.checkCommitMessage(getCommitMessage(),
+										request.getMergeStrategy() != SQUASH_SOURCE_BRANCH_COMMITS);
+								if (errorMessage != null) 
+									return errorMessage;
+							}
+							getPullRequestManager().merge(getPullRequest(), getCommitMessage());
+							notifyPullRequestChange(target);
+							return null;
 						} else {
-							return false;
+							return "Can not perform this operation now";
 						}
 					}
 					
@@ -1390,12 +1466,13 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new CommentableOperationConfirmPanel(id, modal, latestUpdateId) {
 					
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
-							OneDev.getInstance(PullRequestManager.class).discard(getPullRequest(), getComment());			
-							return true;
+							getPullRequestManager().discard(getPullRequest(), getComment());
+							notifyPullRequestChange(target);
+							return null;
 						} else {
-							return false; 
+							return "Can not perform this operation now";
 						}
 					}
 					
@@ -1426,12 +1503,13 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new CommentableOperationConfirmPanel(id, modal, latestUpdateId) {
 					
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
-							OneDev.getInstance(PullRequestManager.class).reopen(getPullRequest(), getComment());
-							return true;
+							getPullRequestManager().reopen(getPullRequest(), getComment());
+							notifyPullRequestChange(target);
+							return null;
 						} else {
-							return false; 
+							return "Can not perform this operation now";
 						}
 					}
 					
@@ -1464,13 +1542,14 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new CommentableOperationConfirmPanel(id, modal, latestUpdateId) {
 					
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
-							OneDev.getInstance(PullRequestManager.class).deleteSourceBranch(getPullRequest(), getComment());
+							getPullRequestManager().deleteSourceBranch(getPullRequest(), getComment());
+							notifyPullRequestChange(target);
 							Session.get().success("Deleted source branch");
-							return true;
+							return null;
 						} else {
-							return false; 
+							return "Can not perform this operation now";
 						}
 					}
 					
@@ -1503,13 +1582,14 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 				return new CommentableOperationConfirmPanel(id, modal, latestUpdateId) {
 					
 					@Override
-					protected boolean operate() {
+					protected String operate(AjaxRequestTarget target) {
 						if (canOperate()) {
-							OneDev.getInstance(PullRequestManager.class).restoreSourceBranch(getPullRequest(), getComment());
+							getPullRequestManager().restoreSourceBranch(getPullRequest(), getComment());
+							notifyPullRequestChange(target);
 							Session.get().success("Restored source branch");
-							return true;
+							return null;
 						} else {
-							return false; 
+							return "Can not perform this operation now";
 						}
 					}
 					
@@ -1567,11 +1647,14 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 		public Component render(String componentId) {
 			if (getMainPageClass() == PullRequestCodeCommentsPage.class) {
 				Fragment fragment = new Fragment(componentId, "codeCommentsTabLinkFrag", PullRequestDetailPage.this);
+				
+				// Do not show unresolved only by default as new indicator for 
+				// code comments tab may also be caused by new activities in 
+				// resolved issues
 				Link<Void> link = new ViewStateAwarePageLink<Void>("link", 
 						PullRequestCodeCommentsPage.class, 
-						PullRequestCodeCommentsPage.paramsOf(getPullRequest(), "unresolved"));
+						PullRequestCodeCommentsPage.paramsOf(getPullRequest()));
 				link.add(AttributeAppender.append("class", new LoadableDetachableModel<String>() {
-
 					@Override
 					protected String load() {
 						Date updateDate = getPullRequest().getCodeCommentsUpdateDate();
@@ -1582,16 +1665,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 					}
 					
 				}));
-				link.add(new WebSocketObserver() {
+				link.add(new ChangeObserver() {
 
 					@Override
-					public Collection<String> getObservables() {
-						return Sets.newHashSet(PullRequest.getWebSocketObservable(getPullRequest().getId()));
-					}
-
-					@Override
-					public void onObservableChanged(IPartialPageRequestHandler handler) {
-						handler.add(component);
+					public Collection<String> findObservables() {
+						return Sets.newHashSet(PullRequest.getChangeObservable(getPullRequest().getId()));
 					}
 					
 				});
@@ -1632,6 +1710,11 @@ public abstract class PullRequestDetailPage extends ProjectPage implements PullR
 			return new ViewStateAwarePageLink<Void>(componentId, ProjectPullRequestsPage.class, ProjectPullRequestsPage.paramsOf(project, 0));
 		else
 			return new ViewStateAwarePageLink<Void>(componentId, ProjectDashboardPage.class, ProjectDashboardPage.paramsOf(project.getId()));
+	}
+	
+	private void notifyPullRequestChange(AjaxRequestTarget target) {
+		((BasePage)getPage()).notifyObservableChange(target,
+				PullRequest.getChangeObservable(getPullRequest().getId()));
 	}
 	
 }

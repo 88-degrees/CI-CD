@@ -6,11 +6,11 @@ import java.util.Map;
 import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 
-import io.onedev.server.model.support.inputspec.groupchoiceinput.GroupChoiceInput;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.choiceprovider.AllGroups;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.choiceprovider.ChoiceProvider;
-import io.onedev.server.model.support.inputspec.groupchoiceinput.defaultvalueprovider.DefaultValueProvider;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.GroupChoiceInput;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.choiceprovider.AllGroups;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.choiceprovider.ChoiceProvider;
+import io.onedev.server.buildspecmodel.inputspec.groupchoiceinput.defaultvalueprovider.DefaultValueProvider;
+import io.onedev.server.annotation.Editable;
 
 @Editable(order=160, name=ParamSpec.GROUP)
 public class GroupChoiceParam extends ParamSpec {

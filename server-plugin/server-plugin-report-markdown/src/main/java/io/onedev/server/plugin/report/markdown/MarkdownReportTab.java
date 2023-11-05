@@ -38,7 +38,7 @@ public class MarkdownReportTab extends BuildTab {
 				Long projectId = build.getProject().getId();
 				Long buildNumber = build.getNumber();
 				ProjectManager projectManager = OneDev.getInstance(ProjectManager.class);
-				String startPage = projectManager.runOnProjectServer(projectId, new GetStartPage(projectId, buildNumber, getTitle()));
+				String startPage = projectManager.runOnActiveServer(projectId, new GetStartPage(projectId, buildNumber, getTitle()));
 				
 				PageParameters params = MarkdownReportPage.paramsOf(page.getBuild(), getTitle(), startPage);
 				return new ViewStateAwarePageLink<Void>(linkId, pageClass, params);
@@ -72,12 +72,12 @@ public class MarkdownReportTab extends BuildTab {
 		}
 		
 		@Override
-		public String call() throws Exception {
+		public String call() {
 			return LockUtils.read(PublishMarkdownReportStep.getReportLockName(projectId, buildNumber), new Callable<String>() {
 
 				@Override
 				public String call() throws Exception {
-					File startPageFile = new File(Build.getDir(projectId, buildNumber), 
+					File startPageFile = new File(Build.getStorageDir(projectId, buildNumber), 
 							PublishMarkdownReportStep.CATEGORY + "/" + reportName + "/" + PublishMarkdownReportStep.START_PAGE);
 					return FileUtils.readFileToString(startPageFile, StandardCharsets.UTF_8);
 				}

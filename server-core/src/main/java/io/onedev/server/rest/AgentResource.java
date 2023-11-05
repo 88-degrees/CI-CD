@@ -23,7 +23,6 @@ import io.onedev.server.entitymanager.AgentManager;
 import io.onedev.server.model.Agent;
 import io.onedev.server.rest.annotation.Api;
 import io.onedev.server.rest.exception.InvalidParamException;
-import io.onedev.server.rest.support.RestConstants;
 import io.onedev.server.search.entity.agent.AgentQuery;
 import io.onedev.server.security.SecurityUtils;
 
@@ -70,9 +69,6 @@ public class AgentResource {
     		@QueryParam("count") @Api(example="100") int count) {
     	if (!SecurityUtils.isAdministrator()) 
 			throw new UnauthorizedException();
-		
-    	if (count > RestConstants.MAX_PAGE_SIZE)
-    		throw new InvalidParamException("Count should not be greater than " + RestConstants.MAX_PAGE_SIZE);
 
     	AgentQuery parsedQuery;
 		try {

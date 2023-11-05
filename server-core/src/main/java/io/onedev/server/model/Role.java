@@ -1,63 +1,29 @@
 package io.onedev.server.model;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.Index;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.Transient;
-import javax.validation.ConstraintValidatorContext;
-import javax.validation.constraints.NotNull;
-
-import org.apache.shiro.authz.Permission;
-import org.hibernate.annotations.Cache;
-import org.hibernate.annotations.CacheConcurrencyStrategy;
-import javax.validation.constraints.NotEmpty;
-
 import com.google.common.collect.Lists;
-
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.ChoiceProvider;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.RoleName;
+import io.onedev.server.annotation.ShowCondition;
 import io.onedev.server.entitymanager.LinkSpecManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.support.role.AllIssueFields;
 import io.onedev.server.model.support.role.CodePrivilege;
 import io.onedev.server.model.support.role.IssueFieldSet;
 import io.onedev.server.model.support.role.JobPrivilege;
-import io.onedev.server.security.SecurityUtils;
-import io.onedev.server.security.permission.AccessBuild;
-import io.onedev.server.security.permission.AccessBuildLog;
-import io.onedev.server.security.permission.AccessBuildReports;
-import io.onedev.server.security.permission.AccessConfidentialIssues;
-import io.onedev.server.security.permission.AccessProject;
-import io.onedev.server.security.permission.CreateChildren;
-import io.onedev.server.security.permission.EditIssueField;
-import io.onedev.server.security.permission.EditIssueLink;
-import io.onedev.server.security.permission.JobPermission;
-import io.onedev.server.security.permission.ManageBuilds;
-import io.onedev.server.security.permission.ManageCodeComments;
-import io.onedev.server.security.permission.ManageIssues;
-import io.onedev.server.security.permission.ManageJob;
-import io.onedev.server.security.permission.ManageProject;
-import io.onedev.server.security.permission.ManagePullRequests;
-import io.onedev.server.security.permission.ReadCode;
-import io.onedev.server.security.permission.RunJob;
-import io.onedev.server.security.permission.ScheduleIssues;
-import io.onedev.server.security.permission.WriteCode;
+import io.onedev.server.security.permission.*;
 import io.onedev.server.util.EditContext;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.util.validation.annotation.RoleName;
-import io.onedev.server.web.editable.annotation.ChoiceProvider;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.ShowCondition;
+import io.onedev.server.util.facade.RoleFacade;
+import org.apache.shiro.authz.Permission;
+import org.hibernate.annotations.Cache;
+import org.hibernate.annotations.CacheConcurrencyStrategy;
+import org.jetbrains.annotations.Nullable;
+
+import javax.persistence.*;
+import javax.validation.constraints.NotEmpty;
+import javax.validation.constraints.NotNull;
+import java.util.*;
 
 /**
  * @author robin
@@ -66,9 +32,8 @@ import io.onedev.server.web.editable.annotation.ShowCondition;
 @Entity
 @Table(indexes={@Index(columnList="name")})
 @Cache(usage=CacheConcurrencyStrategy.READ_WRITE)
-@ClassValidating
 @Editable
-public class Role extends AbstractEntity implements Permission, Validatable {
+public class Role extends AbstractEntity implements BasePermission {
 
 	private static final long serialVersionUID = 1L;
 
@@ -226,7 +191,7 @@ public class Role extends AbstractEntity implements Permission, Validatable {
 		this.accessConfidentialIssues = accessConfidentialIssues;
 	}
 	
-	@Editable(order=500, description="This permission enables one to schedule issues into milestones")
+	@Editable(order=500, description = "This permission enables one to schedule issues into milestones")
 	@ShowCondition("isManageIssuesDisabled")
 	public boolean isScheduleIssues() {
 		return scheduleIssues;
@@ -334,99 +299,60 @@ public class Role extends AbstractEntity implements Permission, Validatable {
 	}
 
 	@Override
-	public boolean implies(Permission p) {
-		for (Permission each: getPermissions()) {
-			if (each.implies(p))
-				return true;
-		}
-		return false;
+	public RoleFacade getFacade() {
+		return new RoleFacade(getId(), getName());
 	}
 	
-	private Collection<Permission> getPermissions() {
-		Collection<Permission> permissions = Lists.newArrayList(new AccessProject());
+	@Override
+	public boolean implies(Permission permission) {
+		return getPermissions().stream().anyMatch(it -> it.implies(permission));
+	}
+	
+	private Collection<BasePermission> getPermissions() {
+		Collection<BasePermission> permissions = Lists.newArrayList(new AccessProject());
 		
-		if (SecurityUtils.getUser() != null) {
-			if (manageProject) 
-				permissions.add(new ManageProject());
-			if (createChildren)
-				permissions.add(new CreateChildren());
-			if (manageCodeComments)
-				permissions.add(new ManageCodeComments());
-			if (managePullRequests)
-				permissions.add(new ManagePullRequests());
-			if (codePrivilege == CodePrivilege.READ)
-				permissions.add(new ReadCode());
-			if (codePrivilege == CodePrivilege.WRITE)
-				permissions.add(new WriteCode());
-			if (manageIssues) 
-				permissions.add(new ManageIssues());
-			if (accessConfidentialIssues)
-				permissions.add(new AccessConfidentialIssues());
-			if (scheduleIssues)
-				permissions.add(new ScheduleIssues());
-			permissions.add(new EditIssueField(editableIssueFields.getIncludeFields()));
-			for (LinkAuthorization linkAuthorization: getLinkAuthorizations()) 
-				permissions.add(new EditIssueLink(linkAuthorization.getLink()));
-			if (manageBuilds)
-				permissions.add(new ManageBuilds());
-			for (JobPrivilege jobPrivilege: jobPrivileges) {
-				permissions.add(new JobPermission(jobPrivilege.getJobNames(), new AccessBuild()));
-				if (jobPrivilege.isManageJob()) 
-					permissions.add(new JobPermission(jobPrivilege.getJobNames(), new ManageJob()));
-				if (jobPrivilege.isRunJob()) 
-					permissions.add(new JobPermission(jobPrivilege.getJobNames(), new RunJob()));
-				if (jobPrivilege.isAccessLog())
-					permissions.add(new JobPermission(jobPrivilege.getJobNames(), new AccessBuildLog()));
-				if (jobPrivilege.getAccessibleReports() != null) { 
-					AccessBuildReports accessBuildReports = new AccessBuildReports(jobPrivilege.getAccessibleReports());
-					permissions.add(new JobPermission(jobPrivilege.getJobNames(), accessBuildReports));
-				}
-			}
-		} else {
-			if (manageProject || managePullRequests || manageCodeComments || codePrivilege != CodePrivilege.NONE)
-				permissions.add(new ReadCode());
-			if (manageProject || manageBuilds)
-				permissions.add(new JobPermission("*", new AccessBuildLog()));
-			for (JobPrivilege jobPrivilege: jobPrivileges) {
-				permissions.add(new JobPermission(jobPrivilege.getJobNames(), new AccessBuild()));
-				if (jobPrivilege.isManageJob() || jobPrivilege.isRunJob() || jobPrivilege.isAccessLog()) 
-					permissions.add(new JobPermission(jobPrivilege.getJobNames(), new AccessBuildLog()));
-				if (jobPrivilege.getAccessibleReports() != null) { 
-					AccessBuildReports accessBuildReports = new AccessBuildReports(jobPrivilege.getAccessibleReports());
-					permissions.add(new JobPermission(jobPrivilege.getJobNames(), accessBuildReports));
-				}
+		if (manageProject) 
+			permissions.add(new ManageProject());
+		if (createChildren)
+			permissions.add(new CreateChildren());
+		if (manageCodeComments)
+			permissions.add(new ManageCodeComments());
+		if (managePullRequests)
+			permissions.add(new ManagePullRequests());
+		if (codePrivilege == CodePrivilege.READ)
+			permissions.add(new ReadCode());
+		if (codePrivilege == CodePrivilege.WRITE)
+			permissions.add(new WriteCode());
+		if (manageIssues) 
+			permissions.add(new ManageIssues());
+		if (accessConfidentialIssues)
+			permissions.add(new AccessConfidentialIssues());
+		if (scheduleIssues)
+			permissions.add(new ScheduleIssues());
+		permissions.add(new EditIssueField(editableIssueFields.getIncludeFields()));
+		for (LinkAuthorization linkAuthorization: getLinkAuthorizations()) 
+			permissions.add(new EditIssueLink(linkAuthorization.getLink()));
+		if (manageBuilds)
+			permissions.add(new ManageBuilds());
+		for (JobPrivilege jobPrivilege: jobPrivileges) {
+			permissions.add(new JobPermission(jobPrivilege.getJobNames(), new AccessBuild()));
+			if (jobPrivilege.isManageJob()) 
+				permissions.add(new JobPermission(jobPrivilege.getJobNames(), new ManageJob()));
+			if (jobPrivilege.isRunJob()) 
+				permissions.add(new JobPermission(jobPrivilege.getJobNames(), new RunJob()));
+			if (jobPrivilege.isAccessLog())
+				permissions.add(new JobPermission(jobPrivilege.getJobNames(), new AccessBuildLog()));
+			if (jobPrivilege.getAccessibleReports() != null) { 
+				AccessBuildReports accessBuildReports = new AccessBuildReports(jobPrivilege.getAccessibleReports());
+				permissions.add(new JobPermission(jobPrivilege.getJobNames(), accessBuildReports));
 			}
 		}
-		
 		return permissions;
 	}
 
 	@Override
-	public boolean isValid(ConstraintValidatorContext context) {
-		boolean isValid = true;
-		if (!isManageProject() && !isManagePullRequests() && !isManageCodeComments() && getCodePrivilege() == CodePrivilege.NONE) {
-			if (isManageBuilds()) {
-				isValid = false;
-				context.disableDefaultConstraintViolation();
-				context.buildConstraintViolationWithTemplate("Code read privilege is required to manage builds")
-						.addPropertyNode("manageBuilds").addConstraintViolation();
-			} else {
-				for (JobPrivilege privilege: getJobPrivileges()) {
-					if (privilege.isManageJob()) {
-						isValid = false;
-						context.disableDefaultConstraintViolation();
-						context.buildConstraintViolationWithTemplate("Code read privilege is required to manage jobs")
-								.addPropertyNode("jobPrivileges").addConstraintViolation();
-					} else if (privilege.isRunJob()) {
-						isValid = false;
-						context.disableDefaultConstraintViolation();
-						context.buildConstraintViolationWithTemplate("Code read privilege is required to run jobs")
-								.addPropertyNode("jobPrivileges").addConstraintViolation();
-					}
-				}
-			}
-		}
-		return isValid;
+	public boolean isApplicable(@Nullable User user) {
+		return getPermissions().stream().allMatch(it -> it.isApplicable(user));
 	}
 	
 }

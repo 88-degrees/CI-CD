@@ -1,11 +1,11 @@
 package io.onedev.server.plugin.executor.serverdocker;
 
-import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
-import com.hazelcast.cluster.Member;
+import com.google.common.base.Splitter;
 import io.onedev.agent.DockerExecutorUtils;
 import io.onedev.agent.ExecutorUtils;
 import io.onedev.agent.job.FailedException;
+import io.onedev.agent.job.ImageMappingFacade;
 import io.onedev.commons.bootstrap.Bootstrap;
 import io.onedev.commons.loader.AppLoader;
 import io.onedev.commons.utils.*;
@@ -14,6 +14,7 @@ import io.onedev.commons.utils.command.ExecutionResult;
 import io.onedev.commons.utils.command.LineConsumer;
 import io.onedev.k8shelper.*;
 import io.onedev.server.OneDev;
+import io.onedev.server.annotation.*;
 import io.onedev.server.buildspec.Service;
 import io.onedev.server.cluster.ClusterManager;
 import io.onedev.server.cluster.ClusterRunnable;
@@ -22,16 +23,16 @@ import io.onedev.server.job.JobContext;
 import io.onedev.server.job.JobManager;
 import io.onedev.server.job.JobRunnable;
 import io.onedev.server.job.ResourceAllocator;
-import io.onedev.server.model.support.RegistryLogin;
+import io.onedev.server.model.support.ImageMapping;
+import io.onedev.server.model.support.administration.jobexecutor.DockerAware;
 import io.onedev.server.model.support.administration.jobexecutor.JobExecutor;
+import io.onedev.server.model.support.administration.jobexecutor.RegistryLogin;
 import io.onedev.server.plugin.executor.serverdocker.ServerDockerExecutor.TestData;
 import io.onedev.server.terminal.CommandlineShell;
 import io.onedev.server.terminal.Shell;
 import io.onedev.server.terminal.Terminal;
-import io.onedev.server.util.EditContext;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.*;
+import io.onedev.server.util.DateUtils;
+import io.onedev.server.validation.Validatable;
 import io.onedev.server.web.util.Testable;
 import org.apache.commons.lang3.SystemUtils;
 
@@ -45,12 +46,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.onedev.agent.DockerExecutorUtils.*;
 import static io.onedev.k8shelper.KubernetesHelper.*;
+import static java.util.stream.Collectors.toList;
 
 @Editable(order=ServerDockerExecutor.ORDER, name="Server Docker Executor", 
 		description="This executor runs build jobs as docker containers on OneDev server")
 @ClassValidating
 @Horizontal
-public class ServerDockerExecutor extends JobExecutor implements Testable<TestData>, Validatable {
+public class ServerDockerExecutor extends JobExecutor implements DockerAware, Testable<TestData>, Validatable {
 
 	private static final long serialVersionUID = 1L;
 	
@@ -68,11 +70,15 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 	
 	private String dockerSockPath;
 	
+	private String networkOptions;
+	
 	private String cpuLimit;
 	
 	private String memoryLimit;
 	
 	private String concurrency;
+	
+	private List<ImageMapping> imageMappings = new ArrayList<>();
 	
 	private transient volatile File hostBuildHome;
 	
@@ -80,9 +86,12 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 	
 	private transient volatile String containerName;
 	
-	private static transient volatile String hostInstallPath;
+	private transient List<ImageMappingFacade> imageMappingFacades;
+	
+	private static volatile String hostInstallPath;
 	
 	@Editable(order=400, description="Specify login information for docker registries if necessary")
+	@Override
 	public List<RegistryLogin> getRegistryLogins() {
 		return registryLogins;
 	}
@@ -91,8 +100,9 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 		this.registryLogins = registryLogins;
 	}
 
-	@Editable(order=450, placeholder = "Number of server cpu", description = "" +
-			"Specify max number of jobs/services this executor can run concurrently")
+	@Editable(order=450, placeholder = "Number of CPU Cores", description = "" +
+			"Specify max number of jobs/services this executor can run concurrently. " +
+			"Leave empty to set as CPU cores")
 	@Numeric
 	public String getConcurrency() {
 		return concurrency;
@@ -102,33 +112,27 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 		this.concurrency = concurrency;
 	}
 
-	@Editable(order=500, group="More Settings", description="Whether or not to mount docker sock into job container to "
-			+ "support docker operations in job commands, for instance to build docker image.<br>"
-			+ "<b class='text-danger'>WARNING</b>: Malicious jobs can take control of whole OneDev "
-			+ "by operating the mounted docker sock. You should configure job authorization "
-			+ "to make sure the executor can only be used by trusted jobs if this option is enabled")
-	public boolean isMountDockerSock() {
-		return mountDockerSock;
-	}
-
-	public void setMountDockerSock(boolean mountDockerSock) {
-		this.mountDockerSock = mountDockerSock;
-	}
-	
-	@SuppressWarnings("unused")
-	private static boolean isMountDockerSockEnabled() {
-		return (Boolean)EditContext.get().getInputValue("mountDockerSock");
-	}
-
-	@Editable(order=510, group="More Settings", placeholder="Default", description="Optionally specify docker sock path to mount from. "
+	@Editable(order=510, group="More Settings", placeholder="Default", description="Optionally specify docker sock to use. "
 			+ "Defaults to <i>/var/run/docker.sock</i> on Linux, and <i>//./pipe/docker_engine</i> on Windows")
-	@ShowCondition("isMountDockerSockEnabled")
 	public String getDockerSockPath() {
 		return dockerSockPath;
 	}
 
 	public void setDockerSockPath(String dockerSockPath) {
 		this.dockerSockPath = dockerSockPath;
+	}
+
+	@Editable(order=520, group="More Settings", description="Whether or not to mount docker sock into job container to "
+			+ "support docker operations in job commands, for instance to build docker image.<br>"
+			+ "<b class='text-danger'>WARNING</b>: Malicious jobs can take control of whole OneDev "
+			+ "by operating the mounted docker sock. You should configure job requirement above to make sure the " +
+			"executor can only be used by trusted jobs if this option is enabled")
+	public boolean isMountDockerSock() {
+		return mountDockerSock;
+	}
+
+	public void setMountDockerSock(boolean mountDockerSock) {
+		this.mountDockerSock = mountDockerSock;
 	}
 
 	@Editable(order=50010, group="More Settings", placeholder = "No limit", description = "" +
@@ -155,13 +159,27 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 		this.memoryLimit = memoryLimit;
 	}
 
-	@Editable(order=50050, group="More Settings", description="Optionally specify options to run container")
+	@Editable(order=50050, group="More Settings", description="Optionally specify docker options to run container. " +
+			"Multiple options should be separated by space, and single option containing spaces should be quoted")
+	@ReservedOptions({"-w", "(--workdir)=.*", "-d", "--detach", "-a", "--attach", "-t", "--tty", 
+			"-i", "--interactive", "--rm", "--restart", "(--name)=.*"})
 	public String getRunOptions() {
 		return runOptions;
 	}
 
 	public void setRunOptions(String runOptions) {
 		this.runOptions = runOptions;
+	}
+
+	@Editable(order=50075, group="More Settings", description = "Optionally specify docker options to create network. " +
+			"Multiple options should be separated by space, and single option containing spaces should be quoted")
+	@ReservedOptions({"-d", "(--driver)=.*"})
+	public String getNetworkOptions() {
+		return networkOptions;
+	}
+
+	public void setNetworkOptions(String networkOptions) {
+		this.networkOptions = networkOptions;
 	}
 
 	@Editable(order=50100, group="More Settings", placeholder="Use default", description=""
@@ -175,13 +193,27 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 		this.dockerExecutable = dockerExecutable;
 	}
 
+	@Editable(order=50150, group="More Settings", description = "Optionally maps a docker image to a different " +
+			"image. The first matching entry will take effect, or image will remain unchanged if no matching " +
+			"entries found")
+	public List<ImageMapping> getImageMappings() {
+		return imageMappings;
+	}
+
+	public void setImageMappings(List<ImageMapping> imageMappings) {
+		this.imageMappings = imageMappings;
+	}
+	
 	private Commandline newDocker() {
+		Commandline docker;
 		if (getDockerExecutable() != null)
-			return new Commandline(getDockerExecutable());
+			docker = new Commandline(getDockerExecutable());
 		else if (SystemUtils.IS_OS_MAC_OSX && new File("/usr/local/bin/docker").exists())
-			return new Commandline("/usr/local/bin/docker");
+			docker = new Commandline("/usr/local/bin/docker");
 		else
-			return new Commandline("docker");
+			docker = new Commandline("docker");
+		useDockerSock(docker, getDockerSockPath());
+		return docker;
 	}
 	
 	private File getCacheHome(JobExecutor jobExecutor) {
@@ -214,7 +246,7 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 	@Override
 	public void execute(JobContext jobContext, TaskLogger jobLogger) {
 		ClusterRunnable runnable = () -> {
-			getJobManager().runJobLocal(jobContext, new JobRunnable() {
+			getJobManager().runJob(jobContext, new JobRunnable() {
 
 				private static final long serialVersionUID = 1L;
 
@@ -228,14 +260,16 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 								+ "Please use kubernetes executor instead");
 					}
 
-					hostBuildHome = FileUtils.createTempDir("onedev-build");
+					hostBuildHome = new File(Bootstrap.getTempDir(),
+							"onedev-build-" + jobContext.getProjectId() + "-" + jobContext.getBuildNumber());
+					FileUtils.createDir(hostBuildHome);					
 					try {
 						String network = getName() + "-" + jobContext.getProjectId() + "-"
 								+ jobContext.getBuildNumber() + "-" + jobContext.getRetried();
 
-						Member member = getClusterManager().getHazelcastInstance().getCluster().getLocalMember();
-						jobLogger.log(String.format("Executing job (executor: %s, server: %s, network: %s)...", getName(),
-								member.getAddress().getHost() + ":" + member.getAddress().getPort(), network));
+						String serverAddress = getClusterManager().getLocalServerAddress();
+						jobLogger.log(String.format("Executing job (executor: %s, server: %s, network: %s)...", 
+								getName(), serverAddress, network));
 
 						File hostCacheHome = getCacheHome(jobContext.getJobExecutor());
 
@@ -257,13 +291,13 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 
 						login(jobLogger);
 
-						createNetwork(newDocker(), network, jobLogger);
+						createNetwork(newDocker(), network, getNetworkOptions(), jobLogger);
 						try {
 							OsInfo osInfo = OneDev.getInstance(OsInfo.class);
 
 							for (Service jobService : jobContext.getServices()) {
-								jobLogger.log("Starting service (name: " + jobService.getName() + ", image: " + jobService.getImage() + ")...");
-								startService(newDocker(), network, jobService.toMap(), osInfo, getCpuLimit(), getMemoryLimit(), jobLogger);
+								startService(newDocker(), network, jobService.toMap(), osInfo, getImageMappingFacades(),
+										getCpuLimit(), getMemoryLimit(), jobLogger);
 							}
 
 							File hostWorkspace = new File(hostBuildHome, "workspace");
@@ -293,10 +327,11 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 								CompositeFacade entryFacade = new CompositeFacade(jobContext.getActions());
 								boolean successful = entryFacade.execute(new LeafHandler() {
 
-									private int runStepContainer(String image, @Nullable String entrypoint,
+									private int runStepContainer(String image, @Nullable String entrypoint, List<String> options,
 																 List<String> arguments, Map<String, String> environments,
 																 @Nullable String workingDir, Map<String, String> volumeMounts,
 																 List<Integer> position, boolean useTTY) {
+										image = mapImage(image);
 										// Uninstall symbol links as docker can not process it well
 										cache.uninstallSymbolinks(hostWorkspace);
 										containerName = network + "-step-" + stringifyStepPosition(position);
@@ -311,7 +346,7 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 												docker.addArgs(StringUtils.parseQuoteTokens(getRunOptions()));
 
 											docker.addArgs("-v", getHostPath(hostBuildHome.getAbsolutePath()) + ":" + containerBuildHome);
-
+											
 											for (Map.Entry<String, String> entry : volumeMounts.entrySet()) {
 												if (entry.getKey().contains(".."))
 													throw new ExplicitException("Volume mount source path should not contain '..'");
@@ -328,7 +363,7 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 											}
 
 											for (Map.Entry<CacheInstance, String> entry : cache.getAllocations().entrySet()) {
-												String hostCachePath = entry.getKey().getDirectory(hostCacheHome).getAbsolutePath();
+												String hostCachePath = new File(hostCacheHome, entry.getKey().toString()).getAbsolutePath();
 												String containerCachePath = PathUtils.resolve(containerWorkspace, entry.getValue());
 												docker.addArgs("-v", getHostPath(hostCachePath) + ":" + containerCachePath);
 											}
@@ -371,6 +406,8 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 											if (isUseProcessIsolation(newDocker(), image, osInfo, jobLogger))
 												docker.addArgs("--isolation=process");
 
+											docker.addArgs(options.toArray(new String[options.size()]));
+											
 											docker.addArgs(image);
 											docker.addArgs(arguments.toArray(new String[arguments.size()]));
 											docker.processKiller(newDockerKiller(newDocker(), containerName, jobLogger));
@@ -390,6 +427,7 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 											String stepNames = entryFacade.getNamesAsString(position);
 											jobLogger.notice("Running step \"" + stepNames + "\"...");
 
+											long time = System.currentTimeMillis();
 											if (facade instanceof CommandFacade) {
 												CommandFacade commandFacade = (CommandFacade) facade;
 
@@ -403,26 +441,33 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 														hostBuildHome, commandFacade, osInfo, hostAuthInfoDir.get() != null);
 
 												int exitCode = runStepContainer(execution.getImage(), entrypoint.executable(),
-														entrypoint.arguments(), new HashMap<>(), null, new HashMap<>(),
-														position, commandFacade.isUseTTY());
+														new ArrayList<>(), entrypoint.arguments(), new HashMap<>(), null, 
+														new HashMap<>(), position, commandFacade.isUseTTY());
 
 												if (exitCode != 0) {
-													jobLogger.error("Step \"" + stepNames + "\" is failed: Command exited with code " + exitCode);
+													long duration = System.currentTimeMillis() - time;
+													jobLogger.error("Step \"" + stepNames + "\" is failed (" + DateUtils.formatDuration(duration) + "): Command exited with code " + exitCode);
 													return false;
 												}
 											} else if (facade instanceof BuildImageFacade) {
 												DockerExecutorUtils.buildImage(newDocker(), (BuildImageFacade) facade,
 														hostBuildHome, jobLogger);
 											} else if (facade instanceof RunContainerFacade) {
-												RunContainerFacade rubContainerFacade = (RunContainerFacade) facade;
-												OsContainer container = rubContainerFacade.getContainer(osInfo);
+												RunContainerFacade runContainerFacade = (RunContainerFacade) facade;
+												OsContainer container = runContainerFacade.getContainer(osInfo);
+												List<String> options;
+												if (container.getOpts() != null)
+													options = Splitter.on(" ").trimResults().omitEmptyStrings().splitToList(container.getOpts());
+												else 
+													options = new ArrayList<>();
 												List<String> arguments = new ArrayList<>();
 												if (container.getArgs() != null)
 													arguments.addAll(Arrays.asList(StringUtils.parseQuoteTokens(container.getArgs())));
-												int exitCode = runStepContainer(container.getImage(), null, arguments, container.getEnvMap(),
-														container.getWorkingDir(), container.getVolumeMounts(), position, rubContainerFacade.isUseTTY());
+												int exitCode = runStepContainer(container.getImage(), null, options, arguments, container.getEnvMap(),
+														container.getWorkingDir(), container.getVolumeMounts(), position, runContainerFacade.isUseTTY());
 												if (exitCode != 0) {
-													jobLogger.error("Step \"" + stepNames + "\" is failed: Container exited with code " + exitCode);
+													long duration = System.currentTimeMillis() - time;
+													jobLogger.error("Step \"" + stepNames + "\" is failed (" + DateUtils.formatDuration(duration) + "): Container exited with code " + exitCode);
 													return false;
 												}
 											} else if (facade instanceof CheckoutFacade) {
@@ -437,6 +482,7 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 													git.environments().put("HOME", hostAuthInfoDir.get().getAbsolutePath());
 
 													checkoutFacade.setupWorkingDir(git, hostWorkspace);
+
 													if (!Bootstrap.isInDocker()) {
 														checkoutFacade.setupSafeDirectory(git, containerWorkspace,
 																newInfoLogger(jobLogger), newErrorLogger(jobLogger));
@@ -463,7 +509,8 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 															checkoutFacade.isWithLfs(), checkoutFacade.isWithSubmodules(),
 															cloneDepth, ExecutorUtils.newInfoLogger(jobLogger), ExecutorUtils.newWarningLogger(jobLogger));
 												} catch (Exception e) {
-													jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+													long duration = System.currentTimeMillis() - time;
+													jobLogger.error("Step \"" + stepNames + "\" is failed (" + DateUtils.formatDuration(duration) + "): " + getErrorMessage(e));
 													return false;
 												}
 											} else {
@@ -479,12 +526,15 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 
 													});
 												} catch (Exception e) {
-													if (ExceptionUtils.find(e, InterruptedException.class) == null)
-														jobLogger.error("Step \"" + stepNames + "\" is failed: " + getErrorMessage(e));
+													if (ExceptionUtils.find(e, InterruptedException.class) == null) {
+														long duration = System.currentTimeMillis() - time;														
+														jobLogger.error("Step \"" + stepNames + "\" is failed: (" + DateUtils.formatDuration(duration) + ") " + getErrorMessage(e));
+													}
 													return false;
 												}
 											}
-											jobLogger.success("Step \"" + stepNames + "\" is successful");
+											long duration = System.currentTimeMillis() - time;
+											jobLogger.success("Step \"" + stepNames + "\" is successful (" + DateUtils.formatDuration(duration) + ")");
 											return true;
 										} finally {
 											runningStep = null;
@@ -563,24 +613,7 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 
 	private void login(TaskLogger jobLogger) {
 		for (RegistryLogin login: getRegistryLogins()) 
-			DockerExecutorUtils.login(newDocker(), login.getRegistryUrl(), login.getUserName(), login.getPassword(), jobLogger);
-	}
-	
-	private boolean hasOptions(String[] arguments, String... options) {
-		for (String argument: arguments) {
-			for (String option: options) {
-				if (option.startsWith("--")) {
-					if (argument.startsWith(option + "=") || argument.equals(option))
-						return true;
-				} else if (option.startsWith("-")) {
-					if (argument.startsWith(option))
-						return true;
-				} else {
-					throw new ExplicitException("Invalid option: " + option);
-				}
-			}
-		}
-		return false;
+			DockerExecutorUtils.login(newDocker(),login.getFacade(), jobLogger);
 	}
 	
 	@Override
@@ -600,18 +633,6 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 				break;
 			}
 		}
-		if (getRunOptions() != null) {
-			String[] arguments = StringUtils.parseQuoteTokens(getRunOptions());
-			String reservedOptions[] = new String[] {"-w", "--workdir", "-d", "--detach", "-a", "--attach", "-t", "--tty", 
-					"-i", "--interactive", "--rm", "--restart", "--name"}; 
-			if (hasOptions(arguments, reservedOptions)) {
-				StringBuilder errorMessage = new StringBuilder("Can not use options: "
-						+ Joiner.on(", ").join(reservedOptions));
-				context.buildConstraintViolationWithTemplate(errorMessage.toString())
-						.addPropertyNode("runOptions").addConstraintViolation();
-				isValid = false;
-			} 
-		}
 		if (!isValid)
 			context.disableDefaultConstraintViolation();
 		return isValid;
@@ -628,6 +649,16 @@ public class ServerDockerExecutor extends JobExecutor implements Testable<TestDa
 				hostInstallPath = installPath;
 		}
 		return hostInstallPath + path.substring(installPath.length());
+	}
+
+	private List<ImageMappingFacade> getImageMappingFacades() {
+		if (imageMappingFacades == null)
+			imageMappingFacades = getImageMappings().stream().map(it->it.getFacade()).collect(toList());
+		return imageMappingFacades;
+	}
+
+	private String mapImage(String image) {
+		return ImageMappingFacade.map(getImageMappingFacades(), image);
 	}
 	
 	@Override

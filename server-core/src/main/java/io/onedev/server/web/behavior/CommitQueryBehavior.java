@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.onedev.commons.codeassist.InputCompletion;
 import org.apache.wicket.Component;
 import org.apache.wicket.model.IModel;
 
@@ -19,7 +20,7 @@ import io.onedev.commons.codeassist.parser.TerminalExpect;
 import io.onedev.commons.utils.LinearRange;
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.OneDev;
-import io.onedev.server.infomanager.CommitInfoManager;
+import io.onedev.server.xodus.CommitInfoManager;
 import io.onedev.server.model.Project;
 import io.onedev.server.search.commit.CommitQueryParser;
 import io.onedev.server.util.Constants;
@@ -33,6 +34,8 @@ import io.onedev.server.web.util.SuggestionUtils;
 @SuppressWarnings("serial")
 public class CommitQueryBehavior extends ANTLRAssistBehavior {
 
+	private static final String FUZZY_SUGGESTION_DESCRIPTION_PREFIX = "surround with ~";
+	
 	private final IModel<Project> projectModel;
 	
 	private final boolean withCurrentUserCriteria;
@@ -42,12 +45,16 @@ public class CommitQueryBehavior extends ANTLRAssistBehavior {
 			"yesterday midnight", "3 days ago", "last week", "last Monday", 
 			"4 weeks ago", "1 month 2 days ago", "1 year ago"); 
 	
-	public CommitQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria) {
-		super(CommitQueryParser.class, "query", false);
+	public CommitQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria, boolean hideIfBlank) {
+		super(CommitQueryParser.class, "query", false, hideIfBlank);
 		this.projectModel = projectModel;
 		this.withCurrentUserCriteria = withCurrentUserCriteria;
 	}
 
+	public CommitQueryBehavior(IModel<Project> projectModel, boolean withCurrentUserCriteria) {
+		this(projectModel, withCurrentUserCriteria, false);
+	}
+	
 	@Override
 	public void detach(Component component) {
 		super.detach(component);
@@ -113,6 +120,21 @@ public class CommitQueryBehavior extends ANTLRAssistBehavior {
 					}
 					
 				}.suggest(terminalExpect);
+			} else if (spec.getRuleName().equals("Fuzzy")) {
+
+				return new FenceAware(codeAssist.getGrammar(), '~', '~') {
+
+					@Override
+					protected List<InputSuggestion> match(String matchWith) {
+						return null;
+					}
+
+					@Override
+					protected String getFencingDescription() {
+						return FUZZY_SUGGESTION_DESCRIPTION_PREFIX + " to query hash/message";
+					}
+
+				}.suggest(terminalExpect);
 			}
 		} 
 		return null;
@@ -172,4 +194,10 @@ public class CommitQueryBehavior extends ANTLRAssistBehavior {
 		return Optional.fromNullable(description);
 	}
 
+	@Override
+	protected boolean isFuzzySuggestion(InputCompletion suggestion) {
+		return suggestion.getDescription() != null 
+				&& suggestion.getDescription().startsWith(FUZZY_SUGGESTION_DESCRIPTION_PREFIX);
+	}
+	
 }

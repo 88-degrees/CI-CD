@@ -10,13 +10,13 @@ import javax.validation.constraints.NotEmpty;
 import io.onedev.k8shelper.CloneInfo;
 import io.onedev.k8shelper.HttpCloneInfo;
 import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.UrlManager;
+import io.onedev.server.web.UrlManager;
 import io.onedev.server.model.Build;
 import io.onedev.server.model.Project;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.ChoiceProvider;
-import io.onedev.server.web.editable.annotation.Editable;
+import io.onedev.server.validation.Validatable;
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.ChoiceProvider;
+import io.onedev.server.annotation.Editable;
 
 @Editable(name="HTTP(S)", order=200)
 @ClassValidating
@@ -46,7 +46,7 @@ public class HttpCredential implements GitCredential, Validatable {
 	@Override
 	public CloneInfo newCloneInfo(Build build, String jobToken) {
 		return new HttpCloneInfo(OneDev.getInstance(UrlManager.class).cloneUrlFor(build.getProject(), false), 
-				build.getJobSecretAuthorizationContext().getSecretValue(accessTokenSecret));
+				build.getJobAuthorizationContext().getSecretValue(accessTokenSecret));
 	}
 
 	@Override

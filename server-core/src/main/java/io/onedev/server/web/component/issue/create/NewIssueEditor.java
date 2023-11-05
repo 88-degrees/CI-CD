@@ -4,14 +4,14 @@ import com.google.common.base.Objects;
 import io.onedev.server.OneDev;
 import io.onedev.server.attachment.AttachmentSupport;
 import io.onedev.server.attachment.ProjectAttachmentSupport;
+import io.onedev.server.buildspecmodel.inputspec.InputContext;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.model.Issue;
 import io.onedev.server.model.IssueSchedule;
 import io.onedev.server.model.Milestone;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputContext;
-import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.issue.IssueTemplate;
 import io.onedev.server.model.support.issue.field.FieldUtils;
 import io.onedev.server.search.entity.issue.IssueQuery;
@@ -24,15 +24,16 @@ import io.onedev.server.util.criteria.Criteria;
 import io.onedev.server.web.behavior.AbstractPostAjaxBehavior;
 import io.onedev.server.web.behavior.OnTypingDoneBehavior;
 import io.onedev.server.web.behavior.ReferenceInputBehavior;
+import io.onedev.server.web.component.comment.CommentInput;
 import io.onedev.server.web.component.issue.IssueStateBadge;
-import io.onedev.server.web.component.issue.link.IssueLinkPanel;
+import io.onedev.server.web.component.issue.title.IssueTitlePanel;
 import io.onedev.server.web.component.milestone.choice.MilestoneMultiChoice;
 import io.onedev.server.web.component.modal.confirm.ConfirmModalPanel;
-import io.onedev.server.web.component.comment.CommentInput;
 import io.onedev.server.web.editable.BeanContext;
 import io.onedev.server.web.editable.BeanEditor;
 import io.onedev.server.web.editable.BeanUpdating;
 import io.onedev.server.web.util.Cursor;
+import io.onedev.server.web.util.WicketUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.wicket.ajax.AjaxRequestTarget;
 import org.apache.wicket.ajax.attributes.CallbackParameter;
@@ -79,7 +80,11 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 	
 	private BeanEditor fieldEditor;
 	
+	private BeanEditor estimatedTimeEditor;
+	
 	private String lastDescriptionTemplate;
+	
+	private String editingTitle;
 	
 	private AbstractPostAjaxBehavior ajaxBehavior;
 	
@@ -99,7 +104,7 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 		issue.setFieldValues(FieldUtils.getFieldValues(new ComponentContext(this), fieldBean, 
 				FieldUtils.getEditableFields(getProject(), fieldNames)));
 		
-		titleInput = new TextField<String>("title", Model.of("")); 
+		titleInput = new TextField<>("title", Model.of("")); 
 		titleInput.setRequired(true).setLabel(Model.of("Title"));
 		add(titleInput);
 		add(new FencedFeedbackPanel("titleFeedback", titleInput));
@@ -112,7 +117,7 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 			}
 			
 		}));
-		titleInput.add(new ReferenceInputBehavior(false) {
+		titleInput.add(new ReferenceInputBehavior() {
 
 			@Override
 			protected Project getProject() {
@@ -125,12 +130,11 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 
 			@Override
 			protected List<Issue> load() {
-				String title = titleInput.getInput();
-				if (StringUtils.isNotBlank(title)) {
+				if (StringUtils.isNotBlank(editingTitle)) {
 					IssueTextManager issueTextManager = OneDev.getInstance(IssueTextManager.class);
 					return issueTextManager.query(
-							new ProjectScope(getProject(), true, true), 
-							title, false, 0, 5);
+							new ProjectScope(getProject(), true, true),
+							editingTitle, false, 0, 5);
 				} else {
 					return new ArrayList<>();
 				}
@@ -150,12 +154,14 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 
 			@Override
 			protected void onTypingDone(AjaxRequestTarget target) {
+				editingTitle = titleInput.getInput();
 				target.add(similarIssuesContainer);
 			}
 
 			@Override
 			protected void onError(AjaxRequestTarget target, RuntimeException e) {
 				super.onError(target, e);
+				editingTitle = null;
 				target.add(similarIssuesContainer);
 			}
 			
@@ -168,7 +174,7 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 			@Override
 			protected void populateItem(ListItem<Issue> item) {
 				item.add(new IssueStateBadge("state", item.getModel()));
-				item.add(new IssueLinkPanel("numberAndTitle") {
+				item.add(new IssueTitlePanel("numberAndTitle") {
 
 					@Override
 					protected Issue getIssue() {
@@ -224,6 +230,11 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 				fieldBeanClass, fieldNames);
 		add(fieldEditor = new BeanContext(fieldBean.getClass(), properties, false)
 				.renderForEdit("fields", Model.of(fieldBean)));
+		
+		var estimatedTimeEditBean = new EstimatedTimeEditBean();
+		add(estimatedTimeEditor = new BeanContext(EstimatedTimeEditBean.class)
+				.renderForEdit("estimatedTime", Model.of(estimatedTimeEditBean)));
+		estimatedTimeEditor.setVisible(WicketUtils.isSubscriptionActive() && getProject().isTimeTracking());
 		
 		add(ajaxBehavior = new AbstractPostAjaxBehavior() {
 
@@ -328,7 +339,7 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 		for (IssueTemplate template: getIssueSetting().getIssueTemplates()) {
 			IssueQuery criteria = IssueQuery.parse(getProject(), template.getIssueQuery(), option, true);
 			if (criteria.matches(issue)) 
-				return template.getIssueDescription();
+				return template.getIssueDescription().replace("\r\n", "\n");
 		}
 		return null;
 	}
@@ -408,6 +419,12 @@ public abstract class NewIssueEditor extends FormComponentPanel<Issue> implement
 			schedule.setMilestone(milestone);
 			issue.getSchedules().add(schedule);
 		}
+		
+		estimatedTimeEditor.convertInput();
+		EstimatedTimeEditBean estimatedTimeEditBean = (EstimatedTimeEditBean) estimatedTimeEditor.getConvertedInput();
+		if (estimatedTimeEditBean.getEstimatedTime() != null) 
+			issue.setOwnEstimatedTime(estimatedTimeEditBean.getEstimatedTime());
+		
 		return issue;
 	}
 	

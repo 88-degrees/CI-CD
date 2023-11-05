@@ -1,16 +1,24 @@
 package io.onedev.server.web.component.job.jobinfo;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.List;
-import java.util.UUID;
-
-import javax.annotation.Nullable;
-
+import com.google.common.collect.Sets;
+import io.onedev.server.OneDev;
+import io.onedev.server.buildspec.job.Job;
+import io.onedev.server.entitymanager.BuildManager;
+import io.onedev.server.model.Build;
+import io.onedev.server.model.Build.Status;
+import io.onedev.server.model.Project;
+import io.onedev.server.model.PullRequest;
+import io.onedev.server.web.asset.pipelinebutton.PipelineButtonCssResourceReference;
+import io.onedev.server.web.behavior.ChangeObserver;
+import io.onedev.server.web.component.build.minilist.MiniBuildListPanel;
+import io.onedev.server.web.component.build.status.BuildStatusIcon;
+import io.onedev.server.web.component.floating.AlignPlacement;
+import io.onedev.server.web.component.floating.FloatingPanel;
+import io.onedev.server.web.component.job.RunJobLink;
+import io.onedev.server.web.component.link.DropdownLink;
+import io.onedev.server.web.page.project.builds.ProjectBuildsPage;
 import org.apache.wicket.Component;
 import org.apache.wicket.behavior.AttributeAppender;
-import org.apache.wicket.core.request.handler.IPartialPageRequestHandler;
 import org.apache.wicket.markup.ComponentTag;
 import org.apache.wicket.markup.head.CssHeaderItem;
 import org.apache.wicket.markup.head.IHeaderResponse;
@@ -21,24 +29,8 @@ import org.apache.wicket.model.IModel;
 import org.apache.wicket.model.LoadableDetachableModel;
 import org.eclipse.jgit.lib.ObjectId;
 
-import com.google.common.collect.Lists;
-
-import io.onedev.server.OneDev;
-import io.onedev.server.buildspec.job.Job;
-import io.onedev.server.entitymanager.BuildManager;
-import io.onedev.server.model.Build;
-import io.onedev.server.model.Build.Status;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.web.asset.pipelinebutton.PipelineButtonCssResourceReference;
-import io.onedev.server.web.behavior.WebSocketObserver;
-import io.onedev.server.web.component.build.minilist.MiniBuildListPanel;
-import io.onedev.server.web.component.build.status.BuildStatusIcon;
-import io.onedev.server.web.component.floating.AlignPlacement;
-import io.onedev.server.web.component.floating.FloatingPanel;
-import io.onedev.server.web.component.job.RunJobLink;
-import io.onedev.server.web.component.link.DropdownLink;
-import io.onedev.server.web.page.project.builds.ProjectBuildsPage;
+import javax.annotation.Nullable;
+import java.util.*;
 
 @SuppressWarnings("serial")
 public abstract class JobInfoButton extends Panel {
@@ -96,7 +88,7 @@ public abstract class JobInfoButton extends Panel {
 				super.onComponentTag(tag);
 				
 				String cssClasses = "btn btn-outline-secondary";
-				Build.Status status = getProject().getCommitStatus(getCommitId(), getPipeline(), null, null).get(getJobName());
+				Build.Status status = getProject().getCommitStatuses(getCommitId(), getPipeline(), null, null).get(getJobName());
 				String title;
 				if (status != null) {
 					if (status != Status.SUCCESSFUL)
@@ -117,23 +109,18 @@ public abstract class JobInfoButton extends Panel {
 
 			@Override
 			protected Status load() {
-				return getProject().getCommitStatus(getCommitId(), getPipeline(), null, null).get(getJobName());
+				return getProject().getCommitStatuses(getCommitId(), getPipeline(), null, null).get(getJobName());
 			}
 			
 		}));
 		
 		detailLink.add(new Label("name", getJobName()));
 		
-		detailLink.add(new WebSocketObserver() {
+		detailLink.add(new ChangeObserver() {
 			
 			@Override
-			public void onObservableChanged(IPartialPageRequestHandler handler) {
-				handler.add(component);
-			}
-			
-			@Override
-			public Collection<String> getObservables() {
-				return Lists.newArrayList("job-status:" + getProject().getId() + ":" + getCommitId().name() + ":" + getJobName());
+			public Collection<String> findObservables() {
+				return Sets.newHashSet(Build.getJobStatusChangeObservable(getProject().getId(), getCommitId().name(), getJobName()));
 			}
 			
 		});

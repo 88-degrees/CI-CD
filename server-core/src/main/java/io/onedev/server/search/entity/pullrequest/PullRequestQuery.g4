@@ -7,13 +7,15 @@ query
     ;
 
 criteria
-	: operator=(Open|Merged|Discarded|AssignedToMe|SubmittedByMe|ToBeReviewedByMe|RequestedForChangesByMe|ApprovedByMe|MentionedMe|SomeoneRequestedForChanges|HasPendingReviews|HasFailedBuilds|ToBeVerifiedByBuilds|HasMergeConflicts) #OperatorCriteria
-    | operator=(ToBeReviewedBy|AssignedTo|ApprovedBy|RequestedForChangesBy|SubmittedBy|Mentioned|IncludesCommit|IncludesIssue) WS+ criteriaValue=Quoted #OperatorValueCriteria
+	: operator=(Open|Merged|Discarded|NeedMyAction|AssignedToMe|SubmittedByMe|WatchedByMe|CommentedByMe|ToBeReviewedByMe|ToBeChangedByMe|ToBeMergedByMe|RequestedForChangesByMe|ApprovedByMe|MentionedMe|ReadyToMerge|SomeoneRequestedForChanges|HasPendingReviews|HasUnsuccessfulBuilds|HasUnfinishedBuilds|HasMergeConflicts) #OperatorCriteria
+    | operator=(NeedActionOf|ToBeReviewedBy|ToBeChangedBy|ToBeMergedBy|AssignedTo|ApprovedBy|RequestedForChangesBy|SubmittedBy|WatchedBy|CommentedBy|Mentioned|IncludesCommit|IncludesIssue) WS+ criteriaValue=Quoted #OperatorValueCriteria
     | criteriaField=Quoted WS+ operator=(Is|IsGreaterThan|IsLessThan|IsUntil|IsSince|Contains) WS+ criteriaValue=Quoted #FieldOperatorValueCriteria
+    | Hash? number=Number #NumberCriteria
     | criteria WS+ And WS+ criteria	#AndCriteria
     | criteria WS+ Or WS+ criteria #OrCriteria
     | Not WS* LParens WS* criteria WS* RParens #NotCriteria 
     | LParens WS* criteria WS* RParens #ParensCriteria
+    | Fuzzy #FuzzyCriteria
     ;
 
 order
@@ -32,8 +34,20 @@ Discarded
     : 'discarded'
     ;
 
+NeedMyAction
+    : 'need' WS+ 'my' WS+ 'action'
+    ;
+
 ToBeReviewedByMe
     : 'to' WS+ 'be' WS+ 'reviewed' WS+ 'by' WS+ 'me'
+    ;
+
+ToBeChangedByMe
+    : 'to' WS+ 'be' WS+ 'changed' WS+ 'by' WS+ 'me'
+    ;
+
+ToBeMergedByMe
+    : 'to' WS+ 'be' WS+ 'merged' WS+ 'by' WS+ 'me'
     ;
 
 RequestedForChangesByMe
@@ -52,10 +66,22 @@ SubmittedByMe
 	: 'submitted' WS+ 'by' WS+ 'me'
 	;
 
+WatchedByMe
+    : 'watched' WS+ 'by' WS+ 'me'
+    ;
+
+CommentedByMe
+	: 'commented' WS+ 'by' WS+ 'me'
+	;
+
 MentionedMe
     : 'mentioned' WS+ 'me'
     ;
-	    
+
+ReadyToMerge
+    : 'ready' WS+ 'to' WS+ 'merge'
+    ;
+
 SomeoneRequestedForChanges
     : 'someone' WS+ 'requested' WS+ 'for' WS+ 'changes'
     ;
@@ -64,20 +90,32 @@ HasPendingReviews
     : 'has' WS+ 'pending' WS+ 'reviews'
     ;
 
-HasFailedBuilds
-    : 'has' WS+ 'failed' WS+ 'builds'
+HasUnsuccessfulBuilds
+    : 'has' WS+ 'unsuccessful' WS+ 'builds'
     ;
 
-ToBeVerifiedByBuilds
-    : 'to' WS+ 'be' WS+ 'verified' WS+ 'by' WS+ 'builds'
+HasUnfinishedBuilds
+    : 'has' WS+ 'unfinished' WS+ 'builds'
     ;
 
 HasMergeConflicts
     : 'has' WS+ 'merge' WS+ 'conflicts'
     ;
 
+NeedActionOf
+    : 'need' WS+ 'action' WS+ 'of'
+    ;
+
 ToBeReviewedBy
     : 'to' WS+ 'be' WS+ 'reviewed' WS+ 'by'
+    ;
+
+ToBeChangedBy
+    : 'to' WS+ 'be' WS+ 'changed' WS+ 'by'
+    ;
+
+ToBeMergedBy
+    : 'to' WS+ 'be' WS+ 'merged' WS+ 'by'
     ;
 
 RequestedForChangesBy
@@ -94,6 +132,14 @@ ApprovedBy
 
 SubmittedBy
 	: 'submitted' WS+ 'by'
+	;
+
+WatchedBy
+    : 'watched' WS+ 'by'
+    ;
+
+CommentedBy
+	: 'commented' WS+ 'by'
 	;
 
 Mentioned
@@ -164,14 +210,26 @@ RParens
 	: ')'
 	;
 
+Hash
+    : '#'
+    ;
+
 Quoted
     : '"' ('\\'.|~[\\"])+? '"'
+    ;
+
+Number
+    : [0-9]+
     ;
 
 WS
     : ' '
     ;
     
+Fuzzy
+    : '~' ('\\'.|~[~])+? '~'
+    ;
+
 Identifier
 	: [a-zA-Z0-9:_/\\+\-;]+
 	;    

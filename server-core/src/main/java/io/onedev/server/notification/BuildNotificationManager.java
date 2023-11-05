@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
 import com.google.common.collect.Lists;
 
 import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UrlManager;
+import io.onedev.server.web.UrlManager;
 import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.event.Listen;
 import io.onedev.server.event.project.build.BuildEvent;
@@ -34,6 +34,8 @@ import io.onedev.server.search.entity.build.BuildQuery;
 import io.onedev.server.security.permission.AccessBuild;
 import io.onedev.server.security.permission.JobPermission;
 import io.onedev.server.security.permission.ProjectPermission;
+
+import static java.util.stream.Collectors.*;
 
 @Singleton
 public class BuildNotificationManager extends AbstractNotificationManager {
@@ -69,6 +71,8 @@ public class BuildNotificationManager extends AbstractNotificationManager {
 	
 	@Sessional
 	public void notify(BuildEvent event, Collection<String> emails) {
+		emails = emails.stream().filter(it -> !it.equals(User.SYSTEM_EMAIL_ADDRESS)).collect(toList());
+		
 		Build build = event.getBuild();
 		String subject = String.format("[Build %s] %s", build.getFQN(), build.getJobName());
 
@@ -78,10 +82,10 @@ public class BuildNotificationManager extends AbstractNotificationManager {
 			
 		String url = urlManager.urlFor(build);
 		String threadingReferences = "<" + build.getProject().getPath() + "-build-" + build.getNumber() + "@onedev>";
-		String htmlBody = getHtmlBody(event, summary, null, url, false, null);
-		String textBody = getTextBody(event, summary, null, url, false, null);
+		String htmlBody = getEmailBody(true, event, summary, null, url, false, null);
+		String textBody = getEmailBody(false, event, summary, null, url, false, null);
 		mailManager.sendMailAsync(Lists.newArrayList(), Lists.newArrayList(), emails, subject, htmlBody, 
-				textBody, null, threadingReferences);
+				textBody, null, null, threadingReferences);
 	}
 	
 	@Sessional

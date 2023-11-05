@@ -1,38 +1,39 @@
 package io.onedev.server.entityreference;
 
-import java.util.Date;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.IssueChangeManager;
 import io.onedev.server.entitymanager.IssueManager;
 import io.onedev.server.entitymanager.PullRequestChangeManager;
 import io.onedev.server.entitymanager.PullRequestManager;
 import io.onedev.server.event.Listen;
-import io.onedev.server.event.project.codecomment.CodeCommentCreated;
-import io.onedev.server.event.project.codecomment.CodeCommentReplied;
-import io.onedev.server.event.project.codecomment.CodeCommentStatusChanged;
-import io.onedev.server.event.project.codecomment.CodeCommentUpdated;
+import io.onedev.server.event.project.codecomment.*;
 import io.onedev.server.event.project.issue.IssueChanged;
 import io.onedev.server.event.project.issue.IssueCommentCreated;
+import io.onedev.server.event.project.issue.IssueCommentEdited;
 import io.onedev.server.event.project.issue.IssueOpened;
 import io.onedev.server.event.project.pullrequest.PullRequestChanged;
-import io.onedev.server.event.project.pullrequest.PullRequestCommented;
+import io.onedev.server.event.project.pullrequest.PullRequestCommentCreated;
+import io.onedev.server.event.project.pullrequest.PullRequestCommentEdited;
 import io.onedev.server.event.project.pullrequest.PullRequestOpened;
 import io.onedev.server.markdown.MarkdownManager;
-import io.onedev.server.model.CodeComment;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueChange;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestChange;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.issue.changedata.IssueReferencedFromCodeCommentData;
+import io.onedev.server.model.support.issue.changedata.IssueReferencedFromCommitData;
+import io.onedev.server.model.support.issue.changedata.IssueReferencedFromIssueData;
+import io.onedev.server.model.support.issue.changedata.IssueReferencedFromPullRequestData;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCodeCommentData;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCommitData;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromIssueData;
+import io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromPullRequestData;
 import io.onedev.server.persistence.annotation.Transactional;
-import io.onedev.server.security.SecurityUtils;
+import io.onedev.server.util.ProjectScopedCommit;
 import io.onedev.server.util.ProjectScopedNumber;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.Date;
 
 @Singleton
 public class DefaultEntityReferenceManager implements EntityReferenceManager {
@@ -45,14 +46,15 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 	
 	@Inject
 	public DefaultEntityReferenceManager(IssueChangeManager issueChangeManager, 
-			PullRequestChangeManager pullRequestChangeManager, MarkdownManager markdownManager) {
+										 PullRequestChangeManager pullRequestChangeManager, 
+										 MarkdownManager markdownManager) {
 		this.issueChangeManager = issueChangeManager;
 		this.pullRequestChangeManager = pullRequestChangeManager;
 		this.markdownManager = markdownManager;
 	}
 	
 	@Override
-	public void addReferenceChange(Issue issue, String markdown) {
+	public void addReferenceChange(User user, Issue issue, String markdown) {
 		if (markdown != null) {
 			Document document = Jsoup.parseBodyFragment(markdownManager.render(markdown));			
 			for (ProjectScopedNumber referencedIssueFQN: new ReferenceParser(Issue.class).parseReferences(document, issue.getProject())) {
@@ -60,9 +62,8 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 				if (referencedIssue != null && !referencedIssue.equals(issue)) {
 					boolean found = false;
 					for (IssueChange change: referencedIssue.getChanges()) {
-						if (change.getData() instanceof io.onedev.server.model.support.issue.changedata.IssueReferencedFromIssueData) {
-							io.onedev.server.model.support.issue.changedata.IssueReferencedFromIssueData referencedFromIssueData = 
-									(io.onedev.server.model.support.issue.changedata.IssueReferencedFromIssueData) change.getData();
+						if (change.getData() instanceof IssueReferencedFromIssueData) {
+							IssueReferencedFromIssueData referencedFromIssueData = (IssueReferencedFromIssueData) change.getData();
 							if (referencedFromIssueData.getIssueId().equals(issue.getId())) {
 								found = true;
 								break;
@@ -70,12 +71,11 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 						}
 					}
 					if (!found) {
-						io.onedev.server.model.support.issue.changedata.IssueReferencedFromIssueData referencedFromIssueData = 
-								new io.onedev.server.model.support.issue.changedata.IssueReferencedFromIssueData(issue);
+						IssueReferencedFromIssueData referencedFromIssueData = new IssueReferencedFromIssueData(issue);
 						IssueChange change = new IssueChange();
 						change.setData(referencedFromIssueData);
 						change.setDate(new Date());
-						change.setUser(SecurityUtils.getUser());
+						change.setUser(user);
 						change.setIssue(referencedIssue);
 						referencedIssue.getChanges().add(change);
 						issueChangeManager.create(change, null);
@@ -87,9 +87,8 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 				if (referencedRequest != null) {
 					boolean found = false;
 					for (PullRequestChange change: referencedRequest.getChanges()) {
-						if (change.getData() instanceof io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromIssueData) {
-							io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromIssueData referencedFromIssueData = 
-									(io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromIssueData) change.getData();
+						if (change.getData() instanceof PullRequestReferencedFromIssueData) {
+							PullRequestReferencedFromIssueData referencedFromIssueData = (PullRequestReferencedFromIssueData) change.getData();
 							if (referencedFromIssueData.getIssueId().equals(issue.getId())) {
 								found = true;
 								break;
@@ -97,23 +96,74 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 						}
 					}
 					if (!found) {
-						io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromIssueData referencedFromIssueData = 
-								new io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromIssueData(issue);
+						PullRequestReferencedFromIssueData referencedFromIssueData = new PullRequestReferencedFromIssueData(issue);
 						PullRequestChange change = new PullRequestChange();
 						change.setData(referencedFromIssueData);
 						change.setDate(new Date());
-						change.setUser(SecurityUtils.getUser());
+						change.setUser(user);
 						change.setRequest(referencedRequest);
 						referencedRequest.getChanges().add(change);
-						pullRequestChangeManager.save(change);
+						pullRequestChangeManager.create(change, null);
 					}
+				}
+			}
+		}
+	}
+
+	public void addReferenceChange(ProjectScopedCommit commit) {
+		String commitMessage = commit.getRevCommit().getFullMessage();
+		for (ProjectScopedNumber referencedIssueFQN: new ReferenceParser(Issue.class).parseReferences(commitMessage, commit.getProject())) {
+			Issue referencedIssue = OneDev.getInstance(IssueManager.class).find(referencedIssueFQN);
+			if (referencedIssue != null) {
+				boolean found = false;
+				for (IssueChange change: referencedIssue.getChanges()) {
+					if (change.getData() instanceof IssueReferencedFromCommitData) {
+						IssueReferencedFromCommitData referencedFromCommitData = (IssueReferencedFromCommitData) change.getData();
+						if (referencedFromCommitData.getCommit().getCommitId().equals(commit.getCommitId())) {
+							found = true;
+							break;
+						}
+					}
+				}
+				if (!found) {
+					IssueReferencedFromCommitData referencedFromCommitData = new IssueReferencedFromCommitData(commit);
+					IssueChange change = new IssueChange();
+					change.setData(referencedFromCommitData);
+					change.setDate(new Date());
+					change.setIssue(referencedIssue);
+					referencedIssue.getChanges().add(change);
+					issueChangeManager.create(change, null);
+				}
+			}
+		}
+		for (ProjectScopedNumber referencedRequestFQN: new ReferenceParser(PullRequest.class).parseReferences(commitMessage, commit.getProject())) {
+			PullRequest referencedRequest  = OneDev.getInstance(PullRequestManager.class).find(referencedRequestFQN);
+			if (referencedRequest != null) {
+				boolean found = false;
+				for (PullRequestChange change: referencedRequest.getChanges()) {
+					if (change.getData() instanceof PullRequestReferencedFromCommitData) {
+						PullRequestReferencedFromCommitData referencedFromCommitData = (PullRequestReferencedFromCommitData) change.getData();
+						if (referencedFromCommitData.getCommit().getCommitId().equals(commit.getCommitId())) {
+							found = true;
+							break;
+						}
+					}
+				}
+				if (!found) {
+					PullRequestReferencedFromCommitData referencedFromCommitData = new PullRequestReferencedFromCommitData(commit);
+					PullRequestChange change = new PullRequestChange();
+					change.setData(referencedFromCommitData);
+					change.setDate(new Date());
+					change.setRequest(referencedRequest);
+					referencedRequest.getChanges().add(change);
+					pullRequestChangeManager.create(change, null);
 				}
 			}
 		}
 	}
 	
 	@Override 
-	public void addReferenceChange(PullRequest request, String markdown) {
+	public void addReferenceChange(User user, PullRequest request, String markdown) {
 		if (markdown != null) {
 			Document document = Jsoup.parseBodyFragment(markdownManager.render(markdown));			
 			for (ProjectScopedNumber referencedIssueFQN: new ReferenceParser(Issue.class).parseReferences(document, request.getTargetProject())) {
@@ -121,9 +171,8 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 				if (referencedIssue != null) {
 					boolean found = false;
 					for (IssueChange change: referencedIssue.getChanges()) {
-						if (change.getData() instanceof io.onedev.server.model.support.issue.changedata.IssueReferencedFromPullRequestData) {
-							io.onedev.server.model.support.issue.changedata.IssueReferencedFromPullRequestData referencedFromPullRequestData = 
-									(io.onedev.server.model.support.issue.changedata.IssueReferencedFromPullRequestData) change.getData();
+						if (change.getData() instanceof IssueReferencedFromPullRequestData) {
+							IssueReferencedFromPullRequestData referencedFromPullRequestData = (IssueReferencedFromPullRequestData) change.getData();
 							if (referencedFromPullRequestData.getRequestId().equals(request.getId())) {
 								found = true;
 								break;
@@ -131,12 +180,11 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 						}
 					}
 					if (!found) {
-						io.onedev.server.model.support.issue.changedata.IssueReferencedFromPullRequestData referencedFromPullRequestData = 
-								new io.onedev.server.model.support.issue.changedata.IssueReferencedFromPullRequestData(request);
+						IssueReferencedFromPullRequestData referencedFromPullRequestData = new IssueReferencedFromPullRequestData(request);
 						IssueChange change = new IssueChange();
 						change.setData(referencedFromPullRequestData);
 						change.setDate(new Date());
-						change.setUser(SecurityUtils.getUser());
+						change.setUser(user);
 						change.setIssue(referencedIssue);
 						referencedIssue.getChanges().add(change);
 						issueChangeManager.create(change, null);
@@ -148,9 +196,8 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 				if (referencedRequest != null && !referencedRequest.equals(request)) {
 					boolean found = false;
 					for (PullRequestChange change: referencedRequest.getChanges()) {
-						if (change.getData() instanceof io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromPullRequestData) {
-							io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromPullRequestData referencedFromPullRequestData = 
-									(io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromPullRequestData) change.getData();
+						if (change.getData() instanceof PullRequestReferencedFromPullRequestData) {
+							PullRequestReferencedFromPullRequestData referencedFromPullRequestData = (PullRequestReferencedFromPullRequestData) change.getData();
 							if (referencedFromPullRequestData.getRequestId().equals(request.getId())) {
 								found = true;
 								break;
@@ -158,15 +205,14 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 						}
 					}
 					if (!found) {
-						io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromPullRequestData referencedFromPullRequestData = 
-								new io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromPullRequestData(request);
+						PullRequestReferencedFromPullRequestData referencedFromPullRequestData = new PullRequestReferencedFromPullRequestData(request);
 						PullRequestChange change = new PullRequestChange();
 						change.setData(referencedFromPullRequestData);
 						change.setDate(new Date());
-						change.setUser(SecurityUtils.getUser());
+						change.setUser(user);
 						change.setRequest(referencedRequest);
 						referencedRequest.getChanges().add(change);
-						pullRequestChangeManager.save(change);
+						pullRequestChangeManager.create(change, null);
 					}
 				}
 			}
@@ -174,7 +220,7 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 	}
 	
 	@Override
-	public void addReferenceChange(CodeComment comment, String markdown) {
+	public void addReferenceChange(User user, CodeComment comment, String markdown) {
 		if (markdown != null) {
 			Document document = Jsoup.parseBodyFragment(markdownManager.render(markdown));			
 			for (ProjectScopedNumber referencedIssueFQN: new ReferenceParser(Issue.class).parseReferences(document, comment.getProject())) {
@@ -182,9 +228,8 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 				if (referencedIssue != null) {
 					boolean found = false;
 					for (IssueChange change: referencedIssue.getChanges()) {
-						if (change.getData() instanceof io.onedev.server.model.support.issue.changedata.IssueReferencedFromCodeCommentData) {
-							io.onedev.server.model.support.issue.changedata.IssueReferencedFromCodeCommentData referencedFromCodeCommentData = 
-									(io.onedev.server.model.support.issue.changedata.IssueReferencedFromCodeCommentData) change.getData();
+						if (change.getData() instanceof IssueReferencedFromCodeCommentData) {
+							IssueReferencedFromCodeCommentData referencedFromCodeCommentData = (IssueReferencedFromCodeCommentData) change.getData();
 							if (referencedFromCodeCommentData.getCommentId().equals(comment.getId())) {
 								found = true;
 								break;
@@ -192,12 +237,11 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 						}
 					}
 					if (!found) {
-						io.onedev.server.model.support.issue.changedata.IssueReferencedFromCodeCommentData referencedFromCodeCommentData = 
-								new io.onedev.server.model.support.issue.changedata.IssueReferencedFromCodeCommentData(comment);
+						IssueReferencedFromCodeCommentData referencedFromCodeCommentData = new IssueReferencedFromCodeCommentData(comment);
 						IssueChange change = new IssueChange();
 						change.setData(referencedFromCodeCommentData);
 						change.setDate(new Date());
-						change.setUser(SecurityUtils.getUser());
+						change.setUser(user);
 						change.setIssue(referencedIssue);
 						referencedIssue.getChanges().add(change);
 						issueChangeManager.create(change, null);
@@ -209,9 +253,8 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 				if (referencedRequest != null) {
 					boolean found = false;
 					for (PullRequestChange change: referencedRequest.getChanges()) {
-						if (change.getData() instanceof io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCodeCommentData) {
-							io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCodeCommentData referencedFromCodeCommentData = 
-									(io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCodeCommentData) change.getData();
+						if (change.getData() instanceof PullRequestReferencedFromCodeCommentData) {
+							PullRequestReferencedFromCodeCommentData referencedFromCodeCommentData = (PullRequestReferencedFromCodeCommentData) change.getData();
 							if (referencedFromCodeCommentData.getCommentId().equals(comment.getId())) {
 								found = true;
 								break;
@@ -219,15 +262,14 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 						}
 					}
 					if (!found) {
-						io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCodeCommentData referencedFromCodeCommentData = 
-								new io.onedev.server.model.support.pullrequest.changedata.PullRequestReferencedFromCodeCommentData(comment);
+						PullRequestReferencedFromCodeCommentData referencedFromCodeCommentData = new PullRequestReferencedFromCodeCommentData(comment);
 						PullRequestChange change = new PullRequestChange();
 						change.setData(referencedFromCodeCommentData);
 						change.setDate(new Date());
-						change.setUser(SecurityUtils.getUser());
+						change.setUser(user);
 						change.setRequest(referencedRequest);
 						referencedRequest.getChanges().add(change);
-						pullRequestChangeManager.save(change);
+						pullRequestChangeManager.create(change, null);
 					}
 				}
 			}
@@ -237,63 +279,81 @@ public class DefaultEntityReferenceManager implements EntityReferenceManager {
 	@Transactional
 	@Listen
 	public void on(IssueCommentCreated event) {
-		addReferenceChange(event.getIssue(), event.getComment().getContent());
+		addReferenceChange(event.getUser(), event.getIssue(), event.getComment().getContent());
 	}
 
 	@Transactional
 	@Listen
-	public void on(IssueChanged event) {
-		addReferenceChange(event.getIssue(), event.getComment());
+	public void on(IssueCommentEdited event) {
+		addReferenceChange(event.getUser(), event.getIssue(), event.getComment().getContent());
 	}
 	
 	@Transactional
 	@Listen
-	public void on(PullRequestCommented event) {
-		addReferenceChange(event.getRequest(), event.getComment().getContent());
+	public void on(IssueChanged event) {
+		addReferenceChange(event.getUser(), event.getIssue(), event.getComment());
+	}
+	
+	@Transactional
+	@Listen
+	public void on(PullRequestCommentCreated event) {
+		addReferenceChange(event.getUser(), event.getRequest(), event.getComment().getContent());
+	}
+
+	@Transactional
+	@Listen
+	public void on(PullRequestCommentEdited event) {
+		addReferenceChange(event.getUser(), event.getRequest(), event.getComment().getContent());
 	}
 	
 	@Transactional
 	@Listen
 	public void on(PullRequestChanged event) {
-		addReferenceChange(event.getRequest(), event.getComment());
+		addReferenceChange(event.getUser(), event.getRequest(), event.getComment());
 	}
 	
 	@Transactional
 	@Listen
-	public void on(CodeCommentReplied event) {
-		addReferenceChange(event.getComment(), event.getReply().getContent());
+	public void on(CodeCommentReplyCreated event) {
+		addReferenceChange(event.getUser(), event.getComment(), event.getReply().getContent());
+	}
+
+	@Transactional
+	@Listen
+	public void on(CodeCommentReplyEdited event) {
+		addReferenceChange(event.getUser(), event.getComment(), event.getReply().getContent());
 	}
 	
 	@Transactional
 	@Listen
 	public void on(CodeCommentStatusChanged event) {
-		addReferenceChange(event.getComment(), event.getNote());
+		addReferenceChange(event.getUser(), event.getComment(), event.getNote());
 	}
 	
 	@Transactional
 	@Listen
 	public void on(PullRequestOpened event) {
-		addReferenceChange(event.getRequest(), event.getRequest().getTitle());
-		addReferenceChange(event.getRequest(), event.getRequest().getDescription());
+		addReferenceChange(event.getUser(), event.getRequest(), event.getRequest().getTitle());
+		addReferenceChange(event.getUser(), event.getRequest(), event.getRequest().getDescription());
 	}
 	
 	@Transactional
 	@Listen
 	public void on(IssueOpened event) {
-		addReferenceChange(event.getIssue(), event.getIssue().getTitle());
-		addReferenceChange(event.getIssue(), event.getIssue().getDescription());
+		addReferenceChange(event.getUser(), event.getIssue(), event.getIssue().getTitle());
+		addReferenceChange(event.getUser(), event.getIssue(), event.getIssue().getDescription());
 	}
 	
 	@Transactional
 	@Listen
 	public void on(CodeCommentCreated event) {
-		addReferenceChange(event.getComment(), event.getComment().getContent());
+		addReferenceChange(event.getUser(), event.getComment(), event.getComment().getContent());
 	}
 	
 	@Transactional
 	@Listen
-	public void on(CodeCommentUpdated event) {
-		addReferenceChange(event.getComment(), event.getComment().getContent());
+	public void on(CodeCommentEdited event) {
+		addReferenceChange(event.getUser(), event.getComment(), event.getComment().getContent());
 	}
 	
 }

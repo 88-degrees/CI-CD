@@ -8,6 +8,7 @@ import java.util.Map;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
+import com.google.common.base.Preconditions;
 import org.hibernate.criterion.Restrictions;
 import org.hibernate.criterion.SimpleExpression;
 import org.slf4j.Logger;
@@ -37,8 +38,8 @@ public class DefaultSshKeyManager extends BaseEntityManager<SshKey> implements S
     
     @Sessional
     @Override
-    public SshKey findByDigest(String digest) {
-        SimpleExpression eq = Restrictions.eq("digest", digest);
+    public SshKey findByFingerprint(String fingerprint) {
+        SimpleExpression eq = Restrictions.eq("fingerprint", fingerprint);
         EntityCriteria<SshKey> entityCriteria = EntityCriteria.of(SshKey.class).add(eq);
         entityCriteria.setCacheable(true);
         return find(entityCriteria);
@@ -53,7 +54,7 @@ public class DefaultSshKeyManager extends BaseEntityManager<SshKey> implements S
 	        sshKey.setContent(content);
 	        sshKey.setOwner(user);
 	        sshKey.setCreatedAt(new Date());
-	        sshKey.digest();
+	        sshKey.fingerprint();
 	        syncMap.put(content, sshKey);
     	}
 
@@ -65,12 +66,19 @@ public class DefaultSshKeyManager extends BaseEntityManager<SshKey> implements S
 		diff.entriesOnlyOnLeft().values().forEach(sshKey -> delete(sshKey));
 		
 		diff.entriesOnlyOnRight().values().forEach(sshKey -> {
-			if (findByDigest(sshKey.getDigest()) == null) 
-				save(sshKey);	
+			if (findByFingerprint(sshKey.getFingerprint()) == null) 
+				create(sshKey);	
 			else 
-				logger.warn("SSH key is already in use (digest: {})", sshKey.getDigest());
+				logger.warn("SSH key is already in use (fingerprint: {})", sshKey.getFingerprint());
 		});
 		
     }
+
+	@Transactional
+	@Override
+	public void create(SshKey sshKey) {
+		Preconditions.checkState(sshKey.isNew());
+		dao.persist(sshKey);
+	}
 
 }

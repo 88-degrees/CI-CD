@@ -1,58 +1,24 @@
 package io.onedev.server.notification;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import javax.inject.Inject;
-import javax.inject.Singleton;
-
-import io.onedev.server.entitymanager.PullRequestMentionManager;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.text.WordUtils;
-import org.apache.shiro.authz.Permission;
-
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
+import io.onedev.server.entitymanager.PullRequestMentionManager;
 import io.onedev.server.entitymanager.PullRequestWatchManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.event.Listen;
-import io.onedev.server.event.project.pullrequest.PullRequestAssigned;
-import io.onedev.server.event.project.pullrequest.PullRequestBuildEvent;
-import io.onedev.server.event.project.pullrequest.PullRequestChanged;
-import io.onedev.server.event.project.pullrequest.PullRequestCheckFailed;
-import io.onedev.server.event.project.pullrequest.PullRequestCommented;
-import io.onedev.server.event.project.pullrequest.PullRequestEvent;
-import io.onedev.server.event.project.pullrequest.PullRequestMergePreviewCalculated;
-import io.onedev.server.event.project.pullrequest.PullRequestOpened;
-import io.onedev.server.event.project.pullrequest.PullRequestReviewRequested;
-import io.onedev.server.event.project.pullrequest.PullRequestReviewerRemoved;
-import io.onedev.server.event.project.pullrequest.PullRequestUnassigned;
-import io.onedev.server.event.project.pullrequest.PullRequestUpdated;
-import io.onedev.server.infomanager.VisitInfoManager;
+import io.onedev.server.event.project.pullrequest.*;
+import io.onedev.server.xodus.VisitInfoManager;
 import io.onedev.server.mail.MailManager;
 import io.onedev.server.markdown.MarkdownManager;
 import io.onedev.server.markdown.MentionParser;
-import io.onedev.server.model.EmailAddress;
-import io.onedev.server.model.PullRequest;
-import io.onedev.server.model.PullRequestAssignment;
-import io.onedev.server.model.PullRequestReview;
+import io.onedev.server.model.*;
 import io.onedev.server.model.PullRequestReview.Status;
-import io.onedev.server.model.PullRequestWatch;
-import io.onedev.server.model.User;
 import io.onedev.server.model.support.NamedQuery;
 import io.onedev.server.model.support.QueryPersonalization;
 import io.onedev.server.model.support.pullrequest.changedata.PullRequestApproveData;
 import io.onedev.server.model.support.pullrequest.changedata.PullRequestChangeData;
 import io.onedev.server.model.support.pullrequest.changedata.PullRequestDiscardData;
-import io.onedev.server.model.support.pullrequest.changedata.PullRequestMergeData;
-import io.onedev.server.model.support.pullrequest.changedata.PullRequestReopenData;
 import io.onedev.server.model.support.pullrequest.changedata.PullRequestRequestedForChangesData;
 import io.onedev.server.persistence.annotation.Transactional;
 import io.onedev.server.search.entity.EntityQuery;
@@ -61,6 +27,14 @@ import io.onedev.server.search.entity.pullrequest.PullRequestQuery;
 import io.onedev.server.security.permission.ProjectPermission;
 import io.onedev.server.security.permission.ReadCode;
 import io.onedev.server.util.commenttext.MarkdownText;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.text.WordUtils;
+import org.apache.shiro.authz.Permission;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Singleton
 public class PullRequestNotificationManager extends AbstractNotificationManager {
@@ -170,13 +144,18 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 			}
 		}
 
+		String senderName;
 		String summary;
-		if (user != null)
+		if (user != null) {
+			senderName = user.getDisplayName();
 			summary = user.getDisplayName() + " " + event.getActivity();
-		else if (committer != null)
+		} else if (committer != null) {
+			senderName = null;
 			summary = committer.getDisplayName() + " " + event.getActivity();
-		else
+		} else {
+			senderName = null;
 			summary = StringUtils.capitalize(event.getActivity());
+		}
 
 		String replyAddress = mailManager.getReplyAddress(request);
 		boolean replyable = replyAddress != null;
@@ -205,9 +184,9 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 				if (emailAddress != null && emailAddress.isVerified()) {
 					mailManager.sendMailAsync(Lists.newArrayList(emailAddress.getValue()),
 							Lists.newArrayList(), Lists.newArrayList(), subject,
-							getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, null),
-							getTextBody(event, summary, event.getTextBody(), url, replyable, null),
-							replyAddress, threadingReferences);
+							getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, null),
+							getEmailBody(false, event, summary, event.getTextBody(), url, replyable, null),
+							replyAddress, senderName, threadingReferences);
 				}
 				notifiedUsers.add(request.getSubmitter());
 			}
@@ -232,9 +211,9 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 				if (emailAddress != null && emailAddress.isVerified()) {
 					mailManager.sendMailAsync(Lists.newArrayList(emailAddress.getValue()),
 							Lists.newArrayList(), Lists.newArrayList(), subject,
-							getHtmlBody(event, assignmentSummary, event.getHtmlBody(), url, replyable, null),
-							getTextBody(event, assignmentSummary, event.getTextBody(), url, replyable, null),
-							replyAddress, threadingReferences);
+							getEmailBody(true, event, assignmentSummary, event.getHtmlBody(), url, replyable, null),
+							getEmailBody(false, event, assignmentSummary, event.getTextBody(), url, replyable, null),
+							replyAddress, senderName, threadingReferences);
 				}
 				notifiedUsers.add(assignee);
 			}
@@ -256,17 +235,17 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 				if (emailAddress != null && emailAddress.isVerified()) {
 					mailManager.sendMailAsync(Lists.newArrayList(emailAddress.getValue()),
 							Lists.newArrayList(), Lists.newArrayList(), subject,
-							getHtmlBody(event, reviewInvitationSummary, event.getHtmlBody(), url, replyable, null),
-							getTextBody(event, reviewInvitationSummary, event.getTextBody(), url, replyable, null),
-							replyAddress, threadingReferences);
+							getEmailBody(true, event, reviewInvitationSummary, event.getHtmlBody(), url, replyable, null),
+							getEmailBody(false, event, reviewInvitationSummary, event.getTextBody(), url, replyable, null),
+							replyAddress, senderName, threadingReferences);
 				}
 				notifiedUsers.add(reviewer);
 			}
 		}
 
 		Collection<String> notifiedEmailAddresses;
-		if (event instanceof PullRequestCommented)
-			notifiedEmailAddresses = ((PullRequestCommented) event).getNotifiedEmailAddresses();
+		if (event instanceof PullRequestCommentCreated)
+			notifiedEmailAddresses = ((PullRequestCommentCreated) event).getNotifiedEmailAddresses();
 		else
 			notifiedEmailAddresses = new ArrayList<>();
 
@@ -285,9 +264,9 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 						if (emailAddress != null && emailAddress.isVerified()) {
 							mailManager.sendMailAsync(Sets.newHashSet(emailAddress.getValue()),
 									Sets.newHashSet(), Sets.newHashSet(), subject,
-									getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, null),
-									getTextBody(event, summary, event.getTextBody(), url, replyable, null),
-									replyAddress, threadingReferences);
+									getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, null),
+									getEmailBody(false, event, summary, event.getTextBody(), url, replyable, null),
+									replyAddress, senderName, threadingReferences);
 						}
 						notifiedUsers.add(mentionedUser);
 					}
@@ -295,27 +274,7 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 			}
 		}
 
-		boolean notifyWatchers = false;
-		if (event instanceof PullRequestChanged) {
-			PullRequestChangeData changeData = ((PullRequestChanged) event).getChange().getData();
-			if (changeData instanceof PullRequestApproveData
-					|| changeData instanceof PullRequestRequestedForChangesData
-					|| changeData instanceof PullRequestMergeData
-					|| changeData instanceof PullRequestDiscardData
-					|| changeData instanceof PullRequestReopenData) {
-				notifyWatchers = true;
-			}
-		} else if (!(event instanceof PullRequestMergePreviewCalculated
-				|| event instanceof PullRequestBuildEvent
-				|| event instanceof PullRequestCheckFailed
-				|| event instanceof PullRequestReviewRequested
-				|| event instanceof PullRequestReviewerRemoved
-				|| event instanceof PullRequestAssigned
-				|| event instanceof PullRequestUnassigned)) {
-			notifyWatchers = true;
-		}
-
-		if (notifyWatchers) {
+		if (!event.isMinor()) {
 			Collection<String> bccEmailAddresses = new HashSet<>();
 
 			for (PullRequestWatch watch : request.getWatches()) {
@@ -338,12 +297,12 @@ public class PullRequestNotificationManager extends AbstractNotificationManager 
 						request.getFQN(), (event instanceof PullRequestOpened) ? "Opened" : "Updated", request.getTitle());
 				String threadingReferences = "<" + request.getUUID() + "@onedev>";
 				Unsubscribable unsubscribable = new Unsubscribable(mailManager.getUnsubscribeAddress(request));
-				String htmlBody = getHtmlBody(event, summary, event.getHtmlBody(), url, replyable, unsubscribable);
-				String textBody = getTextBody(event, summary, event.getTextBody(), url, replyable, unsubscribable);
+				String htmlBody = getEmailBody(true, event, summary, event.getHtmlBody(), url, replyable, unsubscribable);
+				String textBody = getEmailBody(false, event, summary, event.getTextBody(), url, replyable, unsubscribable);
 				mailManager.sendMailAsync(
 						Lists.newArrayList(), Lists.newArrayList(),
 						bccEmailAddresses, subject, htmlBody, textBody,
-						replyAddress, threadingReferences);
+						replyAddress, senderName, threadingReferences);
 			}
 		}
 	}

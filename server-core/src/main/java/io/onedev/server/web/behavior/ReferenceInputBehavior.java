@@ -12,7 +12,7 @@ import io.onedev.commons.utils.LinearRange;
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.model.Project;
-import io.onedev.server.util.validation.ProjectPathValidator;
+import io.onedev.server.validation.validator.ProjectPathValidator;
 import io.onedev.server.web.behavior.inputassist.InputAssistBehavior;
 import io.onedev.server.web.util.SuggestionUtils;
 
@@ -22,17 +22,15 @@ public abstract class ReferenceInputBehavior extends InputAssistBehavior {
 	
 	private static final int REFERENCE_SUGGESTION_LIMIT = 5;
 	
-	private static final Pattern REFERENCE_PATTERN = Pattern.compile("(^|[\\W|/]+)((pull\\s*request|issue|build)\\s+)?(" + ProjectPathValidator.PATTERN.pattern() + ")?#(\\S*)$", 
+	private static final Pattern REFERENCE_PATTERN = Pattern.compile("(^|[\\W|/]+)((pull\\s*request|pr|issue|build)\\s+)?(" + ProjectPathValidator.PATTERN.pattern() + ")?#(\\S*)$", 
 			Pattern.CASE_INSENSITIVE);
 	
 	private static final Pattern SPACE_PATTERN = Pattern.compile("\\s+");
-	
-	private final boolean appendTitle;
-	
-	public ReferenceInputBehavior(boolean appendTitle) {
-		this.appendTitle = appendTitle;
+
+	public ReferenceInputBehavior() {
+		super(false);
 	}
-	
+
 	@Override
 	protected List<InputCompletion> getSuggestions(InputStatus inputStatus) {
 		List<InputCompletion> completions = new ArrayList<>();
@@ -54,46 +52,25 @@ public abstract class ReferenceInputBehavior extends InputAssistBehavior {
 				else
 					referenceType = "";
 				switch (referenceType) {
-				case "issue":
-					suggestions = SuggestionUtils.suggestIssues(project, matchWith, REFERENCE_SUGGESTION_LIMIT*3);
-					break;
-				case "build":
-					suggestions = SuggestionUtils.suggestBuilds(project, matchWith, REFERENCE_SUGGESTION_LIMIT*3);
-					break;
-				case "pullrequest":
-					suggestions = SuggestionUtils.suggestPullRequests(project, matchWith, REFERENCE_SUGGESTION_LIMIT*3);
-					break;
-				default:
-					if (projectName == null) { 
-						for (InputSuggestion suggestion: SuggestionUtils.suggestIssues(project, matchWith, REFERENCE_SUGGESTION_LIMIT)) {
-							suggestions.add(new InputSuggestion("issue " + suggestion.getContent(), -1, 
-									suggestion.getDescription(), null));
-						}
-						for (InputSuggestion suggestion: SuggestionUtils.suggestPullRequests(project, matchWith, REFERENCE_SUGGESTION_LIMIT)) {
-							suggestions.add(new InputSuggestion("pull request " + suggestion.getContent(), -1, 
-									suggestion.getDescription(), null));
-						}
-						for (InputSuggestion suggestion: SuggestionUtils.suggestBuilds(project, matchWith, REFERENCE_SUGGESTION_LIMIT)) {
-							suggestions.add(new InputSuggestion("build " + suggestion.getContent(), -1, 
-									suggestion.getDescription(), null));
-						}
-					}
+					case "":
+					case "issue":
+						suggestions = SuggestionUtils.suggestIssues(project, matchWith, REFERENCE_SUGGESTION_LIMIT * 3);
+						break;
+					case "build":
+						suggestions = SuggestionUtils.suggestBuilds(project, matchWith, REFERENCE_SUGGESTION_LIMIT * 3);
+						break;
+					case "pullrequest":
+					case "pr":
+						suggestions = SuggestionUtils.suggestPullRequests(project, matchWith, REFERENCE_SUGGESTION_LIMIT * 3);
+						break;
 				}
 				for (InputSuggestion suggestion: suggestions) {
 					int hashIndex = matcher.start(6)-1;
-					InputCompletion completion;
-					if (appendTitle) {
-						String content = contentBeforeCaret.substring(0, hashIndex) + suggestion.getContent() 
-								+ " - " + suggestion.getDescription(); 
-						completion = new InputCompletion(suggestion.getContent(), 
-								content + inputStatus.getContentAfterCaret(), content.length(), 
-								suggestion.getDescription(), suggestion.getMatch());
-					} else {
-						String content = contentBeforeCaret.substring(0, hashIndex) + suggestion.getContent(); 
-						completion = new InputCompletion(suggestion.getContent(), 
-								content + inputStatus.getContentAfterCaret(), content.length(), 
-								suggestion.getDescription(), suggestion.getMatch());
-					}
+					String content = contentBeforeCaret.substring(0, hashIndex) + suggestion.getContent() 
+							+ " "; 
+					var completion = new InputCompletion(suggestion.getContent(), 
+							content + inputStatus.getContentAfterCaret(), content.length(), 
+							suggestion.getDescription(), suggestion.getMatch());
 					completions.add(completion);
 				}
 			}			

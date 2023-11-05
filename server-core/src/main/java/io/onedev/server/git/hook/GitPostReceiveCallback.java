@@ -26,7 +26,7 @@ import com.google.common.base.Preconditions;
 
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.entitymanager.ProjectManager;
-import io.onedev.server.entitymanager.UrlManager;
+import io.onedev.server.web.UrlManager;
 import io.onedev.server.event.ListenerRegistry;
 import io.onedev.server.event.project.RefUpdated;
 import io.onedev.server.git.GitUtils;
@@ -140,23 +140,18 @@ public class GitPostReceiveCallback extends HttpServlet {
         		fields.set(pos, field);
         }
         
-        sessionManager.runAsyncAfterCommit(new Runnable() {
-
-			@Override
-			public void run() {
-				Project project = projectManager.load(projectId);
-		        try {
-		            for (var updateInfo: updateInfos) {
-		            	RefUpdated event = new RefUpdated(project, updateInfo.getLeft(), 
-		            			updateInfo.getMiddle(), updateInfo.getRight());
-			        	listenerRegistry.invokeListeners(event);
-		            }
-		        } catch (Exception e) {
-		        	logger.error("Error posting ref updated event", e);
+        sessionManager.runAsyncAfterCommit(() -> {
+			Project project = projectManager.load(projectId);
+			try {
+				for (var updateInfo: updateInfos) {
+					RefUpdated event = new RefUpdated(project, updateInfo.getLeft(), 
+							updateInfo.getMiddle(), updateInfo.getRight());
+					listenerRegistry.invokeListeners(event);
 				}
+			} catch (Exception e) {
+				logger.error("Error posting ref updated event", e);
 			}
-        	
-        });
+		});
 	}
 
 	private void showPullRequestLink(Output output, Long projectId, String branch, String defaultBranch) {
